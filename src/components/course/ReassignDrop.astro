@@ -1,0 +1,144 @@
+---
+/**
+ * 2.2「重新赋值触发旧值当场释放与移动」。
+ * target = source; 当行：target 原先指向的 "old" 堆缓冲区当场释放，
+ * source 的三格控制头移入 target 并指向 "new" 堆缓冲区，source 标为已失效。
+ * 样式见 src/styles/diagrams.css。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			caption:
+				'At target = source;: the "old" heap buffer previously owned by target is dropped immediately, and source\'s header moves into target (leaving source invalid).',
+			title: 'Stack and heap layout at target = source;',
+			desc: 'On the stack frame, variable target (String) holds an active three-word header (ptr, len 3, cap 3) whose ptr arrow points to the "new" character buffer on the heap. Below it, variable source (String) is marked invalid with its three machine words shown in dashed outlines and no arrow. On the heap, the top buffer "old" is shown in dashed outlines as dropped in place, while the bottom buffer "new" is active.',
+			stack: 'stack frame',
+			heap: 'heap',
+			oldBuffer: 'old buffer (dropped in place)',
+			buffer: 'character buffer',
+			invalid: 'invalid',
+			len: 'len · 3',
+			cap: 'cap · 3',
+		}
+	: {
+			caption:
+				'执行 target = source; 当行：target 原先指向的 "old" 堆缓冲区当场释放，source 的控制头移入 target（source 失效）。',
+			title: '执行 target = source; 当行的栈与堆布局',
+			desc: '栈帧里，上方变量 target（String）持有有效的三个机器字（ptr、len · 3、cap · 3），箭头从 target 的 ptr 指向堆上下方的字符缓冲区 "new"。下方变量 source（String）标为已失效，三个机器字呈虚线框且没有箭头。堆上，上方的原字符缓冲区 "old" 呈虚线框表示当场释放，下方的字符缓冲区 "new" 保持有效。',
+			stack: '栈帧',
+			heap: '堆',
+			oldBuffer: '原字符缓冲区（当场释放）',
+			buffer: '字符缓冲区',
+			invalid: '已失效',
+			len: 'len · 3',
+			cap: 'cap · 3',
+		};
+
+const oldChars = ['o', 'l', 'd'];
+const newChars = ['n', 'e', 'w'];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 416" role="img" aria-labelledby="rd-title rd-desc">
+		<title id="rd-title">{t.title}</title>
+		<desc id="rd-desc">{t.desc}</desc>
+
+		<rect class="panel" x="16" y="16" width="280" height="384" rx="12"></rect>
+		<text class="label" x="36" y="42">
+			{t.stack}
+		</text>
+
+		<text class="name" x="36" y="72">
+			target
+		</text>
+		<text class="code" x="102" y="72">
+			String
+		</text>
+
+		<rect class="slot" x="36" y="84" width="220" height="38" rx="8"></rect>
+		<text class="code" x="146" y="108" text-anchor="middle">
+			ptr
+		</text>
+
+		<rect class="slot" x="36" y="128" width="220" height="38" rx="8"></rect>
+		<text class="code" x="146" y="152" text-anchor="middle">
+			{t.len}
+		</text>
+
+		<rect class="slot" x="36" y="172" width="220" height="38" rx="8"></rect>
+		<text class="code" x="146" y="196" text-anchor="middle">
+			{t.cap}
+		</text>
+
+		<text class="name" x="36" y="242">
+			source
+		</text>
+		<text class="code" x="102" y="242">
+			String
+		</text>
+		<text class="label" x="162" y="242">
+			{t.invalid}
+		</text>
+
+		<rect class="freed" x="36" y="254" width="220" height="38" rx="8"></rect>
+		<text class="label" x="146" y="278" text-anchor="middle">
+			ptr
+		</text>
+
+		<rect class="freed" x="36" y="298" width="220" height="38" rx="8"></rect>
+		<text class="label" x="146" y="322" text-anchor="middle">
+			{t.len}
+		</text>
+
+		<rect class="freed" x="36" y="342" width="220" height="38" rx="8"></rect>
+		<text class="label" x="146" y="366" text-anchor="middle">
+			{t.cap}
+		</text>
+
+		<rect class="panel" x="344" y="16" width="280" height="384" rx="12"></rect>
+		<text class="label" x="364" y="42">
+			{t.heap}
+		</text>
+
+		<text class="label" x="364" y="88">
+			{t.oldBuffer}
+		</text>
+		<rect class="freed" x="364" y="100" width="152" height="56" rx="10"></rect>
+		{
+			oldChars.map((ch, i) => (
+				<g>
+					<rect class="freed" x={378 + i * 44} y="110" width="36" height="36" rx="6"></rect>
+					<text class="label" x={396 + i * 44} y="134" text-anchor="middle">
+						{ch}
+					</text>
+				</g>
+			))
+		}
+
+		<text class="label" x="364" y="233">
+			{t.buffer}
+		</text>
+		<rect class="object" x="364" y="245" width="152" height="56" rx="10"></rect>
+		{
+			newChars.map((ch, i) => (
+				<g>
+					<rect class="slot" x={378 + i * 44} y="255" width="36" height="36" rx="6"></rect>
+					<text class="name" x={396 + i * 44} y="279" text-anchor="middle">
+						{ch}
+					</text>
+				</g>
+			))
+		}
+
+		<path class="arrow" d="M256 103 H320 V273 H364" marker-end="url(#rd-head)"></path>
+
+		<defs>
+			<marker id="rd-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

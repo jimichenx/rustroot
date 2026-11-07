@@ -1,0 +1,91 @@
+---
+/**
+ * 5.2「部分移动」。
+ * let name = user.name; 之后：user.name 是虚线空位，user.age 仍是 7，
+ * name 持有 String 的 ptr / len / cap，并负责释放堆上那一份 Ferris。
+ * user 整体已残缺，不能再当作完整的 User 使用。
+ * 样式见 src/styles/diagrams.css。
+ */
+import { CURRENT } from '../../config/site';
+
+const isEn = CURRENT.code === 'en';
+const t = isEn
+	? {
+			caption:
+				'After let name = user.name;, field user.name is a dashed hole and reading it is E0382, while user.age still holds 7 and can be used. The whole user is incomplete, so it cannot be used as a User. The 6-byte buffer Ferris on the heap is now freed by name; when user goes out of scope, only the fields still inside it are dropped.',
+			title: 'Stack and heap after moving user.name',
+			desc: 'On the left, stack frame main. The binding user: User is outlined as incomplete: it cannot be used as a whole value (E0382). Inside it, user.name is a dashed hole labeled moved out, and user.age is a solid slot still holding 7: u32. Below the struct, name: String holds ptr, len 6, and cap 6. A solid arrow labeled move ownership runs from user.name down to name. On the right, the heap holds one buffer, Ferris, 6 bytes. A solid arrow runs from name to that buffer; name now frees it. When user leaves the scope, only fields still inside, such as age, are dropped.',
+			stack: 'stack frame · main',
+			heap: 'heap',
+			partial: 'incomplete · cannot use whole · E0382',
+			moved: 'moved out (cannot read · E0382)',
+			alive: 'not moved (still usable)',
+			move: 'move ownership',
+			bytes: '6 bytes',
+			drop: 'name frees this buffer',
+		}
+	: {
+			caption:
+				'执行 let name = user.name; 之后，user.name 变成虚线空位，再读会报 E0382；user.age 仍是 7，可以继续用。user 整体已经残缺，不能再当作完整的 User。堆上 6 字节的 Ferris 改由 name 负责释放；user 离开作用域时，只清理还留在里面的字段。',
+			title: '移出 user.name 之后的栈与堆',
+			desc: '左侧是栈帧 main。绑定 user: User 标成整体已残缺，不能再当作完整的 User 使用（E0382）。里面 user.name 是虚线空位，标明已移出；user.age 是实线槽，里面仍是 7: u32。结构体下方，name: String 持有 ptr、len 6 和 cap 6。一条标着移动所有权的实线箭头从 user.name 向下指向 name。右侧堆上只有一份缓冲区 Ferris，6 字节。实线箭头从 name 指向这块缓冲区，释放责任已经交给 name。user 离开作用域时，只清理还留在里面的字段，例如 age。',
+			stack: '栈帧 main',
+			heap: '堆',
+			partial: '整体已残缺 · 不可整体使用 E0382',
+			moved: '已移出（禁止再读 E0382）',
+			alive: '未移动（仍可正常访问）',
+			move: '移动所有权',
+			bytes: '6 字节',
+			drop: '释放责任已移交给 name',
+		};
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 360" role="img" aria-labelledby="spm-title spm-desc">
+		<title id="spm-title">{t.title}</title>
+		<desc id="spm-desc">{t.desc}</desc>
+
+		<text class="code" x="16" y="24">let name = user.name;</text>
+
+		<rect class="panel" x="12" y="36" width="408" height="312" rx="12"></rect>
+		<text class="label" x="28" y="56">{t.stack}</text>
+
+		<rect class="panel" x="56" y="68" width="348" height="180" rx="12"></rect>
+		<text class="code" x="70" y="88">user: User</text>
+		<text class="edge-sub" x="390" y="88" text-anchor="end">{t.partial}</text>
+
+		<rect class="freed" x="70" y="100" width="320" height="60" rx="8"></rect>
+		<text class="code" x="84" y="124">user.name</text>
+		<text class="label" x="84" y="146">{t.moved}</text>
+
+		<rect class="slot" x="70" y="172" width="320" height="60" rx="8"></rect>
+		<text class="code" x="84" y="194">user.age</text>
+		<text class="name" x="376" y="194" text-anchor="end">7: u32</text>
+		<text class="label" x="84" y="216">{t.alive}</text>
+
+		<text class="edge-label" x="48" y="268">{t.move}</text>
+
+		<rect class="slot" x="56" y="280" width="348" height="52" rx="8"></rect>
+		<text class="code" x="70" y="311">name: String</text>
+		<text class="code" x="390" y="311" text-anchor="end">ptr | len: 6 | cap: 6</text>
+
+		<path class="arrow" d="M70 130 H34 V306 H56" marker-end="url(#spm-head)"></path>
+
+		<rect class="panel" x="432" y="36" width="196" height="312" rx="12"></rect>
+		<text class="label" x="448" y="56">{t.heap}</text>
+
+		<text class="edge-label" x="530" y="252" text-anchor="middle">{t.drop}</text>
+		<rect class="object" x="446" y="268" width="168" height="76" rx="10"></rect>
+		<text class="name" x="530" y="302" text-anchor="middle">Ferris</text>
+		<text class="label" x="530" y="326" text-anchor="middle">{t.bytes}</text>
+
+		<path class="arrow" d="M404 306 H446" marker-end="url(#spm-head)"></path>
+
+		<defs>
+			<marker id="spm-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

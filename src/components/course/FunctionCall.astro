@@ -1,0 +1,229 @@
+---
+/**
+ * 1.4 的两张示意图。
+ * move：传参把地址交出去，函数返回时堆被释放。
+ * borrow：形参是引用，函数返回时堆还在，原来的变量仍有效。
+ * 样式见 src/styles/diagrams.css。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	part: 'move' | 'borrow';
+}
+
+const { part } = Astro.props;
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			moveCaption:
+				'During the call, s is invalid and the parameter points at the data. After the call returns, the parameter is gone and that data is freed.',
+			moveTitle: 'Passing s into a function moves it',
+			moveDesc:
+				'Two states. During the call, the caller row for s is marked invalid and has no arrow. The parameter row holds the address, and an arrow runs to the data on the heap. After the call returns, the function frame is gone, s is still invalid, and the data on the heap is freed.',
+			borrowCaption:
+				'During the call, s and the parameter both point at the same data. The parameter is a reference. After the call returns, the reference is gone, and s and the data are still there.',
+			borrowTitle: 'Passing a reference does not move s',
+			borrowDesc:
+				'Two states. During the call, s holds an address and the parameter holds a reference. Both arrows run to the single block of data. After the call returns, the function frame is gone. s still holds the address, and the arrow to the data remains.',
+			during: 'during the call',
+			after: 'after it returns',
+			stack: 'stack',
+			heap: 'heap',
+			caller: 's',
+			param: 'parameter',
+			addr: 'address',
+			ref: 'reference',
+			data: 'data',
+			invalid: 'invalid',
+			frameGone: 'frame is gone',
+		}
+	: {
+			moveCaption: '调用中，s 失效，形参指向堆上的数据。函数返回，形参离开，这块数据被释放。',
+			moveTitle: '把 s 传进函数，就是一次移动',
+			moveDesc:
+				'两种状态。调用中，调用方的 s 标成失效，没有箭头；形参那一格是地址，箭头指向堆上的数据。返回后，函数栈帧已离开，s 仍然失效，堆上的数据被释放。',
+			borrowCaption:
+				'调用中，s 和形参都指向同一块数据，形参放的是引用。函数返回，引用离开作用域，s 和数据都还在。',
+			borrowTitle: '传入引用时，s 不移动',
+			borrowDesc:
+				'两种状态。调用中，s 那一格是地址，形参那一格是引用，两支箭头都指向同一块数据。返回后，函数栈帧已离开，s 仍握着地址，箭头还在。',
+			during: '调用中',
+			after: '返回后',
+			stack: '栈',
+			heap: '堆',
+			caller: 's',
+			param: '形参',
+			addr: '地址',
+			ref: '引用',
+			data: '数据',
+			invalid: '失效',
+			frameGone: '函数栈帧已离开',
+		};
+---
+
+{
+	part === 'move' && (
+		<figure class="diagram">
+			<figcaption>{t.moveCaption}</figcaption>
+			<svg viewBox="0 0 640 452" role="img" aria-labelledby="fc-move-title fc-move-desc">
+				<title id="fc-move-title">{t.moveTitle}</title>
+				<desc id="fc-move-desc">{t.moveDesc}</desc>
+
+				<text class="label" x="20" y="28">
+					{t.during}
+				</text>
+				<rect class="panel" x="16" y="40" width="280" height="200" rx="12"></rect>
+				<text class="label" x="36" y="64">
+					{t.stack}
+				</text>
+				<text class="name" x="36" y="96">
+					{t.caller}
+				</text>
+				<text class="label" x="56" y="96">
+					{t.invalid}
+				</text>
+				<rect class="freed" x="36" y="108" width="220" height="40" rx="8"></rect>
+				<text class="label" x="146" y="134" text-anchor="middle">
+					{t.addr}
+				</text>
+				<text class="name" x="36" y="172">
+					{t.param}
+				</text>
+				<rect class="slot" x="36" y="180" width="220" height="40" rx="8"></rect>
+				<text class="name" x="146" y="206" text-anchor="middle">
+					{t.addr}
+				</text>
+
+				<rect class="panel" x="344" y="40" width="280" height="200" rx="12"></rect>
+				<text class="label" x="364" y="64">
+					{t.heap}
+				</text>
+				<rect class="object" x="384" y="174" width="200" height="52" rx="10"></rect>
+				<text class="name" x="484" y="206" text-anchor="middle">
+					{t.data}
+				</text>
+				<path class="arrow" d="M256 200 H384" marker-end="url(#fc-move-head)"></path>
+
+				<text class="label" x="20" y="268">
+					{t.after}
+				</text>
+				<rect class="panel" x="16" y="280" width="280" height="156" rx="12"></rect>
+				<text class="label" x="36" y="304">
+					{t.stack}
+				</text>
+				<text class="name" x="36" y="332">
+					{t.caller}
+				</text>
+				<text class="label" x="56" y="332">
+					{t.invalid}
+				</text>
+				<rect class="freed" x="36" y="340" width="220" height="36" rx="8"></rect>
+				<text class="label" x="146" y="364" text-anchor="middle">
+					{t.addr}
+				</text>
+				<rect class="freed" x="36" y="386" width="220" height="34" rx="8"></rect>
+				<text class="label" x="146" y="408" text-anchor="middle">
+					{t.frameGone}
+				</text>
+
+				<rect class="panel" x="344" y="280" width="280" height="156" rx="12"></rect>
+				<text class="label" x="364" y="304">
+					{t.heap}
+				</text>
+				<rect class="freed" x="384" y="332" width="200" height="52" rx="10"></rect>
+				<text class="label" x="484" y="364" text-anchor="middle">
+					{t.data}
+				</text>
+
+				<defs>
+					<marker id="fc-move-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+						<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+					</marker>
+				</defs>
+			</svg>
+		</figure>
+	)
+}
+
+{
+	part === 'borrow' && (
+		<figure class="diagram">
+			<figcaption>{t.borrowCaption}</figcaption>
+			<svg viewBox="0 0 640 480" role="img" aria-labelledby="fc-borrow-title fc-borrow-desc">
+				<title id="fc-borrow-title">{t.borrowTitle}</title>
+				<desc id="fc-borrow-desc">{t.borrowDesc}</desc>
+
+				<text class="label" x="20" y="28">
+					{t.during}
+				</text>
+				<rect class="panel" x="16" y="40" width="280" height="230" rx="12"></rect>
+				<text class="label" x="36" y="64">
+					{t.stack}
+				</text>
+				<text class="name" x="36" y="96">
+					{t.caller}
+				</text>
+				<rect class="slot" x="36" y="104" width="220" height="40" rx="8"></rect>
+				<text class="name" x="146" y="130" text-anchor="middle">
+					{t.addr}
+				</text>
+				<text class="name" x="36" y="168">
+					{t.param}
+				</text>
+				<rect class="slot" x="36" y="176" width="220" height="40" rx="8"></rect>
+				<text class="name" x="146" y="202" text-anchor="middle">
+					{t.ref}
+				</text>
+
+				<rect class="panel" x="344" y="40" width="280" height="230" rx="12"></rect>
+				<text class="label" x="364" y="64">
+					{t.heap}
+				</text>
+				<rect class="object" x="384" y="108" width="200" height="104" rx="10"></rect>
+				<text class="name" x="484" y="166" text-anchor="middle">
+					{t.data}
+				</text>
+				<path class="arrow" d="M256 124 H384" marker-end="url(#fc-borrow-head)"></path>
+				<path class="arrow" d="M256 196 H384" marker-end="url(#fc-borrow-head)"></path>
+
+				<text class="label" x="20" y="298">
+					{t.after}
+				</text>
+				<rect class="panel" x="16" y="310" width="280" height="154" rx="12"></rect>
+				<text class="label" x="36" y="334">
+					{t.stack}
+				</text>
+				<text class="name" x="36" y="362">
+					{t.caller}
+				</text>
+				<rect class="slot" x="36" y="370" width="220" height="40" rx="8"></rect>
+				<text class="name" x="146" y="396" text-anchor="middle">
+					{t.addr}
+				</text>
+				<rect class="freed" x="36" y="420" width="220" height="30" rx="8"></rect>
+				<text class="label" x="146" y="440" text-anchor="middle">
+					{t.frameGone}
+				</text>
+
+				<rect class="panel" x="344" y="310" width="280" height="154" rx="12"></rect>
+				<text class="label" x="364" y="334">
+					{t.heap}
+				</text>
+				<rect class="object" x="384" y="364" width="200" height="52" rx="10"></rect>
+				<text class="name" x="484" y="396" text-anchor="middle">
+					{t.data}
+				</text>
+				<path class="arrow" d="M256 390 H384" marker-end="url(#fc-borrow-head-2)"></path>
+
+				<defs>
+					<marker id="fc-borrow-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+						<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+					</marker>
+					<marker id="fc-borrow-head-2" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+						<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+					</marker>
+				</defs>
+			</svg>
+		</figure>
+	)
+}

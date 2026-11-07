@@ -1,0 +1,11 @@
+[package]
+name = "hard-triangle"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "第 1 课 · 困难三角 — 代码实验"
+
+[[bin]]
+name = "moved-value"
+path = "src/bin/moved_value.rs"

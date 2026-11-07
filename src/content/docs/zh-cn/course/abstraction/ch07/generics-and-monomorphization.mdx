@@ -1,0 +1,237 @@
+---
+title: "泛型与单态化：批量生产类型与代码的编译期机器"
+description: 从亲手定义类型构造器与「运行时裸数据不含对象信息头」的物理事实出发，推导为什么 Rust 泛型必须在编译期通过单态化将类型信息烧录进各自独立的机器码中，并触碰裸泛型参数的能力边界。
+sidebar:
+  label: 泛型与单态化
+  order: 1
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import monomorphizedAddresses from '../../../../../../../examples/types/generics/src/bin/monomorphized-addresses.rs?raw';
+import bareGenericLimit from '../../../../../../../examples/types/generics/src/bin/bare-generic-limit.rs?raw';
+
+在前六章里，我们已经用过不少带 `<T>` 的标准库类型（如 `Vec<T>`、`Option<T>`、`Result<T, E>`）。
+
+到了这一章，我们从使用者变成定义者。先解决一个最根本的问题：**我们在第 3 章和第 5 章反复验证过，Rust 的值在运行时内存里只是紧挨着的裸字节——一个 `u8` 就是 1 字节，一个 `String` 就是 24 字节，没有任何运行时对象头（Object Header）记录它是什么类型、占几个字节。既然传入函数的参数只是最精简的裸数据，一段写成 `fn swap<T>(a: T, b: T)` 的泛型代码，在运行时到底是怎么知道该拷贝几个字节、又该怎么清理内存的？**
+
+---
+
+## 泛型参数 `<T>` 可以出现在哪四个位置？
+
+在 Rust 中，**泛型（Generics）**就是在定义数据类型或函数时，用 `<T>`（多个参数用逗号分隔，如 `<T, E>`）留出一个等待填入具体类型的编译期参数槽。
+
+它一共可以出现在四个位置：
+
+**1. 泛型结构体**：定义带参数槽的积类型构造器。
+
+<small class="code-source">推演用伪代码</small>
+```rust
+struct Pair<T> {
+    first: T,
+    second: T,
+}
+```
+
+**2. 泛型枚举**：定义带参数槽的和类型构造器（如标准库的 `Option<T>` 与 `Result<T, E>`）。
+
+<small class="code-source">推演用伪代码</small>
+```rust
+enum Option<T> {
+    None,
+    Some(T),
+}
+```
+
+**3. 泛型函数**：在函数名后声明 `<T>`，供形参或返回值使用。
+
+<small class="code-source">推演用伪代码</small>
+```rust
+fn first_item<T>(pair: Pair<T>) -> T {
+    pair.first
+}
+```
+
+**4. 泛型方法块**：第一个 `impl<T>` 向编译器声明「接下来这个块里 `T` 是待填入的泛型类型参数」，第二个 `Pair<T>` 则是把参数填进构造器，为任意 `T` 合成出的 `Pair<T>` 批量挂载方法。
+
+<small class="code-source">推演用伪代码</small>
+```rust
+impl<T> Pair<T> {
+    fn into_swapped(self) -> Pair<T> {
+        Pair { first: self.second, second: self.first }
+    }
+}
+```
+
+正如我们在[类型构造器](/types/type-constructors/)一节中所学，未填入具体类型的裸 `Pair` 还不是类型实体（直接写 `let p: Pair = ...` 会报 `error[E0107]: missing generics`）；只有填入具体类型后，编译器才会按需合成出 `Pair<u8>`（栈上 2 字节）、`Pair<u64>`（栈上 16 字节）或 `Pair<String>`（栈上 48 字节）这样各自独立的类型实体。
+
+---
+
+## 核心推演：裸数据没有信息头，通用代码靠什么运行？
+
+认识了 `<T>` 的四个位置后，我们直接进入本节最核心的物理推演。
+
+假设我们写了一个最简单的泛型函数 `fn swap_tuple<T>(a: T, b: T) -> (T, T)`，作用是把传入的两个同类型值调换位置并返回。接着，我们在程序里分别传入了 `u8`、`u64` 和 `String`。
+
+请从计算机底层信息的角度思考一个问题：
+
+要让 CPU 正确执行 `swap_tuple(a, b)`，CPU 必须确切知道以下**类型元信息**：
+1. 参数 `a` 和 `b` 在栈帧上分别占多少个字节？（是读 1 字节寄存器、8 字节寄存器，还是搬移 24 字节内存？）
+2. 第二个参数 `b` 起始于栈帧的哪个偏移位置？
+3. 如果函数内部丢弃了某个值，在函数返回前需不需要自动调用堆内存释放代码（`drop`）？
+
+**这些类型元信息绝不会凭空产生，也绝不会凭空消失。**
+
+在许多带运行时虚拟机的面向对象语言中，每个值在内存里都自带一个隐藏的**对象信息头（Object Header）**，或者所有变量在栈上一律被包装成统一规格的 8 字节指针。那样一来，运行时数据自身就携带了类型信息（或统一了尺寸），CPU 自然可以用同一份通用的机器指令去搬移那些 8 字节指针。
+
+但在 Rust 中，正如我们在前六章反复确认的那样：**为了零内存浪费与缓存友好，栈上的 `u8` 就是纯粹的 1 个裸字节，`u64` 就是 8 个裸字节，`String` 就是 24 个裸字节的控制头——运行时传入函数的参数里，没有任何对象信息头！**
+
+既然运行时传入的裸数据里**不包含任何类型元信息**，而函数执行又非用这些信息不可，那么在编译器设计中，全宇宙就只剩下两条路可以安放这些信息：
+
+- **路径一（把类型信息烧录进独立的机器码里 —— 编译期单态化）**：
+  保持运行时传入的参数依然是最精简的裸字节、直接按值在栈上传递；编译器在编译期间扫描整个程序，发现你用 `u8`、`u64` 和 `String` 三种类型调用了 `swap_tuple`，就在编译期**把 `swap_tuple<T>` 拆分成三份完全独立的机器码函数**：一份专门搬移 1 字节的 `u8`，一份专门搬移 8 字节的 `u64`，一份专门搬移 24 字节并管理释放的 `String`。
+- **路径二（把类型信息装进胖指针里随参数传入 —— 运行时动态分发）**：
+  如果你坚持在编译后的二进制里只保留一份通用函数代码，那这个函数就无法直接按值接收裸 `T`（因为连栈帧大小都算不出来），必须退一步通过指针间接传参，并且把「这个类型的大小、释放函数与方法地址表」打包成一张表（虚表 vtable），连同数据地址一起组成 **16 字节胖指针**传给函数。这条路就是我们将在第 8 章拆解的动态分发（`&dyn Trait`）。
+
+当你直接编写并调用泛型 `<T>` 时，Rust 走的是彻底的**路径一**。这个在编译期按实际填入的具体类型参数，将一份泛型源码展开、特化为多份独立机器码的过程，就叫做**单态化（Monomorphization）**。
+
+```
+编译前（一份泛型模板源码）：
+  fn swap_tuple<T>(a: T, b: T) -> (T, T)
+         │
+         ├─ 看到调用点传入 u8     ──→ 生成专属机器码 swap_tuple_u8     （操作 1B 寄存器，无释放）
+         ├─ 看到调用点传入 u64    ──→ 生成专属机器码 swap_tuple_u64    （操作 8B 寄存器，无释放）
+         └─ 看到调用点传入 String ──→ 生成专属机器码 swap_tuple_String （搬移 24B 控制头，含释放胶水）
+```
+
+我们可以写一段实验代码，把 `swap_tuple::<u8>`、`swap_tuple::<u64>` 和 `swap_tuple::<String>` 分别赋给函数指针，直接在运行时打印这三份机器码在内存代码段中的真实地址：
+
+<small class="code-source">源文件：<code>examples/types/generics/src/bin/monomorphized-addresses.rs</code></small>
+<Code code={monomorphizedAddresses} lang="rust" />
+
+运行输出（具体十六进制地址随每次运行加载位置而异，但彼此必定不同）：
+
+<small class="code-source">运行输出</small>
+```text
+u8     (1B) -> (2, 1), code addr = 0x102c79690
+u64    (8B) -> (20, 10), code addr = 0x102c796b0
+String (24B) -> (b, a), code addr = 0x102c79668
+distinct addresses? true
+```
+
+实验输出给出了直接的物理证据：
+虽然你在源码里只写了一个名叫 `swap_tuple` 的函数，但在编译生成的二进制可执行文件里，**根本不存在一个通用的 `swap_tuple` 函数**。取而代之的，是住在三个不同内存地址（`0x102c79690`、`0x102c796b0`、`0x102c79668`）上的三段独立机器码（代码中用 `swap_tuple::<u8>` 显式指定了具体的单态化版本；日常直接调用 `swap_tuple(1u8, 2u8)` 时编译器会自动从实参推算出 `T`，无需手写 `::<u8>`）。如果某个泛型函数从头到尾没有任何地方调用，编译器甚至不会为它生成哪怕一字节的机器指令。
+
+<Aside type="note" title="用困难三角看单态化的取舍">
+单态化正是 Rust 实现**零成本抽象（Zero-Cost Abstractions）**的核心基石：在运行时，调用 `swap_tuple(1u8, 2u8)` 与你亲手写一个专用的 `swap_u8(a: u8, b: u8)` 机器码完全一致——零装箱、零对象头、零运行时查表跳转。
+
+而在困难三角中，这份运行期性能与安全的代价被转移到了**编译期与产物尺寸**上：如果你对十几种具体类型调用同一个庞大的泛型函数，编译器就必须重复编译并生成十几份机器码，导致编译耗时增加、最终可执行文件体积膨胀（Code Bloat）。在第 8 章中，我们将学习如何在对二进制体积敏感或需要存放异构集合的场景下，按需切换到 `dyn Trait` 动态分发。
+</Aside>
+
+---
+
+## 单态化之前的「黑盒困境」：为什么裸 `<T>` 里连加法都不让写？
+
+既然单态化会在编译期把 `T` 替换成具体的 `i32` 或 `f64`，那么许多有 C++ 模板（Template）经验、或者刚理解了单态化的读者，会立刻尝试写出下面这段看似顺理成章的代码：
+
+「我想写一个泛型函数 `fn add_values<T>(a: T, b: T) -> T { a + b }`，然后在 `main` 里只传两个 `i32` 进去。既然单态化时 `T` 会变成 `i32`，而 `i32 + i32` 完全合法，编译器直接帮我展开不就行了吗？」
+
+来跑一下下面这段实验代码，看看裸 `<T>` 函数体内到底允许写什么、禁止写什么：
+
+<small class="code-source">源文件：<code>examples/types/generics/src/bin/bare-generic-limit.rs</code></small>
+<Code code={bareGenericLimit} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+n = 20, s = new
+```
+
+在 `keep_second<T>` 中，我们把 `_first` 留着离开作用域自动释放，把 `second` 整体移动（Move）作为返回值传出——这段代码无论是传 `i32` 还是传 `String` 都能顺利编译通过。
+
+但只要你取消第 9～11 行 `add_values<T>` 的注释，哪怕整个程序里你连一次都没调用过它，或者只传了 `i32`，编译器也会在第一时间报错拦截：
+
+<small class="code-source">编译器诊断摘要：取消 bare-generic-limit.rs 第 9～11 行注释后</small>
+```text
+error[E0369]: cannot add `T` to `T`
+  --> src/bin/bare-generic-limit.rs:10:7
+   |
+10 |     a + b
+   |     - ^ - T
+   |     |
+   |     T
+   |
+help: consider restricting type parameter `T` with trait `Add`
+   |
+ 9 | fn add_values<T: std::ops::Add<Output = T>>(a: T, b: T) -> T {
+   |                +++++++++++++++++++++++++++
+```
+
+为什么编译器不等到单态化代入 `i32` 之后再检查，而是在看到 `fn add_values<T>(a: T, b: T)` 的那一刻就当场报错？
+
+这正是 Rust 泛型与传统宏替换式模板的分水岭：**Rust 的类型检查与借用检查，是在单态化压模之前，直接对着泛型函数签名和函数体做一次性检验的。**
+
+1. **函数签名就是完整的契约**：
+   当你写下没有任何附加说明的 `<T>` 时，你向编译器作出的声明是：「这个函数必须对**宇宙间任意一个具体类型 `T`** 都百分之百成立」。
+2. **对未知黑盒 `T`，编译器唯一确知的能力只有所有权流转**：
+   既然 `T` 可以是任何类型（既可能是 `i32`，也可能是根本不支持加法的 `User` 结构体或网络连接），编译器在审查模板时，就把裸 `T` 当作一个**完全不透明的黑盒**。
+   对于一个任意的未知类型 `T`，所有类型共有的通用操作只有三样：**整体移动（Move）、取引用借用（`&T` / `&mut T`）、以及离开作用域时自动释放（Drop）**（这也是为什么 `keep_second<T>` 能够通过编译）。除此之外，你不能对裸 `T` 做加法 `a + b`、不能比较大小 `a > b`、不能用 `println!("{a}")` 打印、甚至不能调用任何方法！
+
+那么，如果我们的泛型函数确实需要比较大小、打印文本或调用特定方法，该怎么在函数签名上向编译器立下准入门槛，声明「我这里的 `T` 不接收任意黑盒，只接收具备特定能力的类型」？
+
+看上面编译器报错末尾给出的提示：`help: consider restricting type parameter T with trait ...`。这就直接逼出了下一节的核心机制——**Trait 契约与泛型约束（Trait Bound）**。
+
+[继续：Trait 契约与泛型约束 →](/abstraction/traits-and-bounds/)
+
+---
+
+## 小结
+
+1. **泛型参数的四个位置**：在 `struct`、`enum`、`fn` 或 `impl` 后声明 `<T>` 即留出了编译期类型参数槽；填入不同具体类型参数（如 `Pair<u8>` 与 `Pair<String>`）会合成出栈内存布局与释放规则截然不同的编译期类型实体。
+2. **从信息守恒推导单态化**：因为 Rust 的运行时值是不含对象信息头的裸数据，按值传递的泛型函数无法靠单份通用机器码在运行时获知数据的尺寸与清理逻辑，必须在编译期通过**单态化（Monomorphization）**将类型信息烧录进按具体类型分别生成的多份独立机器码中。
+3. **单态化前的模板检查边界**：Rust 在单态化前直接对泛型函数体做类型与借用检查；未加约束的裸 `<T>` 只支持移动、借用与释放，任何额外操作都必须通过 Trait 约束显式声明。
+
+### 动手核对与小练习
+
+1. **机器码份数与内存布局推演**：阅读下面这段代码，不运行程序，请回答：
+   - `Wrapper<bool>` 和 `Wrapper<(u64, u64)>` 在栈上分别占多少字节？
+   - 编译这段程序时，编译器一共会为泛型函数 `unwrap_or_first<T>` 单态化生成几份独立的机器码？如果把 `main` 里的调用全部删掉，又会生成几份？
+   ```rust
+   struct Wrapper<T> {
+       value: T,
+   }
+
+   fn unwrap_or_first<T>(w: Wrapper<T>, fallback: T) -> T {
+       let _ = fallback;
+       w.value
+   }
+
+   fn main() {
+       let a = unwrap_or_first(Wrapper { value: true }, false);
+       let b = unwrap_or_first(Wrapper { value: true }, true);
+       let c = unwrap_or_first(Wrapper { value: (1u64, 2u64) }, (0u64, 0u64));
+       println!("{a}, {b}, {}", c.0);
+   }
+   ```
+2. **裸 `<T>` 的能力边界判断**：下面两个泛型函数中，哪一个可以通过编译，哪一个会编译失败？为什么即便在 `main` 中只传入了 `i32`，编译器仍然会拦截其中之一？
+   ```rust
+   fn make_pair<T>(a: T, b: T) -> (T, T) {
+       (a, b)
+   }
+
+   fn is_equal<T>(a: T, b: T) -> bool {
+       a == b
+   }
+   ```
+
+<details>
+<summary>点击核对参考答案</summary>
+
+1. **机器码份数与布局推演**：
+   - `Wrapper<bool>` 在栈上占 **1 字节**；`Wrapper<(u64, u64)>` 在栈上占 **16 字节**。
+   - 编译器一共会为 `unwrap_or_first<T>` 生成 **2 份**独立的机器码（一份对应 `T = bool`，被 `a` 和 `b` 两次调用共同复用；另一份对应 `T = (u64, u64)`，供 `c` 调用）。如果把 `main` 里的调用全部删掉，编译器会生成 **0 份**机器码。
+2. **裸 `<T>` 的能力边界判断**：
+   - `make_pair<T>` **可以通过编译**：它只将 `a` 和 `b` 按值移动装入元组，移动（Move）是所有未知类型 `T` 都天然具备的基础操作。
+   - `is_equal<T>` **会编译失败**（报 `error[E0369]: binary operation == cannot be applied to type T`）：因为编译器在单态化代入 `i32` 之前就会对 `is_equal<T>` 做静态检查，而未加约束的未知类型 `T` 并未承诺支持相等比较运算。
+
+</details>

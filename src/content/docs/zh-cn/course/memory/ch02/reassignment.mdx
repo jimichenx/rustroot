@@ -1,0 +1,194 @@
+---
+title: "可变与重新赋值：旧值去了哪里"
+description: 从不可变绑定的两条编译报错出发，对照 Java 的 final 拆透 let mut 的两项权限，并顺着编译器的状态追踪拆解替换旧值、移动后重填与延迟初始化。
+sidebar:
+  label: 可变与重新赋值
+  order: 2
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import ReassignDrop from '../../../../../../components/course/ReassignDrop.astro';
+import ReinitMove from '../../../../../../components/course/ReinitMove.astro';
+import immutable from '../../../../../../../examples/memory/variables/src/bin/immutable.rs?raw';
+import mutateContent from '../../../../../../../examples/memory/variables/src/bin/mutate-content.rs?raw';
+import mismatch from '../../../../../../../examples/memory/variables/src/bin/type-mismatch.rs?raw';
+import replace from '../../../../../../../examples/memory/variables/src/bin/replace.rs?raw';
+import reinitialize from '../../../../../../../examples/memory/variables/src/bin/reinitialize.rs?raw';
+import delayed from '../../../../../../../examples/memory/variables/src/bin/delayed-init.rs?raw';
+import javaFinal from '../../../../../../../examples/memory/variables/java/FinalReference.java?raw';
+
+
+上一节我们看到的每一个 `=`，左边都带着 `let`——在创建新变量的同时放入它的第一个值。如果一个变量已经创建好了，后面**不写 `let`**，直接写一行 `x = ...` 给它换入新值，会发生什么？
+
+这一节解决两件事：第一，默认不可变的绑定限制了哪两项权限、`let mut` 放开了什么；第二，当新值换入时，变量原本持有的旧值去了哪里。
+
+## 默认不可变与 `let mut` 的两项权限
+
+在 Rust 中，直接用 `let` 声明的变量默认是**不可变绑定**。许多初学者以为不可变绑定只是「不能再用 `=` 给变量换一个新值」，但实际上，它同时限制了**两项不同的修改权限**。
+
+### 1. 第一项权限：给变量重新赋值（`x = ...`）
+
+先看最直接的重新赋值。下面这段程序里，`n` 已经初始化为 `7`，注释掉的那一行试图把它改成 `8`：
+
+<small class="code-source">源文件：<code>examples/memory/variables/src/bin/immutable.rs</code></small>
+<Code code={immutable} lang="rust" />
+
+取消 `// n = 8;` 的注释，编译器当场拒绝：
+
+<small class="code-source">编译器诊断摘要：取消 immutable.rs 中标记行的注释后</small>
+```text
+error[E0384]: cannot assign twice to immutable variable `n`
+```
+
+`error[E0384]` 挡住的是**重新赋值（Reassignment）**：不允许把不可变变量 `n` 持有的值换成另一个值。如果需要重新赋值，必须在声明时加上 `mut`，写成 `let mut n = 7;`。
+
+不过，加上 `let mut` 允许换入新值，**绝不等于允许改换变量的类型**：
+
+<small class="code-source">源文件：<code>examples/memory/variables/src/bin/type-mismatch.rs</code></small>
+<Code code={mismatch} lang="rust" />
+
+取消 `// n = String::from("hello");` 的注释，编译器直接报类型不匹配（`error[E0308]: mismatched types`，预期 `i32`，实际却是 `String`）。因为 `n` 在声明时就已经确定了它的类型是 `i32`（栈上 4 字节），`mut` 只允许往这个 4 字节槽位里换入新的 `i32` 值，不允许半路把它变成占三个机器字控制头且带释放责任的 `String`。
+
+### 2. 第二项权限：修改变量管理的数据内容
+
+现在看第二项权限。声明一个不可变绑定的字符串 `let s = String::from("hello");`，后面**不写 `s = ...` 重新赋值**，只调用 `s.push_str("!")` 往堆缓冲区末尾追加一个感叹号，能通过编译吗？
+
+<small class="code-source">源文件：<code>examples/memory/variables/src/bin/mutate-content.rs</code></small>
+<Code code={mutateContent} lang="rust" />
+
+取消 `// s.push_str("!");` 的注释，编译器报出了另一个错误码：
+
+<small class="code-source">编译器诊断摘要：取消 mutate-content.rs 中标记行的注释后</small>
+```text
+error[E0596]: cannot borrow `s` as mutable, as it is not declared as mutable
+```
+
+明明没有写 `s = ...` 换掉整个变量，为什么连调用方法改一下内容都不允许？
+
+因为 `s.push_str("!")` 会修改栈上控制头的长度（`len`）并向堆缓冲区追加字符。对普通所有者变量来说，**如果绑定没有声明为 `let mut`，编译器不仅禁止给变量重新赋值（`E0384`），也禁止经由该变量修改内部数据（`E0596`）。** 只有写成 `let mut s = String::from("hello");`，才同时放开这两项权限。
+
+这里也要顺手破除一个物理直觉上的误区：**一个变量是不是 `mut`（可变），在运行时的栈内存或堆内存里有标记位（flag）吗？**
+
+**完全没有。** 和上一节讲的「移动（Move）失效」一模一样，**`mut` 也是一个纯粹的编译期概念**。无论你写 `let n = 7;` 还是 `let mut n = 7;`，运行时栈帧上放的都只是干干净净的 4 个整数字节，没有任何多余的标记位。「该变量是否允许修改」同样登记在**编译器内部的状态表**里：编译代码时，一旦遇到重新赋值（`n = 8;`）或可变借用（`s.push_str("!")`），编译器就去查这张表——表里没登记 `mut`，当场报错拒绝编译；表里登记了 `mut`，就放行并生成普通的机器指令。
+
+这里不妨留心观察一下 `E0596` 的报错原文：我们明明只是调用了一个方法 `s.push_str("!")`，代码里连一个 `&` 都没写，为什么编译器却说 `cannot borrow s as mutable`（无法将 `s` 作为可变借用）？编译器又是怎么在不看函数体内部实现的情况下，一眼认出 `push_str` 会修改数据、并在调用这一层直接拦下来的？先带着这个好奇心往下走，第二篇讲到方法签名与引用转换时，谜底自然揭晓。
+
+<Aside type="note" title="如果你来自 Java：为什么不能把 Rust 的 let 等同于 final？">
+不少有 Java 或 JavaScript 背景的开发者，刚开始会把 Rust 默认的 `let` 当成 Java 的 `final`（或 JS 的 `const`）。但对比下面这段 Java 代码，就能看出两者的边界不同：
+
+<small class="code-source">源文件：<code>examples/memory/variables/java/FinalReference.java</code></small>
+<Code code={javaFinal} lang="java" />
+
+这段 Java 程序能正常编译并打印 `hello!`：
+- 在 Java 中，`final StringBuilder s` 限制的仅仅是**第一项权限（重新赋值）**——不能写 `s = new StringBuilder("bye")` 改指别的对象，但完全可以调用 `s.append("!")` 修改堆上对象的内容。
+- 而在 Rust 中，普通所有者变量的不可变绑定 `let s = String::from("hello")`，**把「重新赋值（`s = ...`）」和「修改内部数据（`s.push_str(...)`）」两项权限一并限制了**。（注：这里用 Java 的 `StringBuilder` 对照，是因为 Java 的 `String` 本身不可变，无法用来观察 `final` 对修改对象内容的影响。）
+</Aside>
+
+---
+
+## 重新赋值的三种情况：旧值去了哪里？
+
+看清了 `let mut` 的两项权限，现在回到重新赋值语句 `x = new_val;` 本身：**当新值换入变量 `x` 时，`x` 原本手里的东西怎么处理？**
+
+这里要先分清上一节讲过的两类类型：
+- 对 `i32` 这类实现了 `Copy`、不带堆内存释放责任的类型，赋值给别的变量不会让自己失效，重新赋值 `n = 8;` 也只是直接覆盖栈上的 4 个字节，没有堆内存需要清理。
+- 但对 **`String` 这类未实现 `Copy`、承担独占释放责任的移动类型**，情况就不同了。编译器在扫描每一行代码时，会在内部的**变量状态表**里实时更新每个变量当前的**持有状态**（是「持有有效值」、「值已移出」还是「尚未初始化」）。根据赋值发生前状态表里记录的状态，同样一行 `x = ...` 会在底层做出三种不同的动作（前两种针对移动类型，第三种适用于所有类型）。
+
+### 1. 情况一：持有有效旧值（当场释放）
+
+第一章的规则是「变量离开作用域（`}`）时，自动释放它指向的堆内存」。如果还没走到 `}`，移动类型的变量 `target` 手里原本握着 `"old"`，半路执行 `target = source;` 把它换成了 `"new"`，会发生什么？
+
+<small class="code-source">源文件：<code>examples/memory/variables/src/bin/replace.rs</code></small>
+<Code code={replace} lang="rust" />
+
+运行程序，依次打印 `old new` 和 `new`。
+
+在执行 `target = source;` 之前，`target` 负责释放 `"old"`，`source` 负责释放 `"new"`。当执行 `target = source;` 时，`"new"` 的三格控制头要移入 `target` 的栈槽位。此时 `target` 原先指着的 `"old"` 怎么办？
+- 不能丢着不管——一旦 `target` 的三格控制头被 `"new"` 覆盖，栈上就再也没有 `"old"` 的堆地址，会直接造成内存泄漏；
+- 也不可能等到 `main` 结尾的 `}` 再释放——到 `}` 时，`target` 手里装的已经是 `"new"` 了。
+
+因此，Rust 的规则非常干脆：**当给一个仍持有有效值的移动类型变量重新赋值时，编译器会在覆盖栈槽位之前，先在 `=` 这一行当场释放该变量原先持有的旧值；随后再把右侧的新值移入该变量。**
+
+<ReassignDrop />
+
+按时间顺序追踪两份堆缓冲区的释放责任：
+
+| 执行时刻 | `"old"` 堆缓冲区的状态与责任 | `"new"` 堆缓冲区的状态与责任 |
+| --- | --- | --- |
+| 执行 `target = source;` **之前** | 由 `target` 持有并负责释放 | 由 `source` 持有并负责释放 |
+| 执行 `target = source;` **当行** | **`target` 的旧值在此处当场被释放** | 控制头移入 `target`（`source` 失效），改由 `target` 负责 |
+| `main` 作用域结束（`}`）**之时** | 早在赋值那一行就已释放，不再处理 | 由 `target` 在离开作用域时释放 |
+
+这是对第一章「离开作用域就释放」的重要补全：**释放责任不仅会在离开作用域（`}`）时触发，当唯一所有者手里的旧值被重新赋值替换掉的那一刻，也会当场触发释放。**
+
+### 2. 情况二：旧值已被移走（直接接手）
+
+同样是移动类型 `String`，如果变量 `s` 原本有值，但在重新赋值之前，它手里的值已经通过移动交给了别的变量呢？
+
+<small class="code-source">源文件：<code>examples/memory/variables/src/bin/reinitialize.rs</code></small>
+<Code code={reinitialize} lang="rust" />
+
+运行默认源码，输出 `world hello`。
+
+顺着物理栈帧与编译器状态表的配合，看清这三步：
+1. `let mut s = String::from("hello");`：栈上为 `s` 留出 24 字节槽位，状态表里 `s` 登记为**「持有有效值」**（负责释放 `"hello"`）；
+2. `let t = s;`：发生移动——运行时把 `s` 槽位里的 24 字节控制头复制给 `t`，**`s` 在栈帧上的 24 字节槽位本身并没有被释放**；编译期状态表把 `"hello"` 的释放责任转记到 `t` 名下，并将 `s` 的状态改记为**「值已移出（失效 / 空置）」**（此时若取消 `// println!("{s}");` 的注释，编译器查表会立刻报 `error[E0382]`）；
+3. `s = String::from("world");`：给处于「值已移出」状态的 `s` 重新赋入 `"world"`。
+
+重点在第 3 步，这里同时解答两个疑问：
+- **既然第 2 步 `s` 已经失效了，第 3 步凭什么还能往 `s` 里装新值？** 因为第 2 步的移动只是在编译器状态表里把 `s` 标为失效，**`s` 在栈帧上的 24 字节槽位一直完好地留在原地**。到了第 3 步，直接把 `"world"` 的三格控制头写进 `s` 原来的栈槽位即可。
+- **执行第 3 步的 `s = ...` 时，编译器还会像情况一（`replace.rs`）那样先去释放 `"hello"` 吗？** **不会。** 编译器查状态表发现，执行到这一行前 `s` 的状态是「值已移出」，`"hello"` 的释放责任早在 `let t = s;` 那一行就移交给了 `t`。因此编译器在这里**不会生成任何释放旧值的指令**，只把 `"world"` 的控制头写入 `s` 的栈槽位，并在状态表里把 `s` 重新改回**「持有有效值」**状态。
+
+<ReinitMove />
+
+对比上一节的配图可以看到，堆上的 `"world"` 和 `"hello"` 两块字符缓冲区**同时存活，没有任何一块被当场释放**。等到 `main` 的 `}` 闭合时，`s` 释放 `"world"`，`t` 释放 `"hello"`，各管各的。
+
+### 3. 情况三：延迟初始化（无需 `mut`）
+
+看清了编译器如何静态追踪变量手里有没有值，还能顺手解开另一个适用于所有类型的语法：如果把变量声明和首次赋值拆成两行写，会怎么样？
+
+<small class="code-source">源文件：<code>examples/memory/variables/src/bin/delayed-init.rs</code></small>
+<Code code={delayed} lang="rust" />
+
+运行默认源码，正常打印 `7`。如果取消 `// println!("{n}");` 的注释，在 `n = 7;` 之前读取它，编译器会当场拦下：
+
+<small class="code-source">编译器诊断摘要：取消 delayed-init.rs 中标记行的注释后</small>
+```text
+error[E0381]: used binding `n` is possibly-uninitialized
+```
+
+注意这段代码里的细节：**前面写的是 `let n: i32;`（没有写 `mut`），为什么后面却能合法地写 `n = 7;`？**
+
+因为编译器在静态追踪时分得一清二楚：
+- `let n: i32;` 只完成了**声明（Declaration）**，此时 `n` 手里从未放过值（此前读取会报未初始化错误 `E0381`）；
+- 后面的 `n = 7;` 虽然写法也是 `x = ...`，但它不是替换已有值的重新赋值，而是让变量首次拿到值的**初始化（Initialization）**。既然不是修改已有值，自然不需要释放旧值，也不需要加 `mut`。
+
+## 总结：三种赋值情况与动手核对
+
+把上面三种不带 `let` 的 `x = ...` 放在一起对照，就能看清编译器在背后维护的状态表：
+
+| 赋值前变量 `x` 的静态状态 | 典型代码模式 | 执行 `x = 新值;` 时的底层动作 | 是否要求声明 `let mut` |
+| --- | --- | --- | --- |
+| **持有有效值**（已初始化且未移出） | `let mut target = ...;`<br/>`target = source;` | 对 `String` 等移动类型，**先当场释放 `target` 手里的旧值**，再接手新值 | **需要** |
+| **值已移出**（曾初始化，但已移动给别的变量） | `let mut s = ...;`<br/>`let t = s;`<br/>`s = new_s;` | 旧值已归 `t` 管，**此处不释放旧值**；直接接手新值并使 `s` 恢复有效 | **需要** |
+| **尚未初始化**（仅用 `let` 声明，从未放入值） | `let n: i32;`<br/>`n = 7;` | 属于首次**初始化**，无旧值可释放；填入初值后变量变为有效（此前读取报 `E0381`） | **不需要** |
+
+### 动手核对
+
+打开 `replace.rs`，把 `target = source;` 改成 `target = String::from("third");`，其余代码不变。
+
+先思考两个问题，再运行验证：
+1. 改写之后，`source` 还能不能在最后一行正常打印出来？
+2. 这段程序一共创建了 `"old"`、`"new"`、`"third"` 三份堆上字符串，它们分别在哪一行被释放？
+
+核对答案：因为没有再用 `source` 给 `target` 赋值，`source` 从未发生移动，可以正常打印。三份字符串中，`"old"` 在执行 `target = String::from("third");` 那一行被当场替换并释放；`"new"` 和 `"third"` 则分别由 `source` 和 `target` 持有，等到 `main` 函数结尾的 `}` 处才释放。
+
+---
+
+这一节我们看的所有 `x = ...` 都不带 `let`——它们始终是在**同一个变量**上操作：受原有类型的约束，二次赋值需要 `mut`，手里有旧值时还会当场触发释放。
+
+但在真实的 Rust 代码里，你经常会看到第三种写法：**对同一个变量名，再写一次 `let`**（比如先写 `let s = String::from("hello");`，紧接着又写一行 `let s = 7;`）。
+
+这时候的 `=` 做的还是重新赋值吗？那个被同名新变量盖住的旧字符串 `"hello"`，也会在 `let s = 7;` 这一行当场释放吗？下一节揭晓答案。
+
+[继续：遮蔽与作用域 →](/memory/shadowing/)

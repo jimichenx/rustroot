@@ -1,0 +1,90 @@
+---
+title: "The stack and the heap: why only the heap needs reclamation"
+description: Stack frames vanish automatically when a function returns, while heap buffers must be explicitly returned to the allocator—a contrast that gives Rust its starting clue.
+sidebar:
+  label: Stack and heap
+  order: 2
+---
+
+import StackAndHeap from '../../../../../../components/course/StackAndHeap.astro';
+
+The previous section set the goal: reclaim memory automatically without writing `free` by hand, and without paying a runtime collector to scan or count references. To see where that reclamation moment can come from, we first need to look at how a running program uses its two main regions of memory: the **stack** and the **heap**.
+
+Those two words describe where bytes live and how they are managed—not two kinds of data types.
+
+## The stack: compile-time known sizes, automatic cleanup on return
+
+When a function is called, the CPU carves out a contiguous block at the top of the stack called a **stack frame** to hold that call's parameters and local variables. When the function returns, the entire frame is discarded in one shot, and every local variable inside it disappears. Calls enter and leave in strict last-in, first-out (LIFO) order.
+
+<StackAndHeap part="frames" />
+
+Allocating or discarding a stack frame usually takes nothing more than moving a stack pointer—it is practically free. Better still, cleanup happens automatically the moment a function returns; nobody has to remember to free a stack frame.
+
+If the stack is that fast and carefree, **what would happen if a program used only the stack?**
+
+For a toy program that adds two numbers `a + b`, the stack is all you need: the compiler knows the exact byte size of `a` and `b` ahead of time, runs the addition, and drops the frame on return. Step beyond fixed-size arithmetic, however, and a stack-only program immediately hits two hard walls:
+
+1. **Every variable on the stack must have a size known at compile time.** When generating machine code, the compiler has to bake in the exact byte size of the stack frame. If the size of a piece of data is only known at **runtime**—a line of text typed by a user, a packet read from a socket, or a list that grows as the program runs—the stack frame has no way to reserve a slot for it in advance.
+2. **Data inside a stack frame cannot outlive the function call that created it.** The instant the call returns, the whole frame is wiped away.
+
+Whenever a program needs to handle data whose size is only known at runtime, the stack alone cannot do the job. The program has to ask another region of memory for space on the fly—and that region is the **heap**.
+
+## The heap: a runtime-allocated resource controlled through a stack pointer
+
+The heap is managed at runtime by a **memory allocator**. When your program needs space at runtime, it tells the allocator how many bytes it wants; the allocator finds a contiguous chunk of heap memory big enough to fit and hands back the **starting address** of that chunk.
+
+Because heap memory is requested dynamically from the allocator, it does not vanish when the function that requested it returns. **A heap allocation is an acquired resource—once requested, it must be returned to the allocator.** Until it is explicitly handed back, those bytes stay occupied.
+
+The allocator returns the **starting address** of the heap allocation. The data may grow or shrink at runtime, but its address has a fixed size—in this model, eight bytes on a 64-bit machine.
+
+That address connects the two regions: **a fixed-size control structure in the stack frame holds the address, while the variable-sized data sits on the heap.**
+
+<StackAndHeap part="split" />
+
+Take Rust's growable string type, `String` (named `name` in the diagram):
+
+<StackAndHeap part="string" />
+
+The variable `name` on the stack is always three machine words wide: a pointer (`ptr`) to the heap allocation, a current length (`len`), and a capacity (`cap`). Its size is fixed at compile time, satisfying the stack's rule—while the variable-length character buffer (`"Rust"`) lives as a resource on the heap, reached through `ptr`.
+
+## Why only the heap needs "reclamation"
+
+Now watch what happens to the two halves the moment a function returns:
+
+<StackAndHeap part="return" />
+
+While the function is running, the stack frame holds the variable `a`, pointing at the heap allocation. When the function returns, the stack frame—and `a` along with it—vanishes automatically. The heap, however, does not follow function calls: the heap block sits right where it was, with no stack variable left pointing to it.
+
+In short, **the call mechanism already cleans up the stack for free; the heap buffer is the part that requires an explicit release.** When we talk about memory reclamation, we are talking about who returns that heap resource to the allocator.
+
+Here are three problems related to releasing heap resources:
+
+- **Nobody returns it**: the stack frame is gone, the heap address is lost forever, and the memory stays occupied until the process exits—a **memory leak**.
+- **Returned too early**: the heap block is freed while a pointer elsewhere still holds the old address and keeps reading or writing through it—a **dangling pointer**.
+- **Returned twice**: the same heap block is handed back to the allocator twice—a **double free**, which is undefined behavior and typically crashes the program.
+
+---
+
+## The mental map to carry into Rust
+
+Languages like Python, Java, and JavaScript deliberately hide the boundary between stack and heap behind their runtimes, so you rarely have to picture where a variable's bytes actually live. In Rust, **keeping a clear mental picture of the stack-and-heap layout is the foundation for every rule that follows.**
+
+Before moving on, lock in this three-part map:
+
+| Dimension | Stack | Heap |
+| --- | --- | --- |
+| **What lives here** | Values whose size is known at compile time (numbers, booleans, and fixed-size control headers pointing to the heap) | Data payloads whose size is only known at runtime or can grow dynamically |
+| **How it is allocated** | Carved out as a stack frame on function entry by moving the stack pointer | Requested at runtime from the memory allocator, which returns a contiguous block's starting address |
+| **How it is reclaimed** | **Automatic**: when the function returns, the whole frame is discarded | **Not automatic**: an acquired resource that must be explicitly returned to the allocator |
+
+Boiled down to three instincts you can call on anytime:
+
+1. **Anything that sits directly on the stack has a compile-time fixed size; anything whose size isn't known until runtime keeps its payload on the heap.**
+2. **Heap data never floats around on its own—it is always driven through a fixed-size control header on the stack that holds its starting address.**
+3. **The stack cleans itself up; "memory management" is always the problem of when to give back the heap resource.**
+
+This map also helps explain why garbage collection (GC) became a widely used engineering solution: since stack frames come and go while heap resources stay behind, a tracing collector can start from live variables, follow their pointers into the heap, keep reachable data, and reclaim the rest. This frees programmers from tracking deallocation timing by hand.
+
+What if we refuse to pay the runtime cost of scanning or reference counting too?
+
+Then we have to look back at instincts 2 and 3 for the only clue left: the heap resource itself has no built-in exit moment, **but the stack variable controlling it does—the exact closing brace (`}`) where that variable goes out of scope.** In the next section, we follow that single clue to build our first GC-free automatic reclamation model.

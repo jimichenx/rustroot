@@ -1,0 +1,222 @@
+---
+title: 位置表达式与值表达式
+description: 从赋值、借用、解引用和字段移动理解 Rust 表达式代表位置还是产生值。
+sidebar:
+  label: 位置表达式与值表达式
+  order: 1
+---
+
+import { Code } from '@astrojs/starlight/components';
+
+import varPlace from '../../../../../../examples/appendix/place-value-expressions/src/bin/var-place.rs?raw';
+import assignPlace from '../../../../../../examples/appendix/place-value-expressions/src/bin/assign-place.rs?raw';
+import indexPlace from '../../../../../../examples/appendix/place-value-expressions/src/bin/index-place.rs?raw';
+import indexSugar from '../../../../../../examples/appendix/place-value-expressions/src/bin/index-sugar.rs?raw';
+import combinedPlace from '../../../../../../examples/appendix/place-value-expressions/src/bin/combined-place.rs?raw';
+import temporaryPlace from '../../../../../../examples/appendix/place-value-expressions/src/bin/temporary-place.rs?raw';
+import moveField from '../../../../../../examples/appendix/place-value-expressions/src/bin/move-field.rs?raw';
+import moveOutRef from '../../../../../../examples/appendix/place-value-expressions/src/bin/move-out-ref.rs?raw';
+import moveOutStatic from '../../../../../../examples/appendix/place-value-expressions/src/bin/move-out-static.rs?raw';
+import moveOutBox from '../../../../../../examples/appendix/place-value-expressions/src/bin/move-out-box.rs?raw';
+import autoDeref from '../../../../../../examples/appendix/place-value-expressions/src/bin/auto-deref.rs?raw';
+
+import PlaceChain from '../../../../../components/course/PlaceChain.astro';
+import TemporaryPlace from '../../../../../components/course/TemporaryPlace.astro';
+import PartialMove from '../../../../../components/course/PartialMove.astro';
+import MoveOutTriple from '../../../../../components/course/MoveOutTriple.astro';
+
+:::note[关联章节]
+关联章节：2.1 变量绑定、5.2 结构体、5.3 方法的三种接收者。阅读时机：理解 `let`、`mut`、移动和借用之后。是否必读：否。
+:::
+
+## 这个概念解决什么问题
+
+你已经见过下面几种写法：
+
+- `point.x = 10`；
+- `values[0] = 10`；
+- `*reference = 10`；
+- `let value = expression`。
+
+这些写法会先撞上一个直觉：表达式应该是“算出一个值”的东西，而 `point.x = 10` 这样的赋值看起来只是“做了一件事”，更像语句，怎么会是表达式？
+
+因为在 Rust 里，“表达式”的范围比这个直觉宽。`if` 是表达式，花括号块是表达式，赋值也是表达式——它算出的值是 `()`。反过来，上面列表里的 `let` 是语句，不是表达式；`expression` 那个位置上的才是表达式。“是不是表达式”本身没有区分度；有区分度的是求值的结果：求值时，有的表达式指向一个可以被读取、修改或借用的位置，有的表达式算出一个值。
+
+Rust 把前一类叫作**位置表达式（Place Expression）**，把后一类叫作**值表达式（Value Expression）**。这个区分能解释赋值、可变借用、解引用和字段移动为什么有不同的要求，也能解释为什么有的位置读得走值，有的读不走。
+
+“表达式产生值”的直觉并没有全错。当一个位置表达式出现在需要值的地方，读取发生，它也就算出了一个值——直觉里的表达式，见到的都是这一层。
+
+## 位置表达式：指明一个位置
+
+位置表达式是写明“程序里哪个位置”的表达式。变量名最直接；其余的写法都是从别的位置“走到”目标位置。位置不是地址——它存不进变量、传不了参、比不了大小，你能做的是读取它、往它写入、从它借出引用。
+
+Rust 里能成为位置的形式一共五种：变量名、字段、索引、解引用、静态变量。下面一个一个看，最后回到它们的共同点。
+
+### 变量名：直接指向
+
+`count` 指向这个绑定所代表的位置，`mut` 决定这个位置能不能写入：
+
+<Code code={varPlace} lang="rust" />
+
+`count` 是可变绑定，`count = 20` 写回原位置。`fixed` 没有 `mut`，写回被拒绝：``error[E0384]: cannot assign twice to immutable variable `fixed` ``。
+
+### 字段：从结构体走到字段
+
+`point.x` 从 `point` 的位置走到它的 `x` 字段。赋值写回的、`&mut` 借出的，都是这个字段位置：
+
+<Code code={assignPlace} lang="rust" />
+
+`let mut point` 让 `point` 的字段可以通过这个绑定被修改。`&mut point.y` 又从字段位置借出一段独占的可变访问权，`*y = 20` 把新值写回这个位置。
+
+### 索引：运行时计算的一步
+
+`values[0]` 从 `values` 按索引走到一个元素。索引表达式可以出现在赋值左侧，也可以作为可变借用的来源：
+
+<Code code={indexPlace} lang="rust" />
+
+这一步和字段访问不同：走哪个元素是运行时才算出来的，索引表达式能成为位置，并不意味着访问一定成功。
+
+对 `Vec` 这类库类型，索引位置不是编译器直接摸到的内存，而是方法调用的语法糖（syntactic sugar）：`values[0] = 10` 相当于 `*values.index_mut(0) = 10`——`index_mut` 做越界检查，返回一个 `&mut i32`，解引用再把它变成位置：
+
+<Code code={indexSugar} lang="rust" />
+
+两种写法做的是同一件事。这个视角也解释了越界 panic 为什么发生在运行时：检查写在 `index_mut` 的函数体里，编译器无法提前给出保证。
+
+### 解引用：沿引用走到指向的位置
+
+`*reference` 沿一个引用走到它指向的位置。上面字段那节的示例里，`*y = 20` 就是这个形式：`y` 是 `&mut i32`，`*y` 回到了 `point.y` 那个位置，所以写回的是 `point.y` 的值。
+
+智能指针是否支持这种写法，取决于它是否提供了合适的 `DerefMut` 实现——和索引走的是同一条路：方法返回引用，解引用得到位置。
+
+### 静态变量：全局的位置
+
+静态变量像变量名一样，直接指一个位置，只是这个位置全局可见，程序运行期间一直存在。它能读、能借，但移不出值——原因在「得到位置，不等于能拿走值」一节展开。
+
+五种形式的共同点是两层约束：
+
+1. 表达式必须能指向一个位置；
+2. 这个位置必须允许当前操作——赋值需要可变位置，可变借用还要满足读写排他。
+
+## 位置可以层层组合
+
+五种形式可以单独用，也可以串成一条链，从一个绑定出发，经过索引和字段访问，落到具体的位置：
+
+<Code code={combinedPlace} lang="rust" />
+
+`people[0].name` 先用索引选中数组里的一个元素，再用字段访问选中这个元素的 `name` 字段。赋值写回的是链末端的字段位置，`&mut` 借用的也是这个位置，而不是整个数组。链上任何一环失败——比如索引越界——整个表达式就取不到位置。
+
+<PlaceChain />
+
+## 值表达式：只产生一个值
+
+值表达式负责计算结果，不代表一个可以继续写入的存储位置。常见例子包括：
+
+- 字面量，如 `42`；
+- 算术运算，如 `x + y`；
+- 函数调用，如 `String::from("hello")`；
+- 方法调用，如 `values.len()`；
+- 结构体构造，如 `Point { x: 1, y: 2 }`。
+
+例如，`String::from("hello")` 产生一个新的 `String` 值。`let text = ...` 再把这个值绑定到 `text`。`let` 不是把某个现成位置改成字符串；它建立了一个新的绑定。
+
+这个区别也解释了为什么不能把任意表达式放在赋值左侧：`42 = 10` 没有可写入的位置，`x + 1 = 10` 也没有。
+
+「值表达式不代表存储位置」只说了一半。计算结果总要有地方落：直接绑定给变量时，值落进变量的位置；当场使用时——比如对它取引用——值先落进一个**临时位置（temporary）**。把两半合起来，模型才是完整的：
+
+> 每个值都落在某个位置里。位置表达式指向一个已经存在的位置；值表达式算出新值，落进为它准备的位置——变量绑定，或一个临时位置。
+
+临时位置通常只活到所在语句结束。`extended` 那行是例外：
+
+<Code code={temporaryPlace} lang="rust" />
+
+`existing` 借的是 `text` 这个已经存在的位置。`extended` 借的是 `String::from` 刚算出来的结果——它先落进临时位置，`&` 再指向它；绑定让这个临时位置活到了整个块结束。这条延长规则什么时候适用，属于后面的章节；这里只需要知道，引用一个值表达式的结果没有被禁止，代价是临时位置的存活时间要跟上来。
+
+<TemporaryPlace />
+
+## 读取一个位置时发生什么
+
+位置表达式自己不产生值。当它出现在需要值的地方——赋值右侧、函数参数、`println!` 里——读取才会发生：从位置里取出值，交给这个上下文。
+
+```text
+let target = source;
+```
+
+`source` 是位置表达式，`let` 需要一个值，于是读取发生。读出来的结果怎么处理，由类型决定：
+
+- `i32` 实现了 `Copy`，按位复制一份，原位置照旧可用；
+- `String` 没有实现 `Copy`，读取变成移动——值被取走，原位置作废，释放责任随之转移；
+- 想留下原来的绑定，就显式调用 `.clone()` 再造一份。
+
+所以位置/值和复制/移动不是两组要分开背的概念，而是同一个动作的前后两半：位置表达式回答「从哪里取值」，类型决定「取走之后，原来的位置怎么办」。
+
+## 从字段位置移动
+
+字段本身也是位置。字段类型不是 `Copy` 时，从字段位置取出它会转移这个字段的值：
+
+<Code code={moveField} lang="rust" />
+
+`pair.0` 中的 `String` 被移动给了 `left`，所以不能再次读取 `pair.0`。`pair.1` 是另一个字段，没有被移动，仍然可以使用。
+
+这叫**部分移动（partial move）**。它不是“把整个结构体都移动走”，而是只从结构体中的某个位置取走了非 `Copy` 字段。结构体是否还能整体使用，要看剩余字段和具体操作。
+
+<PartialMove />
+
+## 得到位置，不等于能拿走值
+
+解引用能得到位置，但位置里的值不一定属于你。`text` 是所有者时，`r` 只有一段共享的读取权：
+
+<Code code={moveOutRef} lang="rust" />
+
+取消注释那一行，编译器拒绝：``error[E0507]: cannot move out of `*r` which is behind a shared reference``。`*r` 是位置，读取也想发生，但移动需要接手值的所有权，而 `r` 只有借用。想要一份完整的值，只能显式 `r.clone()`。
+
+静态变量是同一族。它是全局可见的位置，能读、能借，但移出一次，全局状态就丢了值：
+
+<Code code={moveOutStatic} lang="rust" />
+
+同样被 ``error[E0507]`` 拒绝：``cannot move out of static item `TEXT` ``。
+
+有一个例外：`Box`。`*boxed` 移出值是允许的：
+
+<Code code={moveOutBox} lang="rust" />
+
+`Box` 承诺堆上的值只有这一个所有者，解引用移出只是把这份所有权换个名字拿，不会出现第二个释放责任。这是语言对 `Box` 的特殊处理，其他智能指针没有这个待遇——所以它们要靠 `DerefMut` 借出写回权，而不是直接移出。
+
+<MoveOutTriple />
+
+## 位置上下文
+
+同一个表达式在不同上下文中，编译器会要求不同的能力：
+
+- 赋值左侧需要可写的位置；
+- `&mut` 后面需要可以独占借用的位置；
+- 读取位置时，可能复制它的值，可能移动它的值，也可能被拒绝移出；
+- `&` 借用位置时，不会接手位置中值的所有权；
+- 解引用可以把一个引用或智能指针带回它指向的位置。
+
+这些能力仍然受第一篇的规则限制。一个位置存在，不代表它总能被修改、移动或借用。
+
+## 自动解引用
+
+`reference` 的类型是 `&mut Point`，但 `reference.x` 可以直接编译：
+
+<Code code={autoDeref} lang="rust" />
+
+字段访问会自动解引用（auto-deref）：`reference.x` 和 `(*reference).x` 指向同一个位置，编译器替你补上了 `*` 这一步。沿着引用读字段、写字段，都不需要先手动解引用。
+
+方法调用同理。`reference.show()` 的接收者由编译器调整，不需要手写成 `(*reference).show()`。5.3 的 `&self` 方法用起来没有额外的解引用负担，就是这条规则在起作用。
+
+## 与 4.1 的关系
+
+4.1 讲 `let`、`mut`、`Copy`、`Move` 和 `Clone` 时，先区分“绑定”和“绑定中的值”。位置表达式把这个模型再往前推进一步：
+
+> 变量、字段、索引和解引用都可以成为值的来源，但它们是否能被写入，取决于可变性和借用关系。
+
+这也是结构体方法、切片索引和 `DerefMut` 能够接回所有权模型的原因。
+
+## 限制与实现细节
+
+“位置”是语义上的存储位置，不是对机器布局的承诺。编译器可能把值放进寄存器、消除存储，或者合并访问；只要程序的可观察行为符合 Rust 规则即可。
+
+链的“一环一环走”也是语义上的分解，不是运行期的执行顺序。编译器在编译期沿链算出最终位置，字段和常量索引通常折叠成一次地址计算——`people[0].name` 的写回，往往就是对 `people` 的地址加一个常量偏移。链上真正产生运行期动作的是指针环节：沿引用解引用要读一次指针，`Vec` 的索引要先过 `index_mut` 的越界检查。
+
+位置表达式也不等于“永远有一个合法地址”。索引可能越界，解引用可能违反借用关系，位置中的值也可能已经被移动。表达式的类别只说明它参与了哪种语义，不替你证明操作一定成功。

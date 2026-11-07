@@ -1,0 +1,167 @@
+---
+title: "没有「函数重载」与「默认参数」，Rust 如何设计灵活 API？"
+description: 剖析为什么 Rust 为保住双向类型推断而坚决放弃同名不同参的函数重载，并给出替代 C++/Java/Python 中构造函数重载、同义参数重载、默认参数与变长参数的四大工程范式。
+sidebar:
+  label: 没有函数重载如何设计 API
+  order: 14
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import overloadingAlternatives from '../../../../../../examples/types/traits/src/bin/overloading-alternatives.rs?raw';
+
+:::note[关联章节]
+关联章节：[转换契约与一揽子实现](/abstraction/conversions-and-from/)、[章末视野：Rust 语言到底有多小？](/abstraction/kernel-and-library/)。阅读时机：读完第 7 章后随时可读。是否必读：否（按需选读）。
+:::
+
+## 你带着什么问题来
+
+从 C++、Java、C#、Python 或 TypeScript 转向 Rust 的开发者，在自己动手写库或业务模块时，很快就会撞上两个看似「不近人情」的语法限制：
+
+1. **禁止同名函数重载（No Function Overloading）**：在同一个作用域或同一个 `impl` 块里，绝不允许定义两个名字相同、但参数类型或参数个数不同的函数（报 `error[E0428]: the name ... is defined multiple times`）；
+2. **禁止函数默认参数（No Default Arguments）**：不能写 `fn connect(host: &str, port: u16 = 80)`。
+
+很多人起初会觉得这是 Rust 语言设计上的缺失。但本节将先从编译器的第一性原理出发，解释**为什么在拥有强类型推断的语言里，引入同名函数重载会引发灾难**；随后按四个真实工程场景，展示 Rust 如何用已有的正交机制写出比传统重载更清晰的 API。
+
+---
+
+## 一、 第一性原理：为什么 Rust 坚决禁止同名函数重载？
+
+在 C++ 或 Java 中，类型信息主要是**自底向上（从实参流向函数签名）**单向传递的：因为你传入的实参类型已知，编译器才能去重载列表里挑出匹配的那个同名函数。
+
+但在 Rust 中，正如我们在第 7 章所见，类型推断与泛型转换是**双向流动**的——很多时候，**实参表达式最终生成什么类型，反过来取决于外层函数形参要求什么类型**！
+
+比如我们在[第 7 章 7.4 节](/abstraction/conversions-and-from/)学过的 `.into()` 或 `.parse()`：
+
+<small class="code-source">推演用伪代码：双向类型推断</small>
+```rust
+fn process(id: u64) { ... }
+
+// 编译器看到 process 的形参类型唯一定死为 u64，
+// 才能反向推导出里面的 .into() 应该调用 <u64 as From<u16>>::from(42u16)！
+process(42u16.into());
+```
+
+现在设想一下：**如果 Rust 允许同名函数重载**，有人同时定义了三个 `process` 函数：
+
+<small class="code-source">推演用伪代码：假设允许同名函数重载</small>
+```rust
+fn process(id: u32) { ... }
+fn process(id: u64) { ... }
+fn process(id: i64) { ... }
+
+// 灾难现场：
+process(42u16.into());
+```
+
+当编译器遇到 `process(42u16.into())` 时，推理引擎会当场陷入死循环：
+- 要知道 `42u16.into()` 转换成什么类型，必须先知道外层调用的是哪一个 `process`；
+- 要知道外层调用的是哪一个 `process`，又必须先知道里层 `42u16.into()` 返回的是什么类型！
+
+正因为 `u16` 可以同时无损转换为 `u32`、`u64` 和 `i64`，一旦允许同名函数重载，整个泛型生态里的 `.into()`、`.parse()`、`.collect()` 都会大面积陷入二义性瘫痪，还会像 C++ 那样引入极易掩盖 Bug 的隐式类型转换优先级规则。
+
+因此，Rust 做出了极其果断的设计取舍：**在同一个命名空间下，一个函数名只对应唯一一份签名契约**；至于日常工程里需要「函数重载」的四大场景，则全部交由库层的正交工具来解决。
+
+---
+
+## 二、 四大重载场景的 Rust 替代方案
+
+当你在其他语言里想写「函数重载」或「默认参数」时，其实背后对应着四类截然不同的工程意图。在 Rust 中，它们各自有专门的表达方式：
+
+### 场景 1：构造函数重载 → 具名关联函数（Named Constructors）
+
+在 Java 或 C++ 中，所有的构造函数都必须与类名同名，因此一个类往往堆积着五六个参数各异的 `new Client(...)` 重载。阅读代码时看到 `new Client("a", 80, 3000)`，很难一眼分辨最后两个数字哪个是端口、哪个是超时毫秒数。
+
+在 Rust 中没有 `new` 关键字，构造实例全部使用普通的关联函数。**把不同构造方式的差异直接写进函数名里**，比同名重载清晰得多：
+
+<small class="code-source">推演用伪代码：用具名关联函数替代构造函数重载</small>
+```rust
+impl ClientConfig {
+    // 基础默认构造
+    fn new(host: &'static str) -> Self { ... }
+
+    // 显式标明带端口构造
+    fn with_port(host: &'static str, port: u16) -> Self { ... }
+}
+```
+
+（标准库中随处可见这一模式：如 `Vec::new()` vs `Vec::with_capacity(10)`，`String::from_utf8(bytes)` vs `String::from_utf16(words)`。）
+
+### 场景 2：同义不同型的参数重载 → 泛型 + `Into<T>` / `AsRef<T>`
+
+如果你写了一个函数 `ping`，希望调用方既能传字符串字面量 `"localhost"`（`&str`），又能传堆字符串 `String`，在其他语言里你会写两个同名重载函数。
+
+而在 Rust 中，这两个参数表达的是**同一个业务含义（目标主机名）**，只是调用方手头的载体类型不同。此时直接写**唯一一个**受 `AsRef<str>`（只读借用）或 `Into<Endpoint>`（接管所有权）约束的泛型函数即可：
+
+<small class="code-source">推演用伪代码：用 <code>AsRef&lt;str&gt;</code> 同时接纳 <code>&amp;str</code> 与 <code>String</code></small>
+```rust
+fn ping<S: AsRef<str>>(target: S) {
+    println!("pinging {}", target.as_ref());
+}
+
+// 调用点体验与函数重载完全一致：
+ping("localhost");
+ping(String::from("10.0.0.1"));
+```
+
+### 场景 3：可选参数与默认参数 → 配置结构体 + `..Default::default()`
+
+在 Python 或 TypeScript 中，当一个函数有五六个可选配置项时，常写成带默认值的参数列表。在 C++ 或 Java 中，则常被迫写出参数个数从 1 个递增到 5 个的五个重载函数。
+
+在 Rust 中，当可选参数较多时，标准做法是**提取一个实现 `Default` 的配置结构体，并配合结构体更新语法 `..Default::default()`**：
+
+<small class="code-source">推演用伪代码：用结构体更新语法按需指定个别参数，其余自动取默认值</small>
+```rust
+let cfg = ClientConfig {
+    host: "api.internal",
+    timeout_ms: 500,       // 只覆盖我们关心的 host 与 timeout_ms
+    ..Default::default()   // port 与 max_retries 自动填入 Default 中的默认值
+};
+```
+
+这样一来，调用方无论想覆盖哪几个参数，都可以按字段名清晰指定，既不依赖参数顺序，也不需要编写十几个排列组合的重载函数（若配置项极其复杂且需分步校验，还可进一步采用链式调用的 Builder 构建器模式，如 `.timeout(500).retries(3).build()`）。
+
+### 场景 4：同类型变长参数（Variadic Arguments） → 传入切片 `&[T]`
+
+在其他语言中，有时会为了接收 1 个、2 个或 N 个相同类型的参数而编写重载或变长参数（如 Java 的 `checkPorts(int... ports)`）。
+
+在 Rust 中，直接将参数声明为我们第 4 章学过的**只读切片 `&[T]`** 即可——调用方只需在数组字面量前加一个 `&`，零堆内存分配就能传入任意数量的元素：
+
+<small class="code-source">推演用伪代码：用切片 <code>&amp;[u16]</code> 接收任意数量的端口</small>
+```rust
+fn check_ports(ports: &[u16]) -> usize {
+    ports.len()
+}
+
+// 调用点直接传入数组切片引用：
+check_ports(&[80, 443, 8080]);
+```
+
+（注：如果变长参数连类型都不相同——如格式化打印 `println!("{} {}", 1, "a")`——Rust 则将其交给编译期展开的**宏 `macro_rules!`** 处理，将在第 14 章详解。）
+
+---
+
+## 三、 全景对照表与可运行实验
+
+| 你在其他语言里的习惯写法 | 背后的真实工程意图 | Rust 的地道替代方案 | 标准库典型代表 |
+| --- | --- | --- | --- |
+| **多个同名构造函数** `new Foo(...)` | 从不同原材料或不同初始选项创建实例 | **具名关联函数**（`new`、`with_...`、`from_...`） | `Vec::new()`、`Vec::with_capacity(n)` |
+| **同名函数接收不同类型** `open(str)` / `open(Path)` | 接收不同载体但同义的输入参数 | **泛型 + 转换契约**（`<T: Into<U>>` 或 `<T: AsRef<U>>`） | `File::open<P: AsRef<Path>>(p: P)` |
+| **默认参数或递增参数重载** `fn(a, b=1, c=2)` | 允许调用方只填必填项，其余走默认配置 | **配置结构体 + `..Default::default()`**（或 Builder 模式） | `std::fs::OpenOptions` |
+| **同类型可变参数** `fn(int... items)` | 一次传入任意个数的同类型元素 | **切片引用 `&[T]`** | `slice::concat`、`io::Write::write_all` |
+
+运行下面这份汇总源码，核对这四种模式在实际代码中的配合效果：
+
+<small class="code-source">源文件：<code>examples/types/traits/src/bin/overloading-alternatives.rs</code></small>
+<Code code={overloadingAlternatives} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+c1 = example.com:8080 (timeout=3000ms, retries=3)
+c2 = example.com:443 (timeout=3000ms, retries=3)
+c3 = api.internal:8080 (timeout=500ms, retries=3)
+pinging localhost
+pinging 10.0.0.1
+checked 3 ports
+```

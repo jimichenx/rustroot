@@ -1,0 +1,199 @@
+---
+title: niche 优化：非法值里的免费座位
+description: Option<&i32> 和 &i32 一样是 8 字节——引用不能为 null 这条禁令，把全零变成了 None 的免费座位。本文实测一张菜单：哪些 Option 零加价，哪些付标签，以及为什么显式 repr 会关掉这笔优惠。
+sidebar:
+  label: niche 优化
+  order: 4
+---
+
+import { Code } from '@astrojs/starlight/components';
+
+import menu from '../../../../../../examples/appendix/niche-optimization/src/bin/menu.rs?raw';
+import seatLaw from '../../../../../../examples/appendix/niche-optimization/src/bin/seat-law.rs?raw';
+import payTag from '../../../../../../examples/appendix/niche-optimization/src/bin/pay-tag.rs?raw';
+import tagWidth from '../../../../../../examples/appendix/niche-optimization/src/bin/tag-width.rs?raw';
+import result from '../../../../../../examples/appendix/niche-optimization/src/bin/result.rs?raw';
+import nested from '../../../../../../examples/appendix/niche-optimization/src/bin/nested.rs?raw';
+import repr from '../../../../../../examples/appendix/niche-optimization/src/bin/repr.rs?raw';
+
+:::note[关联章节]
+关联章节：6.1 枚举、Option 与 match、1.4 函数调用逼出引用、4.3 切片（`&str` 的胖指针）。阅读时机：读完 6.1 之后随时可读，1.4 的「引用指向有效数据」是全文的前提。是否必读：否。示例都在 `examples/appendix/niche-optimization`，数字为 64 位平台的实测输出。
+:::
+
+## 你带着什么问题来
+
+6.1 结尾留下一个数字：`Option<&i32>` 和 `&i32` 一样是 8 字节，`Option<u32>` 却比 `u32` 大。同样是「可能没有」，有的类型免费打包，有的类型要加钱。
+
+加不加钱不是随机的。这篇把判据讲清楚：类型里有没有**非法值**——合法取值之外空着的字节位置。编译器把这些空位当成座位，让无负载的变体坐进去。这套安排叫 niche 优化（niche optimization）。读完你能预判：给任何一个类型包上 `Option`，要不要多付字节。
+
+## 前提：类型有非法值
+
+1.4 给引用定过第一条限制：它指向仍然有效的数据。所以 8 字节的位置上，合法值只有「一个有效数据的地址」；全零不指向任何东西，**不可能是合法的 `&i32`**。这个位置空着，但它不是垃圾——它能被征用。
+
+不只有引用有空位。`bool` 一个字节有 256 个取值，语言只承认 0 和 1 两个，其余 254 个空着。`char` 四个字节，合法值到 `U+10FFFF` 封顶，整片高区空着。`NonZeroU32` 更进一步：std 专门造了这个类型，把「0 非法」做成类型承诺——std 在自己生产座位。
+
+反面是 `i32`：任何一个 4 字节的取值都是某个整数，**一个空位都没有**。它就是那个要付费的。
+
+## None 坐进非法值
+
+`Option<&i32>` 的两个变体怎么放？`Some(p)` 原样存 `p`；`None` 坐在全零上。运行时检查「是哪个变体」，等于检查「指针是不是全零」，一个字节都不用加。
+
+把它推广成一张菜单（`size_of`，64 位平台）：
+
+<Code code={menu} lang="rust" />
+
+输出：
+
+```text
+&i32        -> Option<&i32>       8 -> 8
+Box<i32>    -> Option<Box<i32>>   8 -> 8
+bool        -> Option<bool>       1 -> 1
+char        -> Option<char>       4 -> 4
+NonZeroU32  -> Option<NonZeroU32> 4 -> 4
+String      -> Option<String>     24 -> 24
+Person      -> Option<Person>     32 -> 32
+i32         -> Option<i32>        4 -> 8
+```
+
+| 类型 | 实测 | 座位在哪 |
+| :--- | :--- | :--- |
+| `&i32` | 8 → 8 | 引用非空，全零是座位 |
+| `Box<i32>` | 8 → 8 | 拥有堆数据的指针，同样非空 |
+| `bool` | 1 → 1 | 254 个非法取值，随便挑一个 |
+| `char` | 4 → 4 | 合法值到 `U+10FFFF` 封顶，高区空着 |
+| `NonZeroU32` | 4 → 4 | 「0 非法」是类型自己造出来的座位 |
+| `String` | 24 → 24 | 三个机器字里，堆指针非空 |
+| `Person` | 32 → 32 | 座位在 `String` 字段里，隔着 struct 的墙也被找到 |
+| `i32` | 4 → 8 | 没有空位——付 1 字节标签，垫到 4 的倍数 |
+
+前七行零加价，读法只有一条：**缺口在哪儿不重要，在就行**。`Person` 自己没有指针字段，但它的 `name: String` 里有——编译器逐字段找，穿墙也要找到。
+
+最后一行是唯一的付费者。`i32` 没有非法值，`None` 无座可坐，只能显式付一个标签字节，再垫 3 字节补齐对齐，总共 8。
+
+## 座位定律：几个座位，坐几个变体
+
+菜单里坐下的都是 `None` 这一个变体。多个无负载变体要坐怎么办？看最小对照：
+
+<Code code={seatLaw} lang="rust" />
+
+输出：
+
+```text
+OneFree          8
+TwoNeed          16
+Option<&i32>     8
+```
+
+`OneFree` 是手工版的 `Option<&i32>`：指针贡献一个座位（全零），`A` 坐下，8 字节——和真正的 `Option<&i32>` 一样。`TwoNeed` 多了一个无负载的 `B`：一个座位坐不下两个变体，退回显式标签，8 字节标签加 8 字节负载区。
+
+座位定律：**一个字段贡献 n 个非法值，就能坐 n 个无负载变体；坐不下的部分，付标签。** `bool` 能贡献 254 个座位，所以理论上够 254 个无负载变体分；指针只贡献 1 个，第二个无负载变体起就得付费。
+
+## 坐不下就付标签
+
+真实类型里的失败有两种。第一种：座位被抢。
+
+<Code code={payTag} lang="rust" />
+
+输出：
+
+```text
+Mixed    16
+TwoPtrs  16
+```
+
+`Mixed` 是一把椅子两人抢：指针的非法值只有全零一个座位，`Nothing` 坐了，`Int` 就没位置——`Int` 的负载若塞进指针槽，`Int(0)` 会和 `Nothing` 撞在全零上，分不清。编译器退回标准摆法：标签在前，负载按对齐跟在后面。
+
+`TwoPtrs` 是省不出字节：两个变体各拖一个 8 字节指针，无论把标签嵌进哪个指针的空位，总大小都是 16 字节。niche 在这里没有优化空间，rustc 便用标准标签。
+
+那标签要付几个字节？看负载的对齐：
+
+<Code code={tagWidth} lang="rust" />
+
+输出：
+
+```text
+TagU8   2
+TagU64  16
+```
+
+标签宽度不是按变体数算的——两个变体 1 bit 就够编号。它是垫出来的：负载是 `u8` 时 1 字节标签就够对齐；负载是 `u64` 时标签垫到 8 字节。付费多少跟着负载走。
+
+## 座位的更多来源：Result 与嵌套
+
+`Option` 之外，标准库的 `Result` 同样在找座位：
+
+<Code code={result} lang="rust" />
+
+输出：
+
+```text
+&str                 16
+Result<&str, i32>    16
+Result<i32, i32>     8
+Result<bool, bool>   2
+```
+
+`&str` 是 5.1 的胖指针：(ptr, len)。`Result<&str, i32>` 两个方向都塞进这 16 字节：ptr 非空说明是 `Ok`；ptr 是全零说明是 `Err`，那 4 字节错误码塞进 len 槽。6.3 的 `Result` 在最常见的形状上不付一个字节，这是实物部分。
+
+`Result<i32, i32>` 没座位，付 4 字节标签加 4 字节负载。`Result<bool, bool>` 是更细的一块界碑：两侧都是 `bool`，缺口管够，可两个变体**各带 1 字节负载**，谁也不能整个坐进非法值，照样付标签——1 字节标签加 1 字节负载，共 2。这钉住了 niche 的边界：**它只做「无负载变体坐非法值」这一种安排，不搜任意压缩编码。**
+
+座位还有一个来源：另一个 enum 的标签。嵌套实测：
+
+<Code code={nested} lang="rust" />
+
+输出：
+
+```text
+Option<i32>           8
+Option<Option<i32>>   8
+Option<Option<bool>>  1
+Option<&i32>          8
+Option<Option<&i32>>  16
+```
+
+`Option<Option<i32>>` 仍是 8：内层的标签字节只有 0/1 合法，其余 254 个取值是内层的非法值——外层征用一个坐自己的 `None`。座位不需要来自原始的字段，也能来自另一个 enum 已经付过的标签。
+
+但嵌套不充值。`Option<Option<&i32>>` 涨到 16：内层已经把全零用掉了（内层的合法值 = 所有有效指针，加一个全零的 `None`），8 字节里再无空位，外层只能自己付 8 字节标签。座位会用完，用完就回到付标签的默认流程。
+
+## niche 是优化，不是合同
+
+三种写法，一个类型：
+
+<Code code={repr} lang="rust" />
+
+输出：
+
+```text
+String        24
+WithData      24
+WithData repr(C)  32
+WithData repr(u8) 32
+```
+
+`WithData` 里 `Text(String)` 最大，24 字节；`Int` 和 `Nothing` 这两个无负载变体在 `String` 的字段里找到了座位，于是整个 enum 也是 24——一个字节没加。换成 `#[repr(C)]` 或 `#[repr(u8)]`，都变成 32：显式 repr **禁用找座位**，标签放最前，负载跟在后面。`repr(u8)` 把标签钉到 1 字节，总大小仍是 32——`String` 的负载要对齐到 8，标签后面垫 7 字节。
+
+这一栏的读法：niche 是优化，优化随时可以不做。显式 repr 买的不是更小，是**不变**——跨语言的接口、按偏移读写、磁盘上的格式，要的都是「编译器升级之后布局也不动」。代价就是放弃这笔优惠。
+
+## null 禁令变资产
+
+回头看 Java。任何引用类型的任何值都可能是 `null`，类型上不留痕迹，所以每个引用用之前都靠人肉检查，漏一处就是 `NullPointerException`。`Optional<T>` 是事后补丁：多包一个对象，多一次间接——而且 `Optional` 本身是引用，`Optional<String>` 为 `null` 的代码照样编译。补丁贴在类型系统外面。
+
+Rust 从 1.4 起就禁止引用为 null。这条禁令当时只看到代价：查不到就不能返回空地址，逼出了 `Option`。niche 把账算完：全零这个位置因为禁令而非法，因为非法而空着，因为空着而能坐 `None`。**禁令即资产**——约束换个方向看就是优化。对照表里唯一要付费的 `i32` 恰好说明这一点：它没有等价的禁令，所以没有座位。
+
+## 收束
+
+给任何一个类型包上 `Option`，要不要多付字节，看三件事：
+
+1. **T 里有没有非法值**。没有（`i32`），照常付标签。
+2. **无负载变体坐不坐得进去**。座位够（一个或几个缺口），免费；座位被抢（`Mixed`）或省不出字节（`TwoPtrs`），付标签。
+3. **标签多宽，跟负载的对齐走**，跟变体数无关。
+
+判断是可以复述的一句话：**缺口坐无负载变体，坐不下的部分付标签。** `Option<&i32>` 8 字节、`Option<i32>` 8 字节——两个 8，一个是免费的，一个是付了标签再垫齐的。
+
+## 限制与实现细节
+
+- 所有数字是 64 位平台上当前 rustc 的实测，不是语言合同。换平台、换版本，数字可能变；「缺口坐变体」这个机制比数字稳定。
+- `repr(Rust)` 不承诺布局。座位具体在哪个字段、标签几字节、负载从哪个偏移开始，都是编译器当次的实现决定。字节级的核对工具是 nightly 的 `-Zprint-type-sizes`；本文只核对了 `size_of` 这一层的公开事实。
+- 「`None` 坐全零」是当前 rustc 的选择，语言不承诺。别把代码写在这个布局上——要依赖布局时，用显式 repr 买合同。
+- 给定类型定义，「有没有缺口」编译期可判。所以这是编译器每次自动做的决定，不是程序员的手艺：你不需要会找 niche，只需要在 `size_of` 的输出比预期小时不惊讶。
+- 本文不覆盖：`unsafe` 代码与 niche 的交互（`transmute` 一个带座位类型的字节）、手排判别式值与 `repr(int)` 的完整承诺、递归 enum 的布局。

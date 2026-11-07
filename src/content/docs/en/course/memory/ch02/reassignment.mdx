@@ -1,0 +1,190 @@
+---
+title: "Mutability and reassignment: where does the old value go?"
+description: Start from the two compiler errors on immutable bindings, contrast let mut with Java's final, and trace how the compiler handles replacing an active value, refilling a moved-from variable, and delayed initialization.
+sidebar:
+  label: Mutability and reassignment
+  order: 2
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import ReassignDrop from '../../../../../../components/course/ReassignDrop.astro';
+import ReinitMove from '../../../../../../components/course/ReinitMove.astro';
+import immutable from '../../../../../../../examples/memory/variables/src/bin/immutable.rs?raw';
+import mutateContent from '../../../../../../../examples/memory/variables/src/bin/mutate-content.rs?raw';
+import mismatch from '../../../../../../../examples/memory/variables/src/bin/type-mismatch.rs?raw';
+import replace from '../../../../../../../examples/memory/variables/src/bin/replace.rs?raw';
+import reinitialize from '../../../../../../../examples/memory/variables/src/bin/reinitialize.rs?raw';
+import delayed from '../../../../../../../examples/memory/variables/src/bin/delayed-init.rs?raw';
+import javaFinal from '../../../../../../../examples/memory/variables/java/FinalReference.java?raw';
+
+
+Every `=` in the previous section had `let` on the left—creating a new variable and giving it its initial value at the same time. What happens when a variable already exists and we write `x = ...` later **without `let`** to put a new value into it?
+
+This section answers two questions: first, which two permissions are restricted by default on an immutable binding and unlocked by `let mut`; second, where the variable's previous value goes when a new value takes its place.
+
+## Immutable by default and the two permissions of `let mut`
+
+In Rust, a variable declared with a plain `let` is an **immutable binding** by default. Many newcomers assume an immutable binding only forbids reassigning the variable with `=`, when in fact it restricts **two distinct kinds of mutation**.
+
+### 1. Permission 1: reassigning the variable (`x = ...`)
+
+Start with direct reassignment. In this program, `n` is initialized to `7`, and the commented-out line attempts to replace it with `8`:
+
+<small class="code-source">Source: <code>examples/memory/variables/src/bin/immutable.rs</code></small>
+<Code code={immutable} lang="rust" />
+
+Uncomment `// n = 8;` and the compiler rejects it:
+
+<small class="code-source">Compiler diagnostic: after uncommenting the marked line in immutable.rs</small>
+```text
+error[E0384]: cannot assign twice to immutable variable `n`
+```
+
+`error[E0384]` blocks **reassignment**: you cannot replace the value held by an immutable variable `n` with another value. To allow reassignment, add the `mut` keyword at declaration time: `let mut n = 7;`.
+
+Allowing a new value with `let mut`, however, **never allows changing the variable's type**:
+
+<small class="code-source">Source: <code>examples/memory/variables/src/bin/type-mismatch.rs</code></small>
+<Code code={mismatch} lang="rust" />
+
+Uncomment `// n = String::from("hello");` and the compiler reports a type mismatch (`error[E0308]: mismatched types`, expected `i32`, found `String`). Because `n`'s type was fixed as `i32` (4 stack bytes) at declaration, `mut` only permits writing a new `i32` into that 4-byte slot—not turning it mid-flight into a three-word `String` carrying cleanup responsibility.
+
+### 2. Permission 2: mutating the data managed by the variable
+
+Now look at the second permission. Suppose we declare an immutable string binding `let s = String::from("hello");` and—**without writing `s = ...` to reassign it**—call `s.push_str("!")` to append an exclamation mark to its heap buffer. Does it compile?
+
+<small class="code-source">Source: <code>examples/memory/variables/src/bin/mutate-content.rs</code></small>
+<Code code={mutateContent} lang="rust" />
+
+Uncomment `// s.push_str("!");` and the compiler reports a different error code:
+
+<small class="code-source">Compiler diagnostic: after uncommenting the marked line in mutate-content.rs</small>
+```text
+error[E0596]: cannot borrow `s` as mutable, as it is not declared as mutable
+```
+
+We never wrote `s = ...` to replace the variable. Why is calling a method to modify its contents also blocked?
+
+Because `s.push_str("!")` modifies the length (`len`) in the stack header and appends bytes to the heap buffer. For an ordinary owning variable in Rust, **omitting `mut` on the binding blocks both reassigning the variable (`E0384`) and mutating the data it manages (`E0596`).** Writing `let mut s = String::from("hello");` unlocks both permissions together.
+
+Look closely at the wording of `E0596`: we only called a method `s.push_str("!")` without writing a single `&` in our code, yet the compiler complains that it `cannot borrow s as mutable`. How does the compiler know that `push_str` modifies memory without inspecting the function body, and at what layer does it block the call? Keep that question in mind—Part 2 will reveal how method signatures and automatic reference conversions work together.
+
+<Aside type="note" title="If you come from Java: why Rust's let is not the same as final">
+Developers coming from Java or JavaScript often equate Rust's default `let` with Java's `final` (or JS's `const`). Comparing the two actions above against this Java snippet shows how their boundaries differ:
+
+<small class="code-source">Source: <code>examples/memory/variables/java/FinalReference.java</code></small>
+<Code code={javaFinal} lang="java" />
+
+This Java program compiles and prints `hello!`:
+- In Java, `final StringBuilder s` restricts only **the first permission (reassignment)**—you cannot write `s = new StringBuilder("bye")` to point `s` at another object, but you can freely call `s.append("!")` to mutate the object on the heap.
+- In Rust, an immutable binding on an owning variable `let s = String::from("hello")` **locks down both reassignment (`s = ...`) and in-place mutation (`s.push_str(...)`) at once**. (We compare against Java's `StringBuilder` here because Java's `String` type is immutable itself, which would hide the effect of `final` on object mutation.)
+</Aside>
+
+---
+
+## Three cases of reassignment: where does the old value go?
+
+With the two permissions of `let mut` clear, return to the reassignment statement `x = new_val;` itself: **when a new value enters `x`, what happens to whatever `x` was holding before?**
+
+First separate the two categories of types from the previous section:
+- For a type like `i32` that implements `Copy` and carries no heap-cleanup duty, assigning it to another variable never invalidates the source, and reassigning `n = 8;` overwrites the 4 bytes on the stack with no heap memory to clean up.
+- For a **Move type like `String` that does not implement `Copy` and carries exclusive cleanup duty**, the picture is different. At compile time, the Rust compiler tracks the **holding state** of every variable at every line: depending on whether the variable still holds an active value right before the assignment, the same `x = ...` syntax performs one of three distinct actions (the first two apply to Move types; the third applies to all types).
+
+### 1. Case 1: holding an active value (dropped in place)
+
+Chapter 1 established the baseline rule: when a variable goes out of scope (`}`), the heap memory it points to is freed automatically. What if, before reaching `}`, a Move-type variable `target` is already holding `"old"` on the heap and a reassignment `target = source;` replaces it with `"new"` mid-scope?
+
+<small class="code-source">Source: <code>examples/memory/variables/src/bin/replace.rs</code></small>
+<Code code={replace} lang="rust" />
+
+Running the program prints `old new` and then `new`.
+
+Before `target = source;` runs, `target` is responsible for freeing `"old"` and `source` is responsible for freeing `"new"`. When `target = source;` executes, the three-word header of `"new"` moves into `target`'s stack slot. What happens to the `"old"` buffer that `target` was pointing to?
+- It cannot be left alone—once `target`'s three-word header is overwritten by `"new"`, no variable on the stack holds the heap address of `"old"`, which would leak memory immediately.
+- Nor can it wait until the closing `}` of `main`—by the time execution reaches `}`, `target` is holding `"new"`.
+
+Rust's rule here is direct: **when reassigning a Move-type variable that currently holds an active value, the compiler first drops the old value right at the `=` line before overwriting the stack slot, and then moves the new value in.**
+
+<ReassignDrop />
+
+Tracing cleanup duty across both heap buffers in chronological order:
+
+| Point in execution | Status and duty for the `"old"` buffer | Status and duty for the `"new"` buffer |
+| --- | --- | --- |
+| **Before** `target = source;` | Held by `target`, which is responsible for freeing it | Held by `source`, which is responsible for freeing it |
+| **At the line** `target = source;` | **`target`'s old value is dropped right here** | Header moves into `target` (`source` becomes invalid); now `target`'s responsibility |
+| **At the end** of `main` (`}`) | Already freed at the assignment line; nothing left to do | Freed by `target` on scope exit |
+
+This completes the scope-exit rule from Chapter 1: **cleanup duty is triggered not only when an owner leaves scope (`}`), but also at the exact line where an active value is replaced by reassignment.**
+
+### 2. Case 2: old value already moved out (refilled without dropping)
+
+Staying with the Move type `String`, what if `s` originally held a value, but that value was already moved to another variable before the reassignment?
+
+<small class="code-source">Source: <code>examples/memory/variables/src/bin/reinitialize.rs</code></small>
+<Code code={reinitialize} lang="rust" />
+
+Running the default code prints `world hello`.
+
+Follow the compiler's static state tracking across those three steps:
+1. `let mut s = String::from("hello");`: `s` holds cleanup duty for `"hello"`.
+2. `let t = s;`: a Move occurs—cleanup duty for `"hello"` transfers to `t`, and **`s` becomes invalid (vacated)**. Uncommenting `// println!("{s}");` right after this line triggers `error[E0382]`.
+3. `s = String::from("world");`: the vacated variable `s` is reassigned a new string `"world"`.
+
+Focus on Step 3: **when `s = ...` runs this time, does the compiler drop `"hello"` first the way `replace.rs` did?**
+
+**No.** The compiler knows at compile time that `s` is currently empty at this line—cleanup duty for `"hello"` was handed over to `t` back at `let t = s;`. So `s = String::from("world");` drops nothing; it simply gives the vacated `s` cleanup duty for `"world"` and **restores `s` to a valid state**.
+
+<ReinitMove />
+
+Compare this diagram with the previous one: both `"world"` and `"hello"` **remain alive on the heap at the same time, with neither buffer dropped at the assignment line**. When `main` finally closes at `}`, `s` frees `"world"` and `t` frees `"hello"`.
+
+### 3. Case 3: delayed initialization (no `mut` required)
+
+Understanding how the compiler tracks whether a variable currently holds a value also explains a common pattern that applies to every type: what happens when you split variable declaration and initial assignment across two lines?
+
+<small class="code-source">Source: <code>examples/memory/variables/src/bin/delayed-init.rs</code></small>
+<Code code={delayed} lang="rust" />
+
+Running the default code prints `7`. If you uncomment `// println!("{n}");` to read `n` before `n = 7;`, the compiler stops you immediately:
+
+<small class="code-source">Compiler diagnostic: after uncommenting the marked line in delayed-init.rs</small>
+```text
+error[E0381]: used binding `n` is possibly-uninitialized
+```
+
+Notice one detail in this code: **the declaration is `let n: i32;` (without `mut`), yet the later line `n = 7;` compiles cleanly. Why?**
+
+Because the compiler's static tracking distinguishes the two states:
+- `let n: i32;` performs only a **declaration**—`n` has never held a value at this point (reading it beforehand triggers `E0381`).
+- Although `n = 7;` is written as `x = ...`, it is not a reassignment replacing an existing value; it is the **initialization** that gives `n` a value for the first time. Since no existing value is being replaced, there is no old value to drop and no need for `mut`.
+
+## Summary: the three assignment cases
+
+Placing all three forms of `x = ...` (without `let`) side by side shows the state table the compiler maintains behind the scenes:
+
+| Static state of `x` before `=` | Typical code pattern | Underlying action at `x = new_val;` | Requires `let mut`? |
+| --- | --- | --- | --- |
+| **Holding a valid value** (initialized and not moved out) | `let mut target = ...;`<br/>`target = source;` | For Move types like `String`, **drops `target`'s old value on the spot**, then takes the new value | **Yes** |
+| **Value moved out** (initialized earlier, then moved to another variable) | `let mut s = ...;`<br/>`let t = s;`<br/>`s = new_s;` | Old value now belongs to `t`; **drops nothing here**, takes the new value, and restores `s` to valid | **Yes** |
+| **Uninitialized** (declared with `let`, never given a value) | `let n: i32;`<br/>`n = 7;` | First-time **initialization**; no old value to drop, and the variable becomes valid (reading earlier triggers `E0381`) | **No** |
+
+### Hands-on check
+
+Open `replace.rs` and change `target = source;` to `target = String::from("third");`, leaving the rest of the code untouched.
+
+Think through two questions before running it:
+1. After this change, can `source` still be printed on the last line?
+2. This program allocates three heap strings—`"old"`, `"new"`, and `"third"`. At which line is each one freed?
+
+Answer: because `source` is no longer assigned into `target`, `source` is never moved and can be printed normally. Of the three strings, `"old"` is replaced and dropped right at `target = String::from("third");`, while `"new"` and `"third"` remain held by `source` and `target` until the closing `}` of `main`.
+
+---
+
+Every `x = ...` in this section omitted `let`—operating on **the exact same variable**: bound by its original type, requiring `mut` for a second assignment, and dropping any active value in place.
+
+In real Rust code, however, you will frequently see a third form: **writing `let` a second time for the same variable name** (for example, `let s = String::from("hello");` followed immediately by `let s = 7;`).
+
+Is that `=` still performing a reassignment? And does the old `"hello"` string hidden behind the new `let s = 7;` get dropped on the spot too? The next section finds out.
+
+[Next: Shadowing and scope →](/memory/shadowing/)

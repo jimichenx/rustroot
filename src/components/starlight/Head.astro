@@ -1,0 +1,73 @@
+---
+/**
+ * 覆盖 Starlight 的 Head：在默认 <head> 之外补充跨域 SEO 元信息。
+ *
+ * - hreflang：告诉搜索引擎 rustroot.cn/<path> 与 rustroot.dev/<path> 是同一页面的不同语言版本
+ * - x-default：默认指向国际站（英文）
+ * - og:locale:alternate（og:locale 由 Starlight 默认输出）
+ * - og:image：分享图按当前构建的语言各一张，放在 public/og/ 下。
+ *   Starlight 本身不输出 og:image，只能在这里补
+ *   （生成脚本 scripts/brand/logo/build-og.mjs）。
+ * - 百度统计：只在中文构建写入 `<head>`。英文站不加载。
+ * - Google 分析：只在英文构建写入 `<head>`。中文站不加载。
+ *
+ * 前提：两种语言的内容目录保持相同的相对路径。
+ * 若对方语言尚未翻译该页，链接会落到对方站点的 404 页——这是可接受的过渡状态，
+ * 后续可用构建脚本对比两侧目录，只为双侧都存在的页面输出 hreflang。
+ */
+import Default from '@astrojs/starlight/components/Head.astro';
+import { CURRENT, OTHER, X_DEFAULT_LOCALE, siteOrigin } from '../../config/site';
+
+const isDev = import.meta.env.DEV;
+const isZh = CURRENT.code === 'zh';
+const isEn = CURRENT.code === 'en';
+const pathname = Astro.url.pathname;
+
+const currentHref = siteOrigin(CURRENT, isDev) + pathname;
+const otherHref = siteOrigin(OTHER, isDev) + pathname;
+const xDefaultHref = siteOrigin(X_DEFAULT_LOCALE, isDev) + pathname;
+const ogImage = `${siteOrigin(CURRENT, isDev)}/og/${CURRENT.code}.png`;
+
+---
+
+<Default><slot /></Default>
+
+<link rel="alternate" hreflang={CURRENT.lang} href={currentHref} />
+<link rel="alternate" hreflang={OTHER.lang} href={otherHref} />
+<link rel="alternate" hreflang="x-default" href={xDefaultHref} />
+{/* Starlight 默认已输出 og:locale，这里只补充 alternate */}
+<meta property="og:locale:alternate" content={OTHER.lang} />
+{/* Starlight 完全不输出 og:image，分享图由这里提供 */}
+<meta property="og:image" content={ogImage} />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:image" content={ogImage} />
+{
+	isZh && (
+		<script is:inline>
+			var _hmt = _hmt || [];
+			(function () {
+				var hm = document.createElement('script');
+				hm.src = 'https://hm.baidu.com/hm.js?a30192f3557171faa25cf09c4b35669c';
+				var s = document.getElementsByTagName('script')[0];
+				s.parentNode.insertBefore(hm, s);
+			})();
+		</script>
+	)
+}
+{
+	isEn && (
+		<>
+			<!-- Google tag (gtag.js) -->
+			<script is:inline async src="https://www.googletagmanager.com/gtag/js?id=G-PKCCM668ET"></script>
+			<script is:inline>
+				window.dataLayer = window.dataLayer || [];
+				function gtag() {
+					dataLayer.push(arguments);
+				}
+				gtag('js', new Date());
+				gtag('config', 'G-PKCCM668ET');
+			</script>
+		</>
+	)
+}

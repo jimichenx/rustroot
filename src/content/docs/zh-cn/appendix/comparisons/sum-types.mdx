@@ -1,0 +1,183 @@
+---
+title: "不同语言如何实现「和类型」：从 C 联合体、OOP 子类到 Rust 枚举"
+description: 横向对比 C、Java/OOP、Go、C++、TypeScript 与 Rust：为了表达「一个类型存在几种合法可能性（或关系）」，各门语言在编译期约束与物理内存上分别做了什么取舍？
+sidebar:
+  label: 不同语言如何实现和类型
+  order: 13
+---
+
+import { Code } from '@astrojs/starlight/components';
+import roleSumType from '../../../../../../examples/appendix/sum-types/src/bin/role-sum-type.rs?raw';
+
+:::note[关联章节]
+关联章节：[从常量枚举到代数数据类型（ADT）](/types/enums-and-adt/)。阅读时机：读完第 6 章第 1 节后随时可读。是否必读：否（按需选读）。示例均在 `examples/appendix/sum-types/`，数字为 64 位平台实测输出。
+:::
+
+## 你带着什么问题来
+
+在[从常量枚举到代数数据类型（ADT）](/types/enums-and-adt/)一节中，我们确立了一个顶层概念：**只要你在表达「一个类型存在几种互斥的合法可能性（或关系），且每种可能性携带各自的数据」，你就是在构建和类型（Sum Type）**。
+
+无论是面向对象（OOP）语言里的「父类 + 子类（`subclass`）」，还是 C 语言里的「`enum` + `union`」，抑或是 Rust 里的 `enum`，它们都在尝试解决同一个数据建模问题。
+
+用同一个权限模型作为标尺——系统角色 `Role` 只有三种合法可能性：
+1. **未登录访客（`Guest`）**：无附加数据；
+2. **普通会员（`Member`）**：持有积分 `vip_points`（64 位整数）；
+3. **管理员（`Admin`）**：持有部门编号 `dept_id` 与安全密钥 `security_key`（两个 64 位整数）。
+
+如果要把这三种可能性装进同一个类型 `Role`，理想的实现应当同时满足三条标准：
+- **标准一（标签与载荷绑定）**：当前处于哪种可能性，就只能访问哪种可能性的数据，编译器阻止跨分支误读；
+- **标准二（可能性集合闭合）**：编译器确切知道 `Role` 只有这三种可能性，分支处理漏掉任何一种都会编译报错（穷尽性检查）；
+- **标准三（单块固定内存）**：不需要为了多选一而强制去堆上分配对象，直接在一块编译期固定长度的内存里内联存放。
+
+我们沿着这三条标准，看 C、Java、Go、C++、TypeScript 与 Rust 各自交出了怎样的答卷。
+
+---
+
+## 第一站：C 语言——`enum + union`，内存紧凑但标签与数据脱节
+
+C 语言自带的 `enum` 只是整数常量（`0, 1, 2`），不能挂数据；但它提供了另一个底层工具——**联合体（`union`）**，允许几个不同结构的分支共用同一块内存，大小由最大的那个分支决定。
+
+C 程序员实现和类型的标准手法，是把一个 `enum` 标签和一个 `union` 载荷并排包进同一个 `struct` 里（手写 Tagged Union）：
+
+<small class="code-source">C 语言对照代码</small>
+```c
+enum RoleTag { GUEST, MEMBER, ADMIN };
+
+struct Role {
+    enum RoleTag tag; // 标记当前是哪一种可能性
+    union {
+        uint64_t vip_points;
+        struct { uint64_t dept_id; uint64_t security_key; } admin;
+    } payload;        // 共享 16 字节载荷区
+};
+```
+
+- **做到了什么（标准三）**：内存布局与 Rust 的 `enum` 完全同构。整个 `struct Role` 在 64 位平台上固定占 **24 字节**（4 字节 `tag` + 4 字节对齐填充 + 16 字节共享 `union`），直接内联在栈上，零堆分配。
+- **缺了什么（标准一与标准二）**：在 C 编译器眼里，`tag` 和 `payload` 是两个毫无关联的独立字段。你把 `r.tag` 设成 `GUEST`，下一行直接去读 `r.payload.admin.security_key`，或者把 `r.tag` 改成 `MEMBER` 却忘了更新 `payload`，C 编译器一律放行，运行时直接读出垃圾内存或触发未定义行为。
+
+---
+
+## 第二站：传统 OOP（Java / C#）——用子类继承模拟和类型，以及 `sealed` 的补救
+
+早期 Java 取消了 C 语言不安全的 `union`，而 Java 的 `enum` 本质上是固定实例的普通类（所有枚举项必须拥有完全相同的字段结构，无法让 `Guest` 不带字段而 `Admin` 带两个字段）。
+
+因此，当 Java 开发者遇到和类型需求时，走的是**子类型继承（Subtyping）**路线：定义一个抽象父类或接口 `Role`，再派生三个子类：
+
+<small class="code-source">Java 对照代码（传统开放继承）</small>
+```java
+abstract class Role {}
+class Guest extends Role {}
+class Member extends Role { long vipPoints; }
+class Admin extends Role { long deptId; long securityKey; }
+```
+
+- **做到了什么（标准一）**：相比 C 的 `union`，OOP 把每个分支的数据锁进了各自的子类里。只要你不做错误的强制类型转换，就不会在 `Member` 实例上读出 `securityKey`。
+- **为什么说传统 subclass 只是「不完整的和类型」？**
+  1. **违反标准二（边界敞开，无法穷尽）**：「和类型」的核心前提是可能性集合固定（`Role = Guest | Member | Admin`）。但 OOP 的继承树默认是向外部敞开的——设计的初衷是方便日后随时新增第 4、第 5 个子类，而不是限制可能性。正因为编译器不知道 `Role` 共有几个子类，当你用 `if-else` 或 `switch` 处理 `Role` 时，漏写 `Admin` 分支不会触发任何编译错误。
+  2. **把一个类型拆成了四个类型**：在类型系统里，`Guest`、`Member`、`Admin` 变成了三个独立的子类类型。把它们放进同一个 `Role[]` 数组时，静态类型退化为父类 `Role`；读取字段时必须靠运行时的 `instanceof` 检查与向下转型（Downcast）往回找。
+  3. **违反标准三（强制堆分配与对象头）**：因为父类变量 `Role r` 在编译期无法预知子类的字节大小，栈上只能放一个 8 字节引用，指向堆上分配的子类实例；每个实例还要额外背上 12～16 字节的 JVM 对象头。
+
+### 现代 OOP 的演进：用 `sealed class` 补齐和类型
+
+为了补上「开放继承无法做编译期穷尽检查」的短板，Scala、Kotlin 乃至 **Java 17+** 先后引入了**密封类 / 密封接口（`sealed class` / `sealed interface`）**，明确列出允许继承的子类型名单：
+
+<small class="code-source">Java 17+ / 21+ 对照代码（密封接口 + 模式匹配）</small>
+```java
+sealed interface Role permits Guest, Member, Admin {}
+record Guest() implements Role {}
+record Member(long vipPoints) implements Role {}
+record Admin(long deptId, long securityKey) implements Role {}
+```
+
+加上 `sealed` 之后，Java 编译器终于知道了 `Role` 只有这三种合法可能性，配合 Java 21 的 `switch` 模式匹配，补齐了**标准二（编译期穷尽性检查）**。
+
+这一演进恰恰印证了：**「父类 + 子类」从一开始就在承担和类型的职责，只是传统继承忘了把可能性边界关上**。不过受制于 JVM 的对象模型，即便加上了 `sealed`，`Guest`、`Member`、`Admin` 在物理内存中依然是分散在堆上的独立对象，无法像 C `union` 或 Rust `enum` 那样压进同一块连续的栈内存里。
+
+---
+
+## 第三站：Go 语言——没有 `enum` 和继承，靠接口与运行时类型断言
+
+Go 语言既没有 C 的 `union`，也没有类的继承，甚至连 `enum` 关键字都没有（常量靠 `iota` 生成）。
+
+在 Go 里要表达 `Role` 的三种可能性，通常只能定义一个包含私有空方法的接口 `Role`，让三个结构体去实现它：
+
+<small class="code-source">Go 对照代码</small>
+```go
+type Role interface { isRole() }
+
+type Guest struct{}
+type Member struct { VipPoints uint64 }
+type Admin struct { DeptId, SecurityKey uint64 }
+
+func (Guest) isRole()  {}
+func (Member) isRole() {}
+func (Admin) isRole()  {}
+```
+
+使用时通过 `switch v := r.(type)` 做运行时的类型分支断言。这种方案的局限在于：
+- **没有编译期穷尽检查（违反标准二）**：哪怕通过私有方法 `isRole()` 阻止了外部包新增实现，Go 编译器在面对 `switch r.(type)` 时，依然不会因为你漏写了 `case Admin:` 而报错；
+- **接口装箱开销（违反标准三）**：Go 的接口变量是一个 16 字节的双字结构（类型指针 + 数据指针），把具体结构体赋给 `Role` 接口时，通常伴随着堆内存逃逸与指针间接寻址。
+
+---
+
+## 第四站：C++ 与 TypeScript——库级补救与编译期擦除
+
+在系统级与前端领域，还有两种典型的和类型实现方案：
+
+### 1. C++17 `std::variant`：在标准库里造出安全的 `union`
+C++ 既有 C 的裸 `union`，也有面向对象的虚函数继承。为了在不走堆分配的前提下获得类型安全的和类型，C++17 在标准库中引入了模板类 `std::variant<Guest, Member, Admin>`。
+它在物理内存上做到了栈内联（Tag + 最大分支载荷），但因为它是标准库模板而非语言原生结构，C++ 缺乏原生的 `match` 模式匹配语法，访问时必须借助 `std::visit` 配合重载 Lambda，语法心智负担较重。
+
+### 2. TypeScript 可辨识联合（Discriminated Unions）：纯编译期的和类型
+在 TypeScript 中，你可以直接用 `|` 运算符把几个带字面量标签的对象类型拼成和类型：
+
+<small class="code-source">TypeScript 对照代码</small>
+```typescript
+type Role =
+  | { tag: "guest" }
+  | { tag: "member"; vipPoints: number }
+  | { tag: "admin"; deptId: number; securityKey: number };
+```
+
+在编译期，TypeScript 对和类型的支持相当完善：只有先判断 `if (r.tag === "member")`，编译器才允许你访问 `r.vipPoints`，并且可以利用 `never` 类型实现穷尽检查。但一旦编译成 JavaScript，所有类型信息全部擦除，运行时它依然是堆上动态分配的普通 JS 键值对对象。
+
+---
+
+## 第五站：Rust `enum`——编译期闭合约束与固定内存布局的合流
+
+最后看回 Rust。Rust 没有发明新概念，而是把** C 语言 `union` 的紧凑物理内存布局**与**类型理论中闭合和类型的编译期安全约束**合二为一，做成了语言内置的 `enum`：
+
+<small class="code-source">源文件：<code>examples/appendix/sum-types/src/bin/role-sum-type.rs</code></small>
+<Code code={roleSumType} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+size_of::<Role>() = 24 bytes
+size_of::<[Role; 3]>() = 72 bytes
+value = 0
+value = 500
+value = 10000
+```
+
+对照前面的三条标准，核对这段代码的实测结果：
+
+1. **标签与载荷在语言层焊死（满足标准一）**：你无法绕过 `match`（或 `if let`）直接去读 `Role` 里的 `vip_points` 或 `security_key`。只有当编译器确认代码分支匹配上了对应的判别式标签，才把那块共享载荷区按该变体的字段类型解构出来。
+2. **单一类型实体与闭合穷尽检查（满足标准二）**：`Guest`、`Member`、`Admin` 不是三个分散的子类，它们统统是 `Role` 这同一个编译期类型实体的变体构造器。如果在 `describe` 的 `match` 里删掉任意一行，编译器立刻报 `error[E0004]: non-exhaustive patterns` 拒绝编译。
+3. **固定长度栈内联（满足标准三）**：单个 `Role` 固定占 **24 字节**（8 字节对齐标签 + 16 字节最大变体共享载荷区）；3 个不同变体组成的数组 `[Role; 3]` 在栈上就是严丝合缝的 `24 × 3 = 72` 字节连续内存，没有任何堆分配、对象头或指针跳转。
+
+---
+
+## 六门语言「和类型」实现方案全景表
+
+| 语言与方案 | 可能性集合是否闭合（编译期穷尽检查） | 能否阻止跨分支误读载荷 | 物理内存布局（以 `Role` 为例） |
+| --- | --- | --- | --- |
+| **C**（`enum` + `union`） | 否（`switch` 漏写分支不强制报错） | **否**（`tag` 与 `union` 分离，随时可误读） | **栈上固定 24 字节**（Tag + 共享内存，零堆分配） |
+| **传统 Java / C++**（父类 + `subclass`） | **否**（继承树默认敞开，外部可随时派生新子类） | 是（靠子类封装与运行时 `instanceof` 转型） | **栈上 8 字节指针 → 堆上独立子类实例**（含对象头/虚表指针） |
+| **Java 17+ / Kotlin**（`sealed class`） | **是**（`permits` 锁死子类名单，`switch`/`when` 穷尽检查） | 是（编译期模式匹配解构） | **栈上 8 字节指针 → 堆上独立子类实例**（含 JVM 对象头） |
+| **Go**（`interface` + 类型断言） | 否（`switch r.(type)` 无穷尽性强制检查） | 是（需通过类型断言取出具体 `struct`） | **16 字节接口胖指针 → 堆上具体结构体** |
+| **TypeScript**（`|` 可辨识联合） | **是**（配合 `switch` 与 `never` 可做穷尽检查） | **是**（编译期类型收窄 Type Narrowing） | **运行时擦除为堆上动态 JS 对象** |
+| **Rust**（原生 `enum`） | **是**（变体在定义处闭合，`match` 强制穷尽检查 `E0004`） | **是**（Tag 与载荷绑定，仅模式匹配可解构） | **栈上固定 24 字节**（Tag + 最大变体共享载荷区，零堆分配） |
+
+带走这张对照表，当你再看到 OOP 代码里的一串子类、C 代码里的 `union`、或者 TypeScript 里的 `|` 联合类型时，就能一眼认出它们背后的共同目标：**它们都是在各自语言的限制下实现「和类型（Sum Type）」；而 Rust 的 `enum`，则是把这件事从语法、编译期检查到栈内存布局一步做到位的原生工具。**

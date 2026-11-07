@@ -1,0 +1,117 @@
+---
+title: "行为对以后的类型开放：Trait"
+description: 算面积的函数要接受圆、正方形，还有以后别人写的三角形。枚举是封闭的，加一种就要改所有 `match`；继承要在类型定义时就选好父类。把「能做什么」从数据里拆出来，写成一份契约，由类型在任何地方声明实现，这就是 Trait。`Copy` 和 `Clone` 也是契约。
+sidebar:
+  label: Trait
+  order: 9
+  badge:
+    text: 草稿
+    variant: caution
+draft: true
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+
+import closedEnum from '../../../../../../../examples/types/traits/src/bin/closed-enum.rs?raw';
+import openTrait from '../../../../../../../examples/types/traits/src/bin/open-trait.rs?raw';
+import retroactive from '../../../../../../../examples/types/traits/src/bin/retroactive.rs?raw';
+import bounds from '../../../../../../../examples/types/traits/src/bin/bounds.rs?raw';
+import deriveByHand from '../../../../../../../examples/types/traits/src/bin/derive-by-hand.rs?raw';
+
+## 我们要解决的问题
+
+写一个 `total`，把两个图形的面积加起来。图形可能是圆，可能是正方形，以后还会有别人写的三角形。
+
+`total` 只写一次，以后才出现的类型也要能传进去。这门语言怎么做到？
+
+## 第一版：每种形状一个函数
+
+`area_circle`、`area_square` 各写一个。`total` 要为「圆加圆」「圆加正方形」「正方形加正方形」各写一遍，再来一个三角形，组合又翻一倍。
+
+`total` 只写一次的目标，第一步就没达到。
+
+## 第二版：枚举
+
+6.1 的枚举把几种情况收成一个类型：
+
+<Code code={closedEnum} lang="rust" />
+
+`total` 收两个 `Shape` 就行，`match` 覆盖全部变体，穷尽检查保证没有遗漏。
+
+撞墙在第三个形状。加一个三角形，要改 `Shape`，还要改每一个 `match` 过 `Shape` 的函数。`Shape` 如果在别人的库里，你连改都改不了。枚举的变体是一个封闭的集合，写完就定了。
+
+情况固定、由你掌握时，这正是想要的：编译器替你指出每一处要改的地方。要对以后的类型开放时，它就成了障碍。
+
+## 第三版：继承
+
+熟悉 Java 的你会想到：定义一个 `Shape` 父类或接口，圆和正方形各自实现 `area`，`total` 收 `Shape`。
+
+这能对新类型开放，但有一个前提：类型在定义的时候就要写明它继承谁、实现哪些接口。`String` 是标准库写好的，你新定义的接口，它永远不会实现。想让一个已有的类型参加进来，只能再包一层。
+
+「能做什么」和「数据长什么样」被绑在了定义类型的那一刻。
+
+## 第四版：把「能做什么」拆出来
+
+把「能算面积」单独写成一份契约，和任何具体类型分开：
+
+<Code code={openTrait} lang="rust" />
+
+`trait Area` 声明一份契约：满足它的类型，要提供一个 `area(&self) -> f64`。这份契约叫 Trait。`impl Area for Circle` 是 `Circle` 声明自己满足它，并给出实现。
+
+`total` 的参数写成 `&impl Area`：任何实现了 `Area` 的类型的引用。`Triangle` 是后来加的，`Area` 和 `total` 一个字没改，它照样能传进去。
+
+声明实现不必写在类型定义里，别人写好的类型也能满足你的契约：
+
+<Code code={retroactive} lang="rust" />
+
+`String` 来自标准库，`Shout` 是我们定义的，`impl Shout for String` 写在我们自己的代码里。限制只有一条：Trait 和类型，至少有一个是你自己定义的。别人的 Trait 给别人的类型实现，不允许。
+
+| | 枚举 | Trait |
+| :--- | :--- | :--- |
+| 情况的集合 | 封闭：变体写在一处 | 开放：任何类型都能声明实现 |
+| 加一种情况 | 改枚举和每个 `match` | 写一个新的 `impl` |
+| 编译器保证 | 每个变体都被处理 | 每个实现都提供了契约要的方法 |
+
+情况封闭、由你掌握，用枚举；行为要对以后的类型开放，用 Trait。
+
+## 要求可以并列
+
+一个函数对参数的要求常常不止一条：
+
+<Code code={bounds} lang="rust" />
+
+`impl Clone + Debug` 要求参数既能 `clone`，又能用 `{:?}` 打印。这些要求叫 Trait 约束（Trait Bound），用 `+` 并列，彼此独立。
+
+删掉 `+ Debug`，报 `error[E0277]`：参数没有实现 `Debug`。函数体里用了 `{:?}`，签名却没要求。编译器按签名检查函数体，不按你将来会传进来的类型猜。签名就是契约。
+
+## `Copy` 和 `Clone` 也是契约
+
+5.2 里，能不能复制要由类型作者声明，写法是 `#[derive(Clone, Copy)]`。手写出来是这样：
+
+<Code code={deriveByHand} lang="rust" />
+
+`Clone` 要求提供一个 `clone` 方法，这里直接复制 `*self`。`Copy` 没有任何方法，`impl Copy for Point {}` 只是一条声明：这个类型的值，赋值时可以按位复制。
+
+4.2 说，规矩是类型的正式成分。Trait 就是规矩的写法。一个类型实现了哪些 Trait，决定了它能被怎样使用：`Copy` 改变赋值的行为，`Clone` 提供显式复制，`Debug` 允许打印。
+
+## 方法何时定下
+
+`total(&Circle(1.0), &Square(2.0))` 里，`a.area()` 调用哪一个 `area`？编译到这一行时，编译器已经知道 `a` 是 `Circle`，调用在编译期就定了。编译器怎么做到的，下一课讲。
+
+也有到运行时才知道具体类型的时候，比如一个列表里混着圆和正方形。那时方法要到运行时查表才定。查的表跟着指针走，指针变胖，和 5.1 里指向 `[T]` 的指针带着长度是同一条规则：类型里缺什么，指针就带什么。这一档是 `dyn Trait`，留到 9.2。
+
+<Aside type="note" title="补充基础">
+  类型还可以用来限制调用顺序：用不同的类型表示对象的不同状态，方法消耗旧状态的值、返回新状态的值，没到那个状态就调不到那个方法。这叫类型状态。它约束哪些调用顺序能编译，业务对不对仍归 6.1 说的那条边界。写法收在附录。
+</Aside>
+
+## 顿悟时刻
+
+情况封闭，用枚举，编译器帮你找出每处要改的地方。行为要对以后的类型开放，把它拆成一份契约：Trait。契约和数据分开，别人写好的类型也能声明实现。
+
+签名里的约束就是契约，编译器只按它检查。`Copy`、`Clone` 也是 Trait：类型的规矩，有了写法。
+
+## 动手
+
+去官方 Book 第 10 章，读 10.2 节《Trait：定义共同行为》。
+
+在 `open-trait.rs` 里再加一个 `Rectangle`，只写 `impl Area for Rectangle`，不改 `total`。然后故意在 `impl` 里漏写 `area`，看编译器怎么说。

@@ -1,0 +1,54 @@
+---
+/**
+ * 覆盖 Starlight 的 LanguageSelect。
+ *
+ * 默认实现只在同一站点内切换 /zh-cn/ 与 /en/ 前缀；
+ * 本站每个域名只有一种语言，因此切换语言 = 跳转到对方域名的同一路径。
+ * 开发模式下指向对方语言 dev server 的 localhost 端口（见 src/config/site.ts）。
+ */
+import Select from '@astrojs/starlight/components/Select.astro';
+import { CURRENT, LOCALES, siteOrigin } from '../../config/site';
+
+const isDev = import.meta.env.DEV;
+const pathname = Astro.url.pathname;
+
+const options = Object.values(LOCALES).map((locale) => ({
+	value: locale.code === CURRENT.code ? pathname : siteOrigin(locale, isDev) + pathname,
+	selected: locale.code === CURRENT.code,
+	label: locale.label,
+}));
+---
+
+<rustroot-lang-select>
+	<Select
+		icon="translate"
+		label={Astro.locals.t('languageSelect.accessibleLabel')}
+		options={options}
+		width="7em"
+	/>
+</rustroot-lang-select>
+
+<script>
+	class RustRootLanguageSelect extends HTMLElement {
+		constructor() {
+			super();
+			const select = this.querySelector('select');
+			if (!select) return;
+			select.addEventListener('change', (e) => {
+				if (e.currentTarget instanceof HTMLSelectElement) {
+					// value 是完整 URL（跨域）或当前路径（本站），统一用 href 跳转
+					window.location.href = e.currentTarget.value;
+				}
+			});
+			window.addEventListener('pageshow', (event) => {
+				if (!event.persisted) return;
+				const markupSelectedIndex =
+					select.querySelector<HTMLOptionElement>('option[selected]')?.index;
+				if (markupSelectedIndex !== select.selectedIndex) {
+					select.selectedIndex = markupSelectedIndex ?? 0;
+				}
+			});
+		}
+	}
+	customElements.define('rustroot-lang-select', RustRootLanguageSelect);
+</script>

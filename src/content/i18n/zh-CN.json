@@ -1,0 +1,5 @@
+{
+  "$schema": "https://starlight.astro.build/schemas/i18n.json",
+  "tableOfContents.onThisPage": "本页目录",
+  "page.lastUpdated": "最后更新："
+}

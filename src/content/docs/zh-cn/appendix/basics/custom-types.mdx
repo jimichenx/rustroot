@@ -1,0 +1,89 @@
+---
+title: "struct、enum 与 match 语法"
+description: 速查 Rust 结构体（struct）的声明与初始化简写、impl 块中关联函数（::）与方法（.）的区分，以及枚举（enum）与模式匹配（match / if let）的基础写法。
+sidebar:
+  label: "struct 与 enum"
+  order: 3
+---
+
+import { Code } from '@astrojs/starlight/components';
+import structImpl from '../../../../../../examples/appendix/basic-syntax/src/bin/struct-and-impl.rs?raw';
+import enumMatch from '../../../../../../examples/appendix/basic-syntax/src/bin/enum-and-match.rs?raw';
+
+:::note[阅读指引]
+- **定位**：基础速查。遇到主线示例里的写法时再翻，不必按顺序读完。
+- **关联主线**：第 4 章（自定义类型构造器与数据建模）
+- **核心解决**：怎么定义和初始化一个 `struct`？为什么有的函数用 `User::new`（双冒号 `::`）调用，有的却用 `u.is_active()`（点号 `.`）调用？`enum` 的变体怎么带数据，又怎么用 `match` 和 `if let` 拆出来？
+:::
+
+在第 4 章深入剖析「部分移动」「方法接收者三件套」与「代数数据类型（ADT）内存布局」之前，如果你还不熟悉 Rust 定义结构体、方法、枚举和模式匹配的基础字面写法，可以先通过本文快速过一遍。
+
+## 一、结构体（`struct`）与 `impl` 方法块
+
+在 Rust 中，数据字段定义在 `struct` 里，而操作这些数据的函数则单独写在 `impl` 块里：
+
+<small class="code-source">源文件：<code>examples/appendix/basic-syntax/src/bin/struct-and-impl.rs</code></small>
+<Code code={structImpl} lang="rust" />
+
+运行程序，输出 `Alice true`。这段代码展示了四个最常用的基础语法点：
+
+### 1. 声明与实例化（含同名字段简写）
+
+- **声明**：`struct User { name: String, active: bool }` 定义了结构体的字段名与各自的类型（字段之间用逗号分隔）。
+- **实例化与同名简写**：创建实例时直接写 `User { name: ..., active: true }`（不需要像 Java 那样写 `new` 关键字）。如果在 `User::new(name: String)` 函数里，局部变量的名字刚好和字段名都叫 `name`，可以直接简写成 `Self { name, active: true }`，不必重复写 `name: name`。
+- **结构体更新语法（`..`）**：如果想基于已有的 `u1` 创建一个只改了部分字段的 `u2`，可以写 `let u2 = User { active: false, ..u1 };`（表示其余未列出的字段全部直接从 `u1` 移入或复制过来）。
+
+### 2. 其余两种结构体形态：元组结构体与单元结构体
+
+除了上面带字段名的常规结构体，Rust 还支持两种轻量写法：
+- **元组结构体（Tuple Struct）**：字段不写名字，只写类型，如 `struct Color(u8, u8, u8);` 或单字段包装 `struct Meters(f64);`。实例化像元组一样写 `let d = Meters(10.5);`，用 `d.0` 访问内部字段。
+- **单元结构体（Unit-like Struct）**：没有任何字段，直接写 `struct Marker;`，和单元类型 `()` 一样在内存中占 0 个字节，常用于在第 5 章中单独挂载某个 Trait 行为。
+
+### 3. `impl` 块里的 `Self`、关联函数（`::`）与方法（`.`）
+
+在 `impl User { ... }` 内部：
+- **大写的 `Self`**：是当前 `impl` 目标类型（即 `User`）的内置类型别名。写 `-> Self` 和 `Self { ... }` 就等于写 `-> User` 和 `User { ... }`。
+- **关联函数（Associated Function，用 `::` 调用）**：第一个参数**不是** `self` 的函数（如 `fn new(name: String) -> Self`）。它挂在类型名名下，不依赖某个已经存在的实例，调用时写双冒号 **`User::new(...)`**（主线中见过的 `String::from("hello")` 也是关联函数）。
+- **方法（Method，用 `.` 调用）**：第一个参数是 **`self`、`&self` 或 `&mut self`** 的函数（如 `fn is_active(&self) -> bool`，其中 `&self` 是 `self: &Self` 的简写）。调用时直接对实例用点号 **`u.is_active()`**。（为什么这三种 `self` 代表不同的所有权与借用权限，见主线结构体与方法章节。）
+
+---
+
+## 二、枚举（`enum`）与模式匹配（`match` / `if let`）
+
+在 C 或 Java 中，枚举通常只是一组命名整数常量；而在 Rust 中，**同一个 `enum` 的不同变体（Variant）可以直接挂接不同类型的数据载荷**。
+
+<small class="code-source">源文件：<code>examples/appendix/basic-syntax/src/bin/enum-and-match.rs</code></small>
+<Code code={enumMatch} lang="rust" />
+
+运行程序，依次输出 `idle`、`running: 80%`、`failed: 500` 和 `current progress: 80%`。
+
+### 1. 枚举变体的三种写法
+
+如 `enum Status` 所示，同一个枚举内部的变体可以自由选择三种形态：
+- **不带数据**：如 `Status::Idle`；
+- **像元组一样带匿名数据**：如 `Status::Running(u32)`，构造时写 `Status::Running(80)`；
+- **像结构体一样带具名字段**：如 `Status::Failed { code: i32 }`，构造时写 `Status::Failed { code: 500 }`。
+
+无论当前值是哪个变体，它们的对外类型统一都是 `Status`。
+
+### 2. `match` 穷尽匹配：把变体里的数据拆出来
+
+因为编译器在运行前不知道一个 `Status` 变量里装的到底是哪一种变体，你不能直接对它点出 `pct` 或 `code`，必须通过模式匹配先核对变体形状，再把里面的数据绑定到局部变量上使用：
+
+- **语法结构**：每个分支写作 `模式 => 表达式,`（如果右侧是多行代码，可以用 `{ ... }` 包起来）。
+- **编译期穷尽性检查（Exhaustiveness）**：`match` **必须把目标枚举的所有可能变体全部覆盖完**，漏掉任何一个变体都会直接编译报错。如果你想把剩余不关心的分支统一兜底处理，可以在最后一行使用通配符 `_ => ...`。
+- **本身也是表达式**：和上一节讲的 `if / else` 一样，`match` 整体也是一个能产出值的表达式，可以直接写在 `let msg = match state { ... };` 的等号右侧。
+
+### 3. 只关心一种情况时的简写：`if let`
+
+如果你在某处代码里**只关心某一个特定变体**（比如只想在处于 `Status::Running` 时打印进度，其余状态什么都不做），写完整的 `match` 还要补一行 `_ => ()` 就显得啰嗦。
+
+此时可以直接用 `if let` 语法糖：
+
+```rust
+if let Status::Running(pct) = states[1] {
+    println!("current progress: {pct}%");
+}
+```
+
+它的读法是：**「如果等号右边的 `states[1]` 能够匹配上左边的模式 `Status::Running(pct)`，就把里面的值拆进变量 `pct` 并执行花括号里的代码；否则直接跳过。」**

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!--
+    Rust Root 主 mark · 截面
+    圆角方块跟随文字色（currentColor）。一条锈橙切开面斜穿过下半，
+    像把一块东西剖开：上面是你看见的，切开面是根。
+    顶栏 SiteTitle.astro 内联同一组形状。favicon 用同一几何，整枚锈橙、切开面挖空。
+  -->
+  <defs>
+    <clipPath id="rr-mark">
+      <rect x="5" y="5" width="54" height="54" rx="16"/>
+    </clipPath>
+  </defs>
+  <rect x="5" y="5" width="54" height="54" rx="16" fill="currentColor"/>
+  <g clip-path="url(#rr-mark)">
+    <rect x="-24" y="30" width="112" height="14" fill="#e8590c" transform="rotate(-22 32 37)"/>
+  </g>
+</svg>

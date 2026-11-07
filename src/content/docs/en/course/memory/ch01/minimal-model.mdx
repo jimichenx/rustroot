@@ -1,0 +1,121 @@
+---
+title: "The minimal model: why assignment invalidates the old variable"
+description: Assigning an integer leaves both variables usable, whereas assigning a String must invalidate the old variable—a difference driven by who is responsible for freeing the heap.
+sidebar:
+  label: Assignment and move
+  order: 3
+---
+
+import OneBinding from '../../../../../../components/course/OneBinding.astro';
+
+The previous section left us with a key clue: a heap resource has no built-in exit moment of its own, but the stack variable pointing to it does—when a function returns or a block closes (`}`), the exact point where that stack variable goes out of scope is fixed at compile time.
+
+Before touching any Rust syntax, let's follow that clue and design the simplest possible model for automatic memory reclamation—and see whether it can solve the problem on its own.
+
+## Building the minimal model
+
+Turn that clue from the previous section into the model's first rule:
+
+**When a stack variable goes out of scope (`}`), the heap resource it points to is freed automatically.**
+
+Let's trace how this minimal model behaves. Suppose a block allocates a chunk of heap memory and holds it through a stack variable `s`. We'll use pseudocode so we can focus purely on the mechanics.
+
+<small class="code-source">Pseudocode for reasoning</small>
+```text
+{
+    s = alloc_heap("hello")
+    // ... read or use s inside this block ...
+}   // ← s goes out of scope here; the heap resource it points to is freed automatically
+```
+
+As long as `s` is the only variable involved, this single rule gets the job done:
+- You never write `free`, so you cannot leak memory by forgetting it.
+- The release point is fixed right at the closing brace `}`, known at compile time, with zero runtime scanning or reference-counting overhead.
+
+Now let's test this model against a single assignment statement, `=`.
+
+## Why a single assignment causes a double free
+
+First, try an ordinary integer on the stack:
+
+<small class="code-source">Pseudocode for reasoning</small>
+```text
+{
+    a = 1
+    b = a
+}   // ← b and a go out of scope; the stack frame is reclaimed directly
+```
+
+In this model, `b = a` does one thing: **it copies the bytes of `a` on the stack into `b`.** Because the integer `1` lives entirely on the stack and carries no heap allocation, `a` and `b` each end up with an independent `1`. When the block closes at `}`, both variables go out of scope, no heap cleanup is triggered, and nothing goes wrong.
+
+Next, try a dynamic string backed by a heap resource:
+
+<small class="code-source">Pseudocode for reasoning</small>
+```text
+{
+    s = alloc_heap("hello")
+    t = s
+}   // ← what happens when this scope ends?
+```
+
+As we saw in the previous section, a value like this has a three-word control header on the stack (pointer `ptr`, length `len`, capacity `cap`), while the actual character buffer `"hello"` sits on the heap.
+
+When `t = s` runs in our model, it copies those three machine words from `s` into `t`. **Because the heap address inside `ptr` is copied along with them, both stack variables now point at the exact same heap resource rather than holding separate character buffers.**
+
+<OneBinding part="share" />
+
+Now follow execution to the closing brace `}`. Variables exit in reverse order of declaration—`t` leaves first, then `s`. Our minimal model's rule fires once for each variable going out of scope:
+
+1. `t` goes out of scope and automatically frees the heap block it points to.
+2. `s` is still in scope, and its `ptr` now points at freed memory—a **dangling pointer**.
+3. Immediately afterward, `s` also goes out of scope and frees the exact same heap block a second time—a **double free**, which is undefined behavior and typically crashes the program.
+
+The assignment copied the address; it did not change our scope-exit rule. The problem appears afterward: both variables point to the same heap resource, so the rule frees it twice.
+
+From that failure, we can extract a fundamental requirement our model must uphold:
+
+**At any given moment, each heap resource can have only one stack variable responsible for freeing it.**
+
+The assignment `t = s` breaks this requirement. To keep the model, we need to resolve the conflict.
+
+## Patching the model: invalidate the old variable
+
+The patch follows the same minimal approach. Since two variables cannot both remain responsible for freeing the same heap block, only one can stay valid after an assignment:
+
+**When a value backed by a heap resource is assigned, its stack control header is copied to the new variable, the old variable becomes invalid immediately, and the responsibility for freeing the heap transfers to the new variable.**
+
+<OneBinding part="move" />
+
+The `"hello"` buffer on the heap is never duplicated—only the three machine words on the stack are copied. When the scope finally ends, only the valid variable `t` triggers deallocation; the invalidated `s` does nothing. The trade-off is equally direct: after the assignment, the old variable can no longer be used.
+
+## One `=`, two semantics: Copy and Move
+
+In the pseudocode, assignment still uses the same equals sign `=`. In our model, both cases start by copying bytes on the stack. This describes the model, not a guarantee that compiled Rust code performs a physical byte copy.
+
+<small class="code-source">Pseudocode for reasoning</small>
+```text
+b = a    // a is an integer
+t = s    // s points to a heap resource
+```
+
+At the logical level, however, that single `=` splits into two distinct behaviors:
+
+- For `b = a`: the stack bytes carry no heap resource that needs freeing. After the copy, `a` and `b` both remain valid and independent. We call this **Copy** semantics.
+- For `t = s`: the stack bytes carry a heap resource that requires exclusive cleanup. Keeping both variables valid after copying the header would cause a double free, so the old variable `s` must be invalidated immediately, leaving only `t` valid.
+
+In the second case, what protects the model is invalidating the old variable. Although the model copies the bytes, only one variable remains usable: `s` is invalid, and `t` holds the heap resource along with the responsibility for freeing it. The effect is that the value has **moved** from `s` to `t`.
+
+In this model, the same `=` therefore has two behaviors: **Copy** for the integer and **Move** for the heap-backed string. In Rust, the actual distinction is whether a type implements the `Copy` trait, not whether it holds a heap resource.
+
+## What the minimal model has achieved so far
+
+Put the two pieces from this section together, and our minimal model already meets the goal set in the first section:
+
+1. **When a variable goes out of scope, the heap resource it points to is freed automatically**—no manual `free`, and no runtime scanning or reference counting.
+2. **Assigning a heap-backed value performs a Move, invalidating the old variable**—only one variable is responsible for freeing a heap block at any moment, preventing double frees.
+
+Automatic reclamation, no GC, and no double frees—on paper, everything seems to be in place.
+
+Still, this model has only passed its first test. If the model is complete, can you pass a value into a function for it to use without difficulty? If not, where does the problem arise?
+
+Hold on to that question as we step into the next section.

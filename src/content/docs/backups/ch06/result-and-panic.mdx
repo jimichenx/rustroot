@@ -1,0 +1,115 @@
+---
+title: "可能失败：Result、? 与 panic"
+description: 失败要带原因，`Option` 说不出为什么；异常不写在签名里，调用方不知道要处理。失败于是成了一个变体：`Result<T, E>`。一层层往上交的 `match` 是机械的，收成 `?`。可每个下标都返回 `Result` 又太重，程序自己的错误用 panic 当场停下。
+sidebar:
+  label: Result、? 与 panic
+  order: 8
+  badge:
+    text: 草稿
+    variant: caution
+draft: true
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+
+import parse from '../../../../../../../examples/types/result-and-panic/src/bin/parse.rs?raw';
+import propagateMatch from '../../../../../../../examples/types/result-and-panic/src/bin/propagate-match.rs?raw';
+import propagateQuestion from '../../../../../../../examples/types/result-and-panic/src/bin/propagate-question.rs?raw';
+import mixedErrors from '../../../../../../../examples/types/result-and-panic/src/bin/mixed-errors.rs?raw';
+import panicOrOption from '../../../../../../../examples/types/result-and-panic/src/bin/panic-or-option.rs?raw';
+
+## 我们要解决的问题
+
+把 `"42"` 解析成整数，可能成功，也可能失败。失败时调用方要知道原因：这不是数字，还是数字太大。
+
+这门语言怎么表示「失败了，原因是这个」？
+
+## 第一版：返回 `Option`
+
+上一课有了 `Option`：成功返回 `Some(42)`，失败返回 `None`。
+
+`None` 只说「没有」，说不出为什么。调用方想提示用户「第 3 行不是数字」，拿不到这个信息。
+
+## 第二版：异常
+
+Java 的做法：失败时抛出一个异常对象，带着原因，一层层穿过调用栈，直到有人 `catch`。
+
+`Integer.parseInt` 失败时抛的是 `NumberFormatException`，一种非受检异常，签名里不写。调用方看签名，看不出这个函数会失败，也就没人被逼着处理。这正是 6.1 里空地址的问题：一种没写进类型的情况，到运行时才出现。
+
+## 第三版：失败也是一个变体
+
+6.1 的办法用在这里：成功和失败是两种情况，一次只有一种，各带各的数据。
+
+```rust
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+```
+
+这段是标准库定义的简化写法，不是实验源码。`Ok` 装成功的值，`Err` 装失败的原因。
+
+<Code code={parse} lang="rust" />
+
+`parse::<i32>()` 返回 `Result<i32, ParseIntError>`。`"42"` 走 `Ok` 臂，`"forty-two"` 走 `Err` 臂，错误值里写着原因。失败写在返回类型里，不 `match` 就拿不到整数，穷尽检查逼着调用方把失败那条臂也写上。
+
+## 一层层往上交
+
+`sum_two` 解析两个数再相加。它自己不知道解析失败了该怎么办，只能把错误交给它的调用方：
+
+<Code code={propagateMatch} lang="rust" />
+
+每次 `parse` 都跟一个 `match`：成功，取出整数；失败，`return Err(e)`。两次调用，两个几乎一样的 `match`。调用链有十层，每一层都要这样展开一遍。
+
+这段展开是机械的：成功就接着走，失败就原样交上去。机械的事，交给语言做。
+
+<Code code={propagateQuestion} lang="rust" />
+
+`a.parse::<i32>()?` 做的就是上面那个 `match`：是 `Ok`，取出值往下走；是 `Err`，从当前函数返回这个错误。两个版本输出一样。
+
+`?` 只传播，不处理。错误交给了上一层，处理留在知道该怎么办的那一层。它要从当前函数返回一个错误，所以只能写在返回 `Result` 或 `Option` 的函数里。
+
+返回之前，`?` 还做一件事：把错误转换成签名里写的错误类型。两种错误之间没有转换时：
+
+<Code code={mixedErrors} lang="rust" />
+
+取消注释那一行，报 `error[E0277]`：`?` 无法把错误转换成 `ParseIntError`。读文件失败得到的是 `std::io::Error`，签名声明的是 `ParseIntError`。转换靠一个叫 `From` 的 Trait，怎样让一个函数交出几种错误，收在附录《`?` 的展开与错误传播》。
+
+## 每一种失败都要写进类型吗
+
+照第三版走到底：`v[i]` 也可能失败，下标可能越界。那它也该返回 `Option`，每次取元素都 `match` 一次。
+
+代码里大部分下标是程序自己算出来的：循环变量、刚查过的长度。它越界，说明程序算错了。这种失败交给调用方，调用方也补救不了，而每次取元素都要写 `match`，代价落在所有正确的代码上。
+
+越界之后接着跑也不行：在我们的语言里，读下标之外的内存，就是读一块不属于这个值的内存，第一篇防的就是这个。
+
+所以这类失败的处理是：当场停下。这叫 panic：打印原因，停止运行，不带着错误的状态继续往下。
+
+两种约定都给你，按失败的性质选：
+
+<Code code={panicOrOption} lang="rust" />
+
+`v[i]` 的约定是「下标一定合法」，不合法就 panic：取消注释，程序在运行时停下，报告下标越界。`v.get(i)` 的约定是「下标可能无效」，返回 `Option`，无效就是 `None`，交给调用方决定。5.1 里切片范围越界 panic，是同一种约定。
+
+| 失败的性质 | 例子 | 处理 |
+| :--- | :--- | :--- |
+| 调用方能处理 | 文件不存在、输入不是数字 | `Result` 或 `Option`，写进签名 |
+| 程序自己的假设被打破 | 下标算错、本该有值却没有 | panic，当场停下 |
+
+`unwrap` 和 `expect` 把一个 `Result` 或 `Option` 换成第二种：是 `Ok` 或 `Some` 就取出值，否则 panic。写下它们，是你在声明「这里失败，就是程序的错」。`"42".parse().expect(...)` 解析的是你自己写的字面量，它失败只能是代码写错了，这时用 `expect` 合适。解析用户的输入，就不该这样写。
+
+<Aside type="tip" title="如果你来自 Java">
+  Java 的受检异常写在 `throws` 里，非受检异常不写。Rust 里调用方能处理的失败，一律写进返回类型。panic 更接近 Java 里不该被捕获的 `Error`：它说明程序有错，不是留给调用方处理的信号。
+</Aside>
+
+## 顿悟时刻
+
+失败要带原因，又要逼调用方处理，就写成一个变体：`Result<T, E>`。一层层往上交的 `match` 是机械的，收成 `?`：成功继续，失败早退，错误先转换成签名里的类型。
+
+不是每种失败都值得写进类型。调用方能处理的用 `Result`；程序自己的假设被打破，用 panic 当场停下。
+
+## 动手
+
+去官方 Book 第 9 章，读 9.2 节《用 `Result` 处理可恢复的错误》和 9.3 节《要不要 `panic!`》。
+
+在 `propagate-question.rs` 的 `main` 里对 `sum_two` 的结果用 `?`，读编译器的报错：`main` 默认不返回 `Result`，`?` 没有地方交出错误。

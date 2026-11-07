@@ -1,0 +1,302 @@
+---
+title: "模式匹配与穷尽性检查：从 let 解构到 match、if let 与 let else"
+description: 打破「模式匹配等于 match」的常见误解，从枚举物理内存出发理解为什么 Rust 没有 is/as 强转，打通 let 模式解构、match 穷尽性检查、if let 与 let else，并掌握模式绑定中的所有权规则。
+sidebar:
+  label: 模式匹配与穷尽性检查
+  order: 2
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import letPatternRefutable from '../../../../../../../examples/types/enum-option-match/src/bin/let-pattern-refutable.rs?raw';
+import matchRole from '../../../../../../../examples/types/enum-option-match/src/bin/match-role.rs?raw';
+import ifLetAndLetElse from '../../../../../../../examples/types/pattern-ownership/src/bin/if-let-and-let-else.rs?raw';
+import matchMoveAndBorrow from '../../../../../../../examples/types/pattern-ownership/src/bin/match-move-and-borrow.rs?raw';
+
+在上一节末尾，我们留了一个问题：既然 `Role::Member(500)` 和 `Role::Admin { dept_id: 1, security_key: 9999 }` 里面都装着数据，为什么 Rust 不允许你直接写 `r.0` 或 `r.security_key`？
+
+很多有面向对象（OOP）经验的读者还会接着问：**既然不能直接点出字段，那我能不能先写 `if r is Member` 判断一下，再用 `r as Member` 把它强转出来访问？**
+
+答案是：Rust 既不允许直接 `.` 访问枚举载荷，也**没有提供 `r is Member` 和 `r as Member` 这样的类型转换操作**。
+
+要理解 Rust 为什么彻底放弃这套做法，我们直接回到上一节拆解的物理内存结构。
+
+---
+
+## 为什么不能用 `.` 访问，也没有 `is` 与 `as` 强转？
+
+在 `struct`（积类型）中，所有字段同时存在，每个字段在内存里的偏移量固定且始终有效，因此随时可以写 `user.name`。
+
+但在 `enum Role`（和类型）的 24 字节内存里，后 16 字节是一块由所有可能性分时复用的**共享载荷区**：
+- 当开头的判别式标签（Tag）是 `0`（`Guest`）时，后面 16 字节处于闲置未初始化状态；
+- 当开头的标签是 `1`（`Member`）时，只有前 8 字节装着会员积分，后 8 字节闲置；
+- 只有当开头的标签是 `2`（`Admin`）时，后 16 字节里才真正装着 `dept_id` 和 `security_key`。
+
+如果允许直接写 `r.security_key`，当 `r` 处于 `Guest` 状态时就会直接读出未初始化的垃圾字节。
+
+那为什么不采用 OOP 熟悉的「先用 `if (r instanceof Member)` 检查，再用 `((Member) r).vipPoints` 向下转型（Downcast）」呢？原因有两层：
+
+1. **变体不是类型，无法转型**：正如上一节验证过的 `error[E0573]`，在 `enum Role` 中只有外层的 `Role` 是编译期类型实体，里面的 `Member` 只是变体构造器，根本不是一个类型。既然不是类型，语法上就不存在「把 `r` 转换成 `Member` 类型（`r as Member`）」的操作。
+2. **「先检查 `is`、再强转 `as`」拆成了两个独立动作，编译器守不住中间的脱节**：在传统 OOP 语言里，判断类型和强制转型是分开写的两步。你完全可以在 `if (r instanceof Guest)` 的分支里手滑写下 `(Member) r`，编译器在编译期无法拦截，只能等到运行时抛出 `ClassCastException`；或者在第 10 行检查了 `r` 是 `Member`，第 12 行不小心把 `r` 改成了 `Guest`，第 13 行照样去读积分。
+
+为了从根源上消除这种脱节，Rust 立下了一条铁律：**绝不允许把「核对开头的标签」和「取出后面的载荷」拆成两步各写各的，必须通过「模式（Pattern）按形状解构」将两者焊死在同一个语法动作里**。
+
+---
+
+## 澄清一个常见误解：模式匹配不等于 `match`，连 `let` 本身就是模式匹配
+
+一提到**模式匹配（Pattern Matching）**，很多教程会直接甩出 `match` 关键字，导致不少开发者误以为「模式匹配就是 `match`」。
+
+其实在 Rust 中，你从第 2 章写下的第一行变量声明开始，就已经每天都在使用模式匹配了——因为 **`let` 语句的真正语法从来不是 `let 变量名 = 表达式;`，而是**：
+
+```text
+let 模式（Pattern） = 表达式（Expression）;
+```
+
+什么是**模式（Pattern）**？模式就是写在 `=` 左边（或 `match` 分支左边、函数参数位置）、用来**按数据形状拆开值并绑定内部变量**的模板：
+- 当你写 `let x = 5;` 时，`x` 是最朴素的单变量模式，它直接接住整个值；
+- 当你把值构造成复合结构时，怎么用构造器把它拼起来，就能用同样形状的模式把它拆开（称为**解构 Destructuring**）。
+
+我们用一段代码，对比一下用 `let 模式 = 表达式;` 拆解**积类型（元组 / `struct`）**与**和类型（`enum`）**时会发生什么：
+
+<small class="code-source">源文件：<code>examples/types/enum-option-match/src/bin/let-pattern-refutable.rs</code></small>
+<Code code={letPatternRefutable} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+point = (10, 20), user = Ferris (7)
+```
+
+仔细看第 19～20 行：
+- `let (x, y) = (10, 20);` 用元组形状的模式 `(x, y)`，直接把右侧元组里的两个整数拆出来绑给了 `x` 和 `y`；
+- `let User { name, age } = ...;` 用结构体形状的模式 `User { name, age }`，直接把结构体里的两个字段拆出来绑给了同名变量 `name` 和 `age`。
+
+既然元组和 `struct` 都能直接用一行 `let 模式 = 值;` 拆开，为什么到了第 26 行，我们对枚举写下一模一样的 **`let Role::Member(points) = _role;`**（取消第 26 行注释），编译器却当场报错 **`error[E0005]`**？
+
+<small class="code-source">编译器输出（取消 <code>let-pattern-refutable.rs</code> 第 26 行注释后）</small>
+```text
+error[E0005]: refutable pattern in local binding
+  --> src/bin/let-pattern-refutable.rs:26:9
+   |
+26 |     let Role::Member(points) = _role;
+   |         ^^^^^^^^^^^^^^^^^^^^ patterns `Role::Guest` and `Role::Admin { .. }` not covered
+   |
+   = note: `let` bindings require an "irrefutable pattern", like a `struct` or an `enum` with only one variant
+```
+
+看编译器底部那句切中要害的提示：**`let` 绑定要求一个「不可反驳模式（irrefutable pattern）」，比如一个 `struct` 或只有一个变体的 `enum`**。
+
+这就把上一节学的**积类型 vs 和类型**与**模式匹配家族**彻底打通了：
+
+1. **积类型（元组 / `struct`）只有 1 种可能性 → 模式必然成功（不可反驳模式 Irrefutable Pattern）**：
+   一个 `(i32, i32)` 在内存里百分之百是两个整数，一个 `User` 在内存里百分之百同时装着 `name` 和 `age`。用 `(x, y)` 或 `User { name, age }` 去匹配它们，**绝对不可能失败**。所以单独一行 `let 模式 = 表达式;` 就能安全解构。
+2. **和类型（`enum`）有多种可能性 → 单拿一个变体去匹配可能失败（可反驳模式 Refutable Pattern）**：
+   `Role` 有 `Guest`、`Member`、`Admin` 三种合法可能性。如果你只写一行 `let Role::Member(points) = _role;`，万一运行时 `_role` 里装的是 `Role::Guest`，这行绑定就失败了，下一行代码去读 `points` 就会访问到未初始化的内存。
+
+因此，面对和类型这种**可能匹配失败的模式**，编译器拒绝放行裸写的 `let`，强制要求你必须交代清楚：**「如果当前不是这一种可能性，程序该往哪走？」**
+
+按照你处理「其余可能性」的方式不同，Rust 恰好在这行 `let 模式 = 表达式` 的基础上生长出了三个语法工具：
+
+| 你想如何处理其余可能性？ | 对应的语法工具 | 语法长相的底层逻辑 |
+| --- | --- | --- |
+| **把所有可能性一条不落地全列出来分别处理** | **`match`** | 列出每个变体的 `模式 => 表达式`，由编译器做穷尽检查 |
+| **匹配上了就进花括号处理，没匹配上就算了（静默跳过）** | **`if let`** | 在 `let 模式 = 表达式` 前面加个 **`if`** |
+| **匹配上了就留在外层继续往下走，没匹配上就进 `else` 当场退场** | **`let else`** | 在 `let 模式 = 表达式` 后面补个 **`else { return ...; }`** |
+
+理解了这张表，你就再也不会觉得 `match`、`if let`、`let else` 是三套零散的语法糖了——它们全都是在为「可能失败的模式绑定」提供兜底出口。下面我们依次拆解它们的工程规则。
+
+---
+
+## `match` 表达式：全面分流与穷尽性检查
+
+当你需要对枚举的每一种可能性分别做出处理时，使用 **`match`**。我们为 `Role` 编写一个计算权限额度的函数 `quota`：
+
+<small class="code-source">源文件：<code>examples/types/enum-option-match/src/bin/match-role.rs</code></small>
+<Code code={matchRole} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+quotas: 10, 600, 11999
+```
+
+对照第 11～15 行，`match` 在执行时严格遵守三条规则：
+
+1. **核对标签并按形状解构**：`match role` 读取内存开头的判别式标签，依次比对花括号里的每一条**分支（称为臂 Arm，格式为 `模式 => 表达式`）**：
+   - 命中 `Role::Guest`：无载荷，直接求值右侧表达式 `10`；
+   - 命中 `Role::Member(points)`：将前 8 字节载荷绑定给局部变量 `points`（作用域仅在该分支内），计算 `100 + points`；
+   - 命中 `Role::Admin { dept_id, security_key }`：将 16 字节载荷按具名字段绑定给 `dept_id` 和 `security_key`（若某分支只关心 `dept_id`，可写 `Role::Admin { dept_id, .. } => ...` 忽略其余字段）。
+2. **所有分支必须产出同一个类型**：与第 5 章 5.1 节的 `if / else` 一样，`match` 本身是一个产出值的表达式。每一条分支 `=>` 右侧必须交出同一个类型（这里是 `u64`），否则报 `error[E0308]`。
+3. **编译期穷尽性检查（Exhaustiveness Check，`error[E0004]`）**：如果你注释掉第 14 行的 `Role::Admin` 分支，编译器会当场报错：
+
+<small class="code-source">编译器输出（注释掉 <code>match-role.rs</code> 第 14 行后）</small>
+```text
+error[E0004]: non-exhaustive patterns: `&Role::Admin { .. }` not covered
+  --> src/bin/match-role.rs:11:11
+   |
+11 |     match role {
+   |           ^^^^ pattern `&Role::Admin { .. }` not covered
+```
+
+### 穷尽性检查在真实工程重构中的价值
+
+在大型项目中，穷尽性检查是业务迭代时的安全网。
+
+设想你的项目有 50 个模块都在处理 `Role`。半年后，业务新增了第 4 种角色 `Auditor { region: u32 }`：
+- 在没有穷尽检查的语言里，你在定义处加上 `Auditor` 后代码照样能编译通过，只能靠人工全局搜索去改那 50 个地方，漏改一处就会在线上走入错误分支。
+- 在 Rust 里，你在 `enum Role` 里加上 `Auditor` 后运行 `cargo build`，编译器会自动扫描全项目所有针对 `Role` 的 `match`，把每一处漏掉 `Auditor` 的文件名和行号列成 `error[E0004]` 清单。顺着报错逐一补齐，编译通过时全项目的分支就已经完整对齐了。
+
+### 通配符 `_` 与代码审查（Code Review）判据
+
+如果一个枚举有很多变体，而某段逻辑只需要特殊处理其中一两个，其余变体统一返回默认值，可以在 `match` 最后一行使用**通配符模式 `_`** 兜底：
+
+```rust
+fn is_guest(role: &Role) -> bool {
+    match role {
+        Role::Guest => true,
+        _ => false, // 其余所有可能性一律返回 false
+    }
+}
+```
+
+<Aside type="caution" title="工程判据：慎在核心业务枚举上无脑写 _ => ...">
+通配符 `_` 等于主动关掉了编译器对该 `match` 的「新增变体报警器」。如果在计算权限或计费的核心函数里图省事写了 `_ => 0`，将来给 `Role` 新增 `Auditor` 时，这个 `match` 就不会报 `E0004`，而是把新角色静默归入 `_` 分支。因此，在编写和审查核心状态机或权限枚举时，**优先显式列出每一个变体名**（哪怕多个变体合并写成 `Role::Guest | Role::Member(_) => ...`），让编译器始终替你守住未来的业务变更。
+</Aside>
+
+---
+
+## 单分支简写：`if let` 与 `let else`
+
+当我们在某段代码里只关心枚举的**其中一种可能性**时，为了把那行报错 `E0005` 的 `let Role::Member(points) = user;` 救活，可以使用 `if let` 或 `let else`：
+
+<small class="code-source">源文件：<code>examples/types/pattern-ownership/src/bin/if-let-and-let-else.rs</code></small>
+<Code code={ifLetAndLetElse} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+member bonus points = 500
+guest check = 0
+admin check = 10000
+```
+
+观察两者在控制流上的分工：
+
+### 1. `if let`：命中时顺带做一件事，其余静默跳过
+
+看第 20～22 行：
+
+```rust
+if let Role::Member(points) = &user {
+    println!("member bonus points = {points}");
+}
+```
+
+它在 `let Role::Member(points) = &user` 前面加了一个 `if`：如果右侧的 `&user` 匹配上了 `Role::Member(points)`，就把载荷绑给 `points` 并进入 `{}` 执行（`points` 的作用域仅限于这个 `{}` 内）；如果不匹配，就静默跳过 `{}` 继续往下走。
+
+<Aside type="note" title="只想判断是不是某个变体、完全不需要取里面的数据怎么办？">
+如果你连里面的 `points` 都不想取，只想得到一个 `bool`（相当于纯粹问一句「它是不是 `Member`？」），可以使用标准库内置的 **`matches!` 宏**：`if matches!(user, Role::Member(_)) { ... }`。它在底层同样展开为 `match` 分支，既简洁又不会破坏枚举的封装。
+</Aside>
+
+### 2. `let else`：守卫主干流程，不命中则当场退场
+
+如果函数的核心逻辑**必须拿到某一种可能性里的数据才能继续往下算**（例如第 10 行的 `verify_admin` 要求传入的必须是 `Role::Admin`），用 `if let` 会把整段主干业务代码全部缩进到 `{}` 里面；要是连续校验两三个条件，代码就会层层向右缩进。
+
+这时就用第 11～13 行的 **`let else`（守卫模式）**：
+
+```rust
+let Role::Admin { dept_id, security_key } = role else {
+    return 0;
+};
+// 匹配成功后，dept_id 和 security_key 直接绑定在当前外层作用域！
+dept_id + security_key
+```
+
+它在 `let 模式 = 表达式` 后面跟了一个 `else { 发散块 };`：
+- **匹配成功**：解构出来的变量（`dept_id` 和 `security_key`）直接留在**当前外层作用域**中，后续主干代码保持零缩进平铺直叙；
+- **匹配失败**：立即进入 `else { ... }` 块。因为一旦匹配失败，外层的 `dept_id` 和 `security_key` 就没有值，所以编译器强制要求 **`else` 花括号里的代码必须通过 `return`、`break`、`continue` 或 `panic!` 当场离开当前控制流**，绝不允许落回外层继续往下走。
+
+---
+
+## 模式绑定里的所有权：移动（Move）还是借用（Borrow）？
+
+既然无论是普通的 `let`、`match` 的分支，还是 `if let` 与 `let else`，本质上全都是在执行 **`let 模式变量 = 内部载荷`** 的绑定动作，那么它们在所有权上自然遵循我们在第 2、4、5 章建立的同一套规则。
+
+当枚举变体里装的是 `String` 或 `Vec<T>` 等**非 `Copy` 类型**时，你拿去匹配的目标表达式是「枚举值本身 `task`」还是「枚举的引用 `&task`」，直接决定了内部载荷是被**移走（Move）**还是被**借用（Borrow）**：
+
+<small class="code-source">源文件：<code>examples/types/pattern-ownership/src/bin/match-move-and-borrow.rs</code></small>
+<Code code={matchMoveAndBorrow} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+inspecting: backup-db
+consuming: backup-db
+```
+
+对比第 14 行和第 20 行的两次匹配：
+
+1. **隔着共享引用匹配（`match &task`）**：
+   因为被匹配的目标是引用 **`&Task`**，编译器在解构 `Task::Run(name)` 时，会自动将模式变量 `name` 推导为只读引用 **`&String`**（与 5.3 节在点号调用点自动补引用同源）。这次匹配只发生了只读借用，匹配结束后原变量 `task` 完好无损。
+2. **按值匹配（`match task`）**：
+   被匹配的目标是拥有所有权的 **`Task` 值本身**。进入 `Task::Run(name)` 分支时，变体内部的 `String` 所有权被直接**移动（Move）**给了局部变量 `name`，并在该分支结束时释放。
+   这会触发与结构体完全一致的**部分移动（Partial Move）**——如果取消第 26 行 `// println!("after move: {task:?}");` 的注释，编译器立刻报出 **`error[E0382]: borrow of partially moved value: task`**。同理，如果你在 `&self` 只读方法里试图从引用背后按值移出枚举载荷，编译器会报 **`error[E0507]`**。
+
+把三种匹配目标摆在一起，正好与前几章的**三件套**完全对位：
+
+| 被匹配的目标表达式 | 模式变量 `name` 的实际类型 | 所有权行为 | 匹配后原枚举变量状态 |
+| --- | --- | --- | --- |
+| **`&task`**（只读引用） | **`&String`** | 共享只读借用 | 继续有效（最常用的只读检查写法） |
+| **`&mut task`**（可变引用） | **`&mut String`** | 独占可变借用 | 继续有效，且可在分支内原地修改载荷 |
+| **`task`**（枚举值本身） | **`String`** | 按值移动（若非 `Copy`） | **已失效（载荷被移走消费）** |
+
+---
+
+## 小结
+
+1. **为什么没有 `is / as` 强转**：枚举变体不是独立类型，且将「检查标签」与「转换取值」拆成两步会留下脱节漏洞；Rust 强制通过**模式（Pattern）按形状解构**，将核对标签与取出载荷焊死在一步之内。
+2. **模式匹配不等于 `match`**：`let 模式 = 表达式;` 本身就是模式匹配。积类型（元组 / `struct`）只有 1 种可能性，模式必然成功（不可反驳模式），可直接用单行 `let` 解构；和类型（`enum`）有多种可能性，单拿一个变体匹配可能失败（可反驳模式，裸写 `let` 报 `E0005`），由此生长出 **`match`**（全列穷尽检查 `E0004`）、**`if let`**（失败跳过）与 **`let else`**（失败退场、主干平铺）。
+3. **模式绑定遵循三件套所有权规则**：匹配 `&val` 借出 `&T`，匹配 `&mut val` 借出 `&mut T`，匹配 `val` 则将非 `Copy` 载荷移走（触发部分移动 `E0382`）。
+
+至此，我们已经彻底打通了和类型（`enum`）的定义、内存布局与模式解构规则。下一节，我们将看到 Rust 如何用这套机制加上一个仅占几行的标准库枚举 **`Option<T>`**，正面解决困扰软件工程数十年的「空指针（`null`）」难题。
+
+### 动手核对与小练习
+
+1. **不可反驳模式 vs 可反驳模式**：为什么 `let (a, b) = (1, 2);` 可以直接编译通过，而对 `enum Coin { Penny, Nickel(u8) }` 写 `let Coin::Nickel(val) = coin;` 却会报 `error[E0005]`？如果我们要在不是 `Nickel` 时直接从当前函数 `return`，应该怎么改写这行 `let`？
+2. **所有权与模式匹配诊断**：阅读下面这段代码，判断第 13 行 `println!("{:?}", msg);` 能否通过编译？如果不能，会报什么错误码，以及如何只改一个字符让它通过编译？
+   ```rust
+   #[derive(Debug)]
+   enum Message {
+       Text(String),
+       Ping,
+   }
+
+   fn main() {
+       let msg = Message::Text(String::from("hello"));
+       if let Message::Text(content) = msg {
+           println!("got: {content}");
+       }
+       println!("{:?}", msg); // 第 13 行
+   }
+   ```
+
+<details>
+<summary>点击核对参考答案</summary>
+
+1. **为什么元组能直接 `let` 而枚举不行**：
+   - 元组 `(i32, i32)` 是**积类型**，只有唯一一种合法可能性，模式 `(a, b)` 必然匹配成功（不可反驳模式）；而 `Coin` 是**和类型**，存在 `Penny` 和 `Nickel` 两种可能性，单写 `let Coin::Nickel(val) = coin;` 在遇到 `Penny` 时会匹配失败（可反驳模式），因此被编译器以 `E0005` 拦截。
+   - 要在匹配失败时直接提前返回，只需在后面补上 `else` 发散块（变成 `let else`）：
+     ```rust
+     let Coin::Nickel(val) = coin else {
+         return;
+     };
+     ```
+2. **所有权诊断与修复**：
+   - **不能通过编译**，第 13 行会报 **`error[E0382]: borrow of partially moved value: msg`**。因为第 9 行 `if let Message::Text(content) = msg` 是对 `msg` 按值匹配，内部的 `String` 所有权被移动给了 `content`，导致 `msg` 在 `if let` 结束后失效。
+   - **只改一个字符修复**：将第 9 行改为隔着引用匹配 **`if let Message::Text(content) = &msg`**（加一个 `&`），此时 `content` 变为 `&String`，只发生只读借用，`msg` 在第 13 行依然完好可用。
+
+</details>

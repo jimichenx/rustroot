@@ -1,0 +1,213 @@
+---
+title: "键值容器：HashMap<K, V>、所有权交接与 Entry 模式"
+description: 从单参数序列走向双类型参数构造器 HashMap<K, V>，剖析插入与查询中的所有权转移和借用边界，并理解借用规则如何逼出一次查找原地更新的 Entry 模式。
+sidebar:
+  label: 键值容器 HashMap<K, V>
+  order: 6
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import hashmapOwnership from '../../../../../../../examples/types/slices/src/bin/hashmap-ownership.rs?raw';
+import hashmapLookup from '../../../../../../../examples/types/slices/src/bin/hashmap-lookup.rs?raw';
+import hashmapEntry from '../../../../../../../examples/types/slices/src/bin/hashmap-entry.rs?raw';
+
+前两节的 `Vec<T>` 和 `String` 都按顺序存放元素，通过整数下标或字节范围来访问。但在业务代码里，我们经常需要根据一个**键（Key，如用户名、配置项名称、订单号）**直接查找对应的**值（Value）**。
+
+如果用 `Vec<(String, i32)>` 保存键值对，每次按名字查找都得从头遍历比对。为此，标准库提供了基于哈希表的键值容器构造器——**`HashMap<K, V>`**（对应 Java 的 `HashMap<K, V>`、Python 的 `dict`、Go 的 `map[K]V`）。
+
+把 `HashMap<K, V>` 放进前几节建立的类型构造器与所有权模型里，你会直接看清三个核心问题：
+- 为什么 `HashMap<K, V>` 需要填入两个类型参数，且使用前必须先写 `use`？
+- 把键值对放进 `HashMap` 时，哪些变量会失效，哪些变量还能继续用？
+- 为什么在 Rust 里更新哈希表的值时，很少写「先 `get` 判断再 `insert`」，而是普遍使用 `.entry(key).or_insert(...)`？
+
+---
+
+## 双参数类型构造器与堆上哈希表
+
+在第 3 章中，我们见过接收一个类型参数的构造器 `Vec<T>`。而哈希表需要同时约束「键」和「值」两类数据，因此 `HashMap<K, V>` 是一个接收**两个编译期类型参数**的标准库类型构造器：
+- 未填入参数 `K` 和 `V` 的裸 `HashMap` 只是构造器，不能直接用作变量类型（报 `E0107`）；
+- 当你填入具体的键类型 `String` 和值类型 `i32`（或编译器通过后续 `insert` 调用推断出这两个类型），才会合成出具体的编译期类型实体 `HashMap<String, i32>`。同一个哈希表里，所有的键必须是同一种类型 `K`，所有的值必须是同一种类型 `V`。
+
+与 `Vec<T>` 和 `String` 相比，使用 `HashMap<K, V>` 有两点前置差异：
+
+1. **需要显式引入路径**：由于 `HashMap` 使用频率略低于 `Vec` 和 `String`，标准库没有把它放进默认自动导入的列表（`std::prelude`）里。使用前需要在文件开头写一行 `use std::collections::HashMap;`。
+2. **数据同样保存在堆缓冲区中**：`HashMap<K, V>` 变量本身在栈上只保存小尺寸的控制信息，真正的键值对存储在堆上分配的哈希槽位（Buckets）里。当插入元素过多、触发哈希表扩容（Rehashing）时，所有键值对同样会搬迁到新的堆内存，并释放旧堆。
+
+初始化 `HashMap<K, V>` 最常用的写法有两种：
+- **先建空表再插入**：`let mut scores = HashMap::new();`（编译器可根据后续的 `scores.insert(k, v)` 自动推断 `K` 和 `V`）；
+- **由键值对数组直接构造**：`let scores = HashMap::from([(String::from("Blue"), 10), (String::from("Yellow"), 50)]);`。
+
+---
+
+## 插入的所有权交接：为什么 `key` 失效了，而 `val` 还能用？
+
+往哈希表里写入数据使用 `map.insert(k, v)`。它的函数签名在参数位置直接按值接收 `K` 和 `V`（而不是接收引用 `&K` 和 `&V`），这意味着哈希表要独自承担内部所有键和值的释放责任。
+
+运行下面这段代码，对比非 `Copy` 的键与实现 `Copy` 的值在插入后的状态：
+
+<small class="code-source">源文件：<code>examples/types/slices/src/bin/hashmap-ownership.rs</code></small>
+<Code code={hashmapOwnership} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+initial_score is still valid: 10
+replaced old value: Some(10), current map: {"Blue": 25}
+```
+
+取消第 11 行 `// println!("team: {team}");` 的注释，编译器会报出我们在第 2 章见过的 **`error[E0382]`**：
+
+<small class="code-source">编译器诊断摘要：取消 hashmap-ownership.rs 第 11 行注释后</small>
+```text
+error[E0382]: borrow of moved value: `team`
+  --> types/slices/src/bin/hashmap-ownership.rs:11:22
+   |
+ 7 |     let team = String::from("Blue");
+   |         ---- move occurs because `team` has type `String`, which does not implement the `Copy` trait
+...
+10 |     scores.insert(team, initial_score);
+   |                   ---- value moved here
+11 |     println!("team: {team}");
+   |                      ^^^^ value borrowed here after move
+```
+
+这里没有任何专属于 `HashMap` 的新规则，完全是第 2 章赋值与传参规则的直接体现：
+- **`team` 的类型是 `String`（未实现 `Copy`）**：传入 `scores.insert(team, ...)` 时触发**移动（Move）**，堆上文本的释放责任移交给了 `scores`，原变量 `team` 立即失效；
+- **`initial_score` 的类型是 `i32`（实现了 `Copy`）**：传入时按位复制了一份整数放进哈希表，原变量 `initial_score` 依然有效；
+- **重复插入同名键会替换旧值**：第 14 行再次插入 `"Blue"` 与新分数 `25` 时，哈希表会用 `25` 覆盖原来的 `10`，并把被替换掉的旧值包在 `Option<V>` 里返回（首次插入时返回 `None`，覆盖旧值时返回 `Some(10)`）。
+
+---
+
+## 查询与借用防线：为什么持有 `get` 的结果时不能 `insert`？
+
+从哈希表里按键读取数据使用 `map.get(&key)`。看下面这段代码：
+
+<small class="code-source">源文件：<code>examples/types/slices/src/bin/hashmap-lookup.rs</code></small>
+<Code code={hashmapLookup} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+Blue: Some(10), Green: None
+```
+
+观察第 10 行的 `let blue_score = scores.get("Blue");`，这里有两个直接影响日常编码的设计细节：
+
+1. **返回类型是 `Option<&V>`，而不是裸 `V` 或 `&V`**：
+   - 查询不需要把值从哈希表里移出来，所以返回的是指向哈希表内部槽位的只读引用 `&i32`；
+   - 查询的键在表里可能根本不存在（例如 `"Green"`），Rust 没有 `null`，因此用枚举构造器 `Option` 包裹结果——找到时返回 `Some(&10)`，找不到时返回 `None`（第 6 章将全面展开 `Option<T>` 的拆包与组合用法）。
+2. **用 `&str` 直接查询 `HashMap<String, V>`（零堆分配查询）**：
+   - `scores` 的键类型明明是 `String`，但查询时我们直接传了字符串字面量 `"Blue"`（类型是 `&str`），并没有为了查一次表而专门调用 `String::from("Blue")` 去堆上申请内存。
+   - 这是因为标准库的 `get` 签名允许传入任何能借用为键等价形式的类型：既然 `String` 可以借用出 `&str`，哈希表就能直接拿 `"Blue"` 计算哈希值并比对内容。
+
+### 扩容重哈希防线：与 `Vec::push` 同源的 `E0502`
+
+如果取消上面代码第 11 行 `// scores.insert(String::from("Red"), 30);` 的注释，会发生什么？编译器同样会报出 **`error[E0502]`（读写借用冲突）**：
+
+<small class="code-source">编译器诊断摘要：取消 hashmap-lookup.rs 第 11 行注释后</small>
+```text
+error[E0502]: cannot borrow `scores` as mutable because it is also borrowed as immutable
+  --> types/slices/src/bin/hashmap-lookup.rs:11:5
+   |
+10 |     let blue_score = scores.get("Blue");
+   |                      ------ immutable borrow occurs here
+11 |     scores.insert(String::from("Red"), 30);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ mutable borrow occurs here
+12 |     println!("Blue: {:?}, Green: {:?}", blue_score, scores.get("Green"));
+   |                                         ---------- immutable borrow later used here
+```
+
+原因与 `4.4` 中持有 `&vec[0]` 期间禁止调用 `vec.push()` 完全一致：
+- `blue_score`（类型为 `Option<&i32>`）内部握着指向 `scores` 当前堆槽位的只读引用 `&i32`；
+- 紧接着调用 `scores.insert(...)` 需要可变借用 `&mut scores`。一旦这次插入触发哈希表扩容（Rehashing），所有键值对都会搬迁到新分配的堆缓冲区并释放旧堆；
+- 如果允许后续第 12 行继续读取 `blue_score`，其中的引用就会指向已经释放的旧堆内存。因此借用检查器在编译期直接拦下了这种跨写入的引用持有。
+
+---
+
+## 借用规则逼出的 `Entry` 模式：一次查找，原地更新
+
+在日常业务里，最常见的一类需求是**「按需插入或累加更新」**：
+- **场景 A**：如果表里还没有 `"Yellow"` 队，就给它填入初始分 `50`；如果已经有了，就保持原分数不变。
+- **场景 B（词频统计 / 计数累加）**：遍历一段文本里的单词，遇到某个单词时，如果表里还没有就记为 `1`，如果已经有了就在原计数上加 `1`。
+
+如果按照其他语言的习惯，写成「先 `get` 检查是否存在，再决定是否 `insert`」，在 Rust 里会遇到两个问题：
+1. **重复计算哈希与重复查找槽位**：`scores.get("Yellow")` 先算一次哈希并找一遍槽位；如果不存在，随后的 `scores.insert(...)` 又要对同一个键再算一次哈希、再找一遍槽位，白白多做一倍的查找工作。
+2. **借用边界啰嗦**：如果先用 `get` 拿到内部值的引用，为了随后能调用需要 `&mut self` 的 `insert`，必须先确保前面的只读引用不再使用，否则就会触发上面的 `E0502`。
+
+为了把「查找槽位」和「后续的插入或修改」合并成一步完成，标准库设计了 **`entry`（槽位入口）API**。运行下面这段代码：
+
+<small class="code-source">源文件：<code>examples/types/slices/src/bin/hashmap-entry.rs</code></small>
+<Code code={hashmapEntry} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+after or_insert: Blue = Some(10), Yellow = Some(50)
+rust count: Some(3), types count: Some(1)
+```
+
+把第 14～15 行的核心套路拆开来看：
+
+```rust
+let count = counts.entry(word).or_insert(0);
+*count += 1;
+```
+
+这两行代码一口气完成了三件事：
+1. **`counts.entry(word)`（一次查找定位槽位）**：对 `word` 计算一次哈希值，在哈希表里定位到它对应的那个槽位，返回一个代表该槽位状态的 `Entry` 视图（槽位此时要么已经有值，要么还是空的）；
+2. **`.or_insert(0)`（按需填入默认值并交出可变引用 `&mut V`）**：
+   - 如果该槽位还是空的，就把默认值 `0` 填进去；
+   - 如果该槽位已经有值（比如之前已经统计过 `"rust"`），则什么都不覆盖；
+   - 无论哪种情况，`.or_insert(0)` 最终都返回一个指向该槽位内部值的**可变引用 `&mut usize`**（赋给变量 `count`）。
+3. **`*count += 1;`（通过解引用原地修改）**：拿着返回的 `&mut usize`，用 `4.1` 学过的解引用运算符 `*` 直接把槽位里的整数加 `1`——全程只做了一次哈希查找，不需要再调用第二次 `insert`。
+
+<Aside type="tip" title="代码审查（Code Review）判据：消灭 contains_key + insert 反模式">
+在审查业务代码或 AI 生成的 Rust 代码时，如果看到下面这种写法：
+
+```rust
+if !map.contains_key(&k) {
+    map.insert(k, default_val);
+}
+```
+
+请直接将其重构为一行 **`map.entry(k).or_insert(default_val);`**。后者不仅消除了第二次哈希计算与槽位查找的运行时成本，还能直接拿到 `&mut V` 继续做原地修改。
+</Aside>
+
+---
+
+## 小结
+
+至此，第 4 章的引用与核心数据容器已经全部就位：
+
+1. **`HashMap<K, V>` 是双类型参数的标准库构造器**：使用前需通过 `use std::collections::HashMap;` 引入，键值对存放在堆缓冲区中；
+2. **插入与查询严格遵循所有权与借用边界**：`insert(k, v)` 按值接手 `K` 和 `V`（非 `Copy` 类型移动后原变量失效）；`get(&k)` 只读借用键并返回 `Option<&V>`，且持有 `Option<&V>` 期间禁止调用 `insert`（防扩容重哈希导致引用悬垂，报 `E0502`）；
+3. **就地更新优先用 `Entry` 模式**：`map.entry(key).or_insert(default)` 只需一次哈希查找即可定位槽位并返回 `&mut V`，配合 `*val` 解引用即可原地修改数据。
+
+### 动手核对
+
+阅读下面这段统计用户登录次数的代码片段：
+
+```rust
+use std::collections::HashMap;
+
+fn record_login(logins: &mut HashMap<String, u32>, user: String) {
+    let count = logins.entry(user).or_insert(0);
+    *count += 1;
+    // println!("recorded user: {user}"); // 思考行
+}
+```
+
+请问：
+1. 变量 `count` 的具体类型是什么？为什么第 5 行要写 `*count += 1` 而不是 `count += 1`？
+2. 如果取消第 6 行 `// println!("recorded user: {user}");` 的注释，代码能通过编译吗？为什么？
+
+核对答案：
+1. `count` 的类型是可变引用 **`&mut u32`**。因为 `count` 保存的是指向哈希表槽位内部整数的地址，不能直接和整数 `1` 相加，必须先用 `*count` 解引用定位到槽位里的 `u32` 值再加 `1`。
+2. **不能通过编译（报 `error[E0382]`）**。因为 `logins.entry(user)` 需要按值接收键 `String`（若槽位为空需直接将该 `String` 存入表中），`user` 的所有权在第 4 行已经移入 `entry` 调用中，第 6 行不能再次读取。如果调用后还需打印用户名，应在调用前先借用打印，或让函数接收 `user: &str` 并在需要时构造 `String`。
+
+---
+
+[进入第 5 章：函数与结构体 →](/types/custom-types/)

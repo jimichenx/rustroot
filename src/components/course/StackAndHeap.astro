@@ -1,0 +1,380 @@
+---
+/**
+ * 1.2 的示意图。文字跟正文走。
+ * 默认：图一只回答变量在哪、对象在哪；图二看函数返回前后。
+ * part="string"：String 在栈上的三个机器字，指向堆上的字符缓冲区。
+ * part="frames"：栈帧一块挨一块，函数返回时整帧丢弃，栈顶先走。
+ * 样式见 src/styles/diagrams.css。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	part?: 'overview' | 'split' | 'return' | 'string' | 'frames';
+}
+
+const { part = 'overview' } = Astro.props;
+
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			splitCaption: 'The name sits on the stack; the object sits on the heap.',
+			splitTitle: 'One name on the stack, one object on the heap',
+			splitDesc:
+				'A stack frame holds the name a. An arrow runs from a to the object on the heap.',
+			splitStack: 'stack (follows the call)',
+			splitHeap: 'heap (requested at runtime)',
+			frame: 'frame',
+			object: 'object',
+			returnCaption:
+				'During the call the frame holds the name. After the call returns, the frame is gone and the object is still on the heap.',
+			returnTitle: 'Before and after the call returns',
+			returnDesc:
+				'Two states. During the call, the stack frame holds the name a, and an arrow points to the object on the heap. After the call returns, the frame is gone; the object is still on the heap, with nothing pointing at it.',
+			during: 'during the call',
+			after: 'after it returns',
+			frameGone: 'frame is gone',
+			stringCaption: 'Three machine words on the stack; the character buffer lives on the heap.',
+			stringTitle: 'A String name on the stack, characters on the heap',
+			stringDesc:
+				'The stack frame holds name in three cells: a pointer, a length, and a capacity. An arrow runs from the pointer to four characters on the heap.',
+			stringFrame: 'stack frame',
+			stringHeap: 'heap',
+			buffer: 'character buffer',
+			len: 'len · 4',
+			cap: 'cap · 4',
+			framesCaption:
+				'Stack frames sit next to each other, each with a size fixed by the compiler; a returning function discards its whole frame, and the last one in goes first.',
+			framesTitle: 'Frames appear with the call and vanish with the return',
+			framesDesc:
+				'Left: three calls are on the stack at once — main(), foo(), bar() — each frame a size fixed by the compiler, with bar() on top. Right: bar() has returned; its frame is now a grey dashed outline, meaning the whole frame was discarded. The top of the stack is foo() now, and the next frame to go is that one.',
+			framesDuring: 'during the calls',
+			framesAfter: 'after bar() returns',
+			framesStack: 'stack',
+			framesTop: 'top',
+			framesBottom: 'bottom',
+			framesDiscarded: 'frame discarded',
+			framesSize: 'size fixed by the compiler',
+			framesLifo: 'the last one in goes first',
+		}
+	: {
+			splitCaption: '变量在栈上，对象在堆上。',
+			splitTitle: '一个变量在栈上，一个对象在堆上',
+			splitDesc: '栈帧里放着变量 a。箭头从 a 指向堆上的对象。',
+			splitStack: '栈（跟着调用走）',
+			splitHeap: '堆（运行时申请）',
+			frame: '栈帧',
+			object: '对象',
+			returnCaption: '调用中，栈帧里放着变量；调用返回，栈帧没了，堆上的对象还在。',
+			returnTitle: '函数返回前后',
+			returnDesc:
+				'两种状态。调用中，栈帧里放着变量 a，箭头指向堆上的对象；返回后，栈帧没了，堆上的对象还在，已经没有变量指向它。',
+			during: '调用中',
+			after: '返回后',
+			frameGone: '栈帧已离开',
+			stringCaption: '栈上三个机器字，堆上是字符缓冲区。',
+			stringTitle: 'String 的变量在栈上，字符在堆上',
+			stringDesc:
+				'栈帧里的 name 占三格：指针、长度、容量。箭头从指针指向堆上的四个字符。',
+			stringFrame: '栈帧',
+			stringHeap: '堆',
+			buffer: '字符缓冲区',
+			len: 'len · 4',
+			cap: 'cap · 4',
+			framesCaption:
+				'栈帧一块挨一块，每块大小由编译器固定；函数返回，整帧丢弃，后进来的先离开。',
+			framesTitle: '栈帧随调用划出，随返回丢弃',
+			framesDesc:
+				'左边是三层调用同时在栈上：main()、foo()、bar() 依次划出，bar() 在栈顶，每帧的大小由编译器固定。右边 bar() 已经返回，它那一块栈帧变成灰色虚线框，表示整帧丢弃；栈顶落到 foo()，下一个被丢弃的还是栈顶。',
+			framesDuring: '调用中',
+			framesAfter: 'bar() 返回后',
+			framesStack: '栈',
+			framesTop: '栈顶',
+			framesBottom: '栈底',
+			framesDiscarded: '整帧丢弃',
+			framesSize: '编译器固定大小',
+			framesLifo: '后进来的先离开',
+		};
+
+const chars = ['R', 'u', 's', 't'];
+---
+
+{
+	(part === 'overview' || part === 'split') && (
+		<figure class="diagram">
+			<figcaption>{t.splitCaption}</figcaption>
+			<svg viewBox="0 0 640 200" role="img" aria-labelledby="sh-split-title sh-split-desc">
+				<title id="sh-split-title">{t.splitTitle}</title>
+				<desc id="sh-split-desc">{t.splitDesc}</desc>
+
+				<rect class="panel" x="16" y="16" width="280" height="168" rx="12"></rect>
+				<text class="label" x="36" y="44">
+					{t.splitStack}
+				</text>
+				<rect class="panel" x="36" y="64" width="240" height="100" rx="10"></rect>
+				<text class="label" x="50" y="84">
+					{t.frame}
+				</text>
+				<rect class="slot" x="52" y="98" width="208" height="48" rx="8"></rect>
+				<text class="name" x="156" y="128" text-anchor="middle">
+					a
+				</text>
+
+				<rect class="panel" x="344" y="16" width="280" height="168" rx="12"></rect>
+				<text class="label" x="364" y="44">
+					{t.splitHeap}
+				</text>
+				<rect class="object" x="384" y="90" width="200" height="64" rx="10"></rect>
+				<text class="name" x="484" y="128" text-anchor="middle">
+					{t.object}
+				</text>
+
+				<path class="arrow" d="M260 122 H384" marker-end="url(#sh-head)"></path>
+				<defs>
+					<marker
+						id="sh-head"
+						markerWidth="8"
+						markerHeight="8"
+						refX="6"
+						refY="4"
+						orient="auto"
+					>
+						<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+					</marker>
+				</defs>
+			</svg>
+		</figure>
+	)
+}
+
+{
+	(part === 'overview' || part === 'return') && (
+		<figure class="diagram">
+			<figcaption>{t.returnCaption}</figcaption>
+			<svg
+				viewBox="0 0 640 350"
+				role="img"
+				aria-labelledby="sh-return-title sh-return-desc"
+			>
+				<title id="sh-return-title">{t.returnTitle}</title>
+				<desc id="sh-return-desc">{t.returnDesc}</desc>
+
+				<text class="label" x="20" y="34">
+					{t.during}
+				</text>
+				<rect class="panel" x="16" y="44" width="280" height="126" rx="12"></rect>
+				<text class="label" x="36" y="68">
+					{t.splitStack}
+				</text>
+				<rect class="panel" x="36" y="80" width="240" height="76" rx="10"></rect>
+				<text class="label" x="50" y="99">
+					{t.frame}
+				</text>
+				<rect class="slot" x="52" y="106" width="208" height="38" rx="8"></rect>
+				<text class="name" x="156" y="131" text-anchor="middle">
+					a
+				</text>
+
+				<rect class="panel" x="344" y="44" width="280" height="126" rx="12"></rect>
+				<text class="label" x="364" y="68">
+					{t.splitHeap}
+				</text>
+				<rect class="object" x="384" y="95" width="200" height="60" rx="10"></rect>
+				<text class="name" x="484" y="131" text-anchor="middle">
+					{t.object}
+				</text>
+
+				<path class="arrow" d="M260 125 H384" marker-end="url(#sh-head-2)"></path>
+
+				<text class="label" x="20" y="200">
+					{t.after}
+				</text>
+				<rect class="panel" x="16" y="210" width="280" height="126" rx="12"></rect>
+				<text class="label" x="36" y="234">
+					{t.splitStack}
+				</text>
+				<rect class="freed" x="36" y="246" width="240" height="76" rx="10"></rect>
+				<text class="label" x="156" y="290" text-anchor="middle">
+					{t.frameGone}
+				</text>
+
+				<rect class="panel" x="344" y="210" width="280" height="126" rx="12"></rect>
+				<text class="label" x="364" y="234">
+					{t.splitHeap}
+				</text>
+				<rect class="object" x="384" y="260" width="200" height="60" rx="10"></rect>
+				<text class="name" x="484" y="296" text-anchor="middle">
+					{t.object}
+				</text>
+
+				<defs>
+					<marker
+						id="sh-head-2"
+						markerWidth="8"
+						markerHeight="8"
+						refX="6"
+						refY="4"
+						orient="auto"
+					>
+						<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+					</marker>
+				</defs>
+			</svg>
+		</figure>
+	)
+}
+
+{
+	part === 'string' && (
+		<figure class="diagram">
+			<figcaption>{t.stringCaption}</figcaption>
+			<svg viewBox="0 0 640 260" role="img" aria-labelledby="sh-string-title sh-string-desc">
+				<title id="sh-string-title">{t.stringTitle}</title>
+				<desc id="sh-string-desc">{t.stringDesc}</desc>
+
+				<rect class="panel" x="16" y="16" width="280" height="228" rx="12"></rect>
+				<text class="label" x="36" y="42">
+					{t.stringFrame}
+				</text>
+				<text class="name" x="36" y="72">
+					name
+				</text>
+				<text class="code" x="90" y="72">
+					String
+				</text>
+
+				<rect class="slot" x="36" y="86" width="220" height="42" rx="8"></rect>
+				<text class="code" x="146" y="112" text-anchor="middle">
+					ptr
+				</text>
+
+				<rect class="slot" x="36" y="136" width="220" height="42" rx="8"></rect>
+				<text class="code" x="146" y="162" text-anchor="middle">
+					{t.len}
+				</text>
+
+				<rect class="slot" x="36" y="186" width="220" height="42" rx="8"></rect>
+				<text class="code" x="146" y="212" text-anchor="middle">
+					{t.cap}
+				</text>
+
+				<rect class="panel" x="344" y="16" width="280" height="228" rx="12"></rect>
+				<text class="label" x="364" y="42">
+					{t.stringHeap}
+				</text>
+				<text class="label" x="364" y="72">
+					{t.buffer}
+				</text>
+				<rect class="object" x="364" y="86" width="240" height="70" rx="10"></rect>
+				{chars.map((ch, i) => (
+					<g>
+						<rect
+							class="slot"
+							x={376 + i * 56}
+							y="97"
+							width="48"
+							height="48"
+							rx="6"
+						></rect>
+						<text class="name" x={400 + i * 56} y="127" text-anchor="middle">
+							{ch}
+						</text>
+					</g>
+				))}
+
+				<path class="arrow" d="M256 107 H364" marker-end="url(#sh-head-3)"></path>
+				<defs>
+					<marker
+						id="sh-head-3"
+						markerWidth="8"
+						markerHeight="8"
+						refX="6"
+						refY="4"
+						orient="auto"
+					>
+						<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+					</marker>
+				</defs>
+			</svg>
+		</figure>
+	)
+}
+
+{
+	part === 'frames' && (
+		<figure class="diagram">
+			<figcaption>{t.framesCaption}</figcaption>
+			<svg viewBox="0 0 640 320" role="img" aria-labelledby="sh-frames-title sh-frames-desc">
+				<title id="sh-frames-title">{t.framesTitle}</title>
+				<desc id="sh-frames-desc">{t.framesDesc}</desc>
+
+				{/* 调用中：三块栈帧挨在一起 */}
+				<text class="label" x="16" y="34">
+					{t.framesDuring}
+				</text>
+				<rect class="panel" x="16" y="44" width="280" height="260" rx="12"></rect>
+				<text class="label" x="36" y="68">
+					{t.framesStack}
+				</text>
+
+				<rect class="slot" x="36" y="84" width="196" height="54" rx="8"></rect>
+				<text class="code" x="52" y="118">
+					bar()
+				</text>
+				<text class="label" x="240" y="118">
+					{t.framesTop}
+				</text>
+
+				<rect class="panel" x="36" y="138" width="196" height="54" rx="8"></rect>
+				<text class="code" x="52" y="172">
+					foo()
+				</text>
+
+				<rect class="panel" x="36" y="192" width="196" height="54" rx="8"></rect>
+				<text class="code" x="52" y="226">
+					main()
+				</text>
+				<text class="label" x="240" y="226">
+					{t.framesBottom}
+				</text>
+
+				<text class="label" x="156" y="278" text-anchor="middle">
+					{t.framesSize}
+				</text>
+
+				{/* bar() 返回：那一帧整块丢掉，栈顶落到 foo() */}
+				<text class="label" x="344" y="34">
+					{t.framesAfter}
+				</text>
+				<rect class="panel" x="344" y="44" width="280" height="260" rx="12"></rect>
+				<text class="label" x="364" y="68">
+					{t.framesStack}
+				</text>
+
+				<rect class="freed" x="364" y="84" width="196" height="54" rx="8"></rect>
+				<text class="label" x="462" y="118" text-anchor="middle">
+					{t.framesDiscarded}
+				</text>
+
+				<rect class="slot" x="364" y="138" width="196" height="54" rx="8"></rect>
+				<text class="code" x="380" y="172">
+					foo()
+				</text>
+				<text class="label" x="568" y="172">
+					{t.framesTop}
+				</text>
+
+				<rect class="panel" x="364" y="192" width="196" height="54" rx="8"></rect>
+				<text class="code" x="380" y="226">
+					main()
+				</text>
+				<text class="label" x="568" y="226">
+					{t.framesBottom}
+				</text>
+
+				<text class="label" x="484" y="278" text-anchor="middle">
+					{t.framesLifo}
+				</text>
+			</svg>
+		</figure>
+	)
+}

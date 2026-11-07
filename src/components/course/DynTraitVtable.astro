@@ -1,0 +1,137 @@
+---
+/**
+ * 8.2「同一个 &，具体类型引用（瘦指针）与 trait 对象引用（胖指针 + 虚表）」。
+ * 具体类型 Article 还在编译期类型 &Article 里时，栈上的 r1 只有一个机器字 data_ptr。
+ * dyn Summary 擦掉具体类型后，栈上的 r2 变成两个机器字：data_ptr 指数据，vtable_ptr 指只读静态段的虚表。
+ * 样式见 src/styles/diagrams.css。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			caption:
+				'When the concrete type Article stays in &Article, r1 on the stack is an 8-byte thin pointer holding only data_ptr. When dyn Summary erases Article, r2 becomes a 16-byte fat pointer: data_ptr points to the same Article on the stack, while vtable_ptr points to the <Article as Summary> vtable in read-only static memory.',
+			title: 'Thin reference &Article vs fat trait-object reference &dyn Summary and its vtable',
+			desc: 'Upper left: r1 has type &Article = &post, an 8-byte thin pointer. Because the compile-time type entity &Article already records T = Article (0 bytes at runtime), r1 only stores one 8-byte word data_ptr pointing to post on the stack. Lower left: r2 has type &dyn Summary = &post, i.e. &(dyn Summary), a 16-byte fat pointer. Because dyn Summary erased the concrete type Article, r2 stores two 8-byte words: data_ptr pointing to the same post: Article on the stack, and vtable_ptr pointing to the <Article as Summary> vtable in the read-only data segment. Upper right: stack data post: Article (size = 24B) containing title: "News". Lower right: read-only static segment holding <Article as Summary> vtable with fixed slots for drop_in_place, size: 24, align: 8, and summarize -> Article::summarize.',
+			thinHead: 'thin pointer · 8 bytes',
+			thinCode: 'r1: &Article = &post',
+			typeHead: 'compile-time type',
+			typeName: '&Article',
+			typeNote: 'T = Article · 0 bytes',
+			dataPtr: 'data_ptr · 8B',
+			vtablePtr: 'vtable_ptr · 8B',
+			fatHead: 'fat pointer · 16 bytes',
+			fatCode: 'r2: &dyn Summary = &post',
+			fatSubCode: 'type: &(dyn Summary)',
+			erased1: 'dyn Summary erased Article',
+			erased2: '2nd word points to vtable',
+			stack: 'stack data',
+			postCode: 'post: Article',
+			postNote: 'size = 24B',
+			fieldLabel: 'Article payload',
+			fieldCode: 'title: "News"',
+			rodata: 'read-only data · vtable',
+			vtableCode: '<Article as Summary> vtable',
+			vtDrop: 'drop_in_place',
+			vtLayout: 'size: 24, align: 8',
+			vtMethod1: 'summarize',
+			vtMethod2: '-> Article::summarize',
+		}
+	: {
+			caption:
+				'具体类型 Article 留在 &Article 里时，栈上的 r1 只有 8 字节，只存一个 data_ptr；dyn Summary 擦掉具体类型后，栈上的 r2 变成 16 字节胖指针：data_ptr 仍指向栈上的 post，vtable_ptr 指向只读静态段里的虚表。',
+			title: '瘦指针 &Article 与胖指针 &dyn Summary 及虚表布局',
+			desc: '左上方是 r1，类型 &Article，由 &post 得到。编译期类型实体记下具体类型 Article，运行时占 0 字节；栈上只有一个 8 字节机器字 data_ptr，箭头指向栈上的 post。左下方是 r2，类型 &dyn Summary（即 &(dyn Summary)），由 &post 得到。因为 dyn Summary 擦掉了具体类型 Article，指针在栈上占两个 8 字节机器字：第一个字 data_ptr 指向同一个栈上数据 post，第二个字 vtable_ptr 指向只读静态段里的 <Article as Summary> vtable。右上方是栈上数据 post: Article（size = 24B），存放字段 title: "News"。右下方是只读静态段里的虚表，依次存放 drop_in_place、size: 24, align: 8，以及方法入口 summarize -> Article::summarize。',
+			thinHead: '瘦指针 · 8 字节',
+			thinCode: 'r1: &Article = &post',
+			typeHead: '编译期类型实体',
+			typeName: '&Article',
+			typeNote: 'T = Article · 0 字节',
+			dataPtr: 'data_ptr · 8B',
+			vtablePtr: 'vtable_ptr · 8B',
+			fatHead: '胖指针 · 16 字节',
+			fatCode: 'r2: &dyn Summary = &post',
+			fatSubCode: '即 &(dyn Summary)',
+			erased1: 'dyn Summary 擦掉了 Article',
+			erased2: '第二格存虚表地址',
+			stack: '栈上数据',
+			postCode: 'post: Article',
+			postNote: 'size = 24B',
+			fieldLabel: 'Article 实例',
+			fieldCode: 'title: "News"',
+			rodata: '只读静态段 · 虚表',
+			vtableCode: '<Article as Summary> vtable',
+			vtDrop: 'drop_in_place',
+			vtLayout: 'size: 24, align: 8',
+			vtMethod1: 'summarize',
+			vtMethod2: '-> Article::summarize',
+		};
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 440" role="img" aria-labelledby="dtv-title dtv-desc">
+		<title id="dtv-title">{t.title}</title>
+		<desc id="dtv-desc">{t.desc}</desc>
+
+		<rect class="panel" x="16" y="16" width="352" height="176" rx="12"></rect>
+		<rect class="panel" x="16" y="208" width="352" height="216" rx="12"></rect>
+		<rect class="panel" x="404" y="16" width="220" height="176" rx="12"></rect>
+		<rect class="panel" x="404" y="208" width="220" height="216" rx="12"></rect>
+
+		<text class="label" x="32" y="42">{t.thinHead}</text>
+		<text class="code" x="32" y="68">{t.thinCode}</text>
+
+		<rect class="panel" x="32" y="92" width="176" height="84" rx="8"></rect>
+		<text class="label" x="120" y="116" text-anchor="middle">{t.typeHead}</text>
+		<text class="code" x="120" y="140" text-anchor="middle">{t.typeName}</text>
+		<text class="edge-sub" x="120" y="162" text-anchor="middle">{t.typeNote}</text>
+
+		<rect class="slot" x="224" y="106" width="128" height="56" rx="8"></rect>
+		<text class="code" x="288" y="139" text-anchor="middle">{t.dataPtr}</text>
+
+		<text class="label" x="420" y="42">{t.stack}</text>
+		<text class="code" x="420" y="68">{t.postCode}</text>
+		<text class="edge-sub" x="420" y="88">{t.postNote}</text>
+
+		<rect class="slot" x="420" y="104" width="188" height="72" rx="8"></rect>
+		<text class="label" x="514" y="132" text-anchor="middle">{t.fieldLabel}</text>
+		<text class="code" x="514" y="158" text-anchor="middle">{t.fieldCode}</text>
+
+		<text class="label" x="32" y="236">{t.fatHead}</text>
+		<text class="code" x="32" y="262">{t.fatCode}</text>
+		<text class="edge-sub" x="32" y="284">{t.fatSubCode}</text>
+		<text class="edge-sub" x="32" y="332">{t.erased1}</text>
+		<text class="edge-sub" x="32" y="354">{t.erased2}</text>
+
+		<rect class="panel" x="216" y="260" width="144" height="148" rx="8"></rect>
+		<rect class="slot" x="224" y="268" width="128" height="56" rx="8"></rect>
+		<text class="code" x="288" y="301" text-anchor="middle">{t.dataPtr}</text>
+		<rect class="slot" x="224" y="340" width="128" height="56" rx="8"></rect>
+		<text class="code" x="288" y="373" text-anchor="middle">{t.vtablePtr}</text>
+
+		<text class="label" x="420" y="234">{t.rodata}</text>
+		<text class="code" x="420" y="258">{t.vtableCode}</text>
+
+		<rect class="panel" x="420" y="272" width="188" height="36" rx="6"></rect>
+		<text class="code" x="514" y="295" text-anchor="middle">{t.vtDrop}</text>
+
+		<rect class="panel" x="420" y="316" width="188" height="36" rx="6"></rect>
+		<text class="code" x="514" y="339" text-anchor="middle">{t.vtLayout}</text>
+
+		<rect class="slot" x="420" y="360" width="188" height="48" rx="6"></rect>
+		<text class="code" x="514" y="381" text-anchor="middle">{t.vtMethod1}</text>
+		<text class="edge-sub" x="514" y="399" text-anchor="middle">{t.vtMethod2}</text>
+
+		<path class="arrow" d="M 352 134 H 420" marker-end="url(#dtv-head)"></path>
+		<path class="arrow" d="M 352 296 H 386 V 154 H 420" marker-end="url(#dtv-head)"></path>
+		<path class="arrow" d="M 352 368 H 420" marker-end="url(#dtv-head)"></path>
+
+		<defs>
+			<marker id="dtv-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

@@ -1,0 +1,48 @@
+---
+title: Rust Root
+description: An open Rust guide for programmers, combining reasoning and code experiments to explain Rust's design.
+template: splash
+head:
+  - tag: title
+    content: Rust Root · Understand the principles behind Rust's design
+hero:
+  title: <span class="rr-home-title">Rust Root</span>
+  tagline: >-
+    <p class="rr-home-slogan">Understand the principles behind Rust's design</p>
+    <p>Rust Root is an open guide to Rust. Starting with concrete problems, we combine reasoning and code experiments to understand Rust's rules and their limits.</p>
+    <p class="rr-home-prerequisite">Familiarity with a programming language is recommended. No prior Rust experience is required.</p>
+  actions:
+    - text: Start reading
+      link: /memory/hard-triangle/
+      icon: right-arrow
+---
+
+import HomeCourseRoute from '../../../components/HomeCourseRoute.astro';
+
+<div class="rr-home">
+
+<section class="rr-home-section" aria-labelledby="route-title">
+<p class="rr-home-eyebrow">Reading path</p>
+<h2 id="route-title">From ownership to system boundaries</h2>
+<p>The guide is planned in five parts. Start with the first part, then use its rules to explore types, abstraction, sharing, and system boundaries.</p>
+
+<HomeCourseRoute locale="en" />
+</section>
+
+<section class="rr-home-section rr-home-reading" aria-labelledby="reading-title">
+<p class="rr-home-eyebrow">How to read</p>
+<h2 id="reading-title">Reasoning and code, together</h2>
+<p>Start with a concrete problem to understand what a rule addresses, then check your reasoning through code experiments and compiler feedback. Later sections apply these judgments to type design, code organization, and engineering problems.</p>
+<p>The appendix covers basic syntax, mechanisms, and comparisons with other languages. It is currently available in Chinese.</p>
+<div class="rr-home-links">
+<a class="rr-home-text-link" href="/about/philosophy/">About this guide →</a>
+</div>
+</section>
+
+<section class="rr-home-section rr-home-about" aria-labelledby="about-title">
+<h2 id="about-title">The guide is a work in progress</h2>
+<p><a href="/about/author/">jimichen</a> writes Rust Root, drawing on questions encountered while moving from object-oriented and dynamic languages to Rust.</p>
+<p>Sections are published in Chinese and translated into English as they stabilize. Published content may change; to report an issue, <a href="mailto:hello@rustroot.dev">send an email</a> with the page URL and relevant passage.</p>
+</section>
+
+</div>

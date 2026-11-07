@@ -1,0 +1,20 @@
+---
+/**
+ * 覆盖 Starlight 的 Sidebar：结构照抄原版（SidebarPersister + 子列表 + 移动端页脚），
+ * 只把子列表换成本地 vendored 的 SidebarSublist，实现「篇不进侧栏、章组标题即章描述页链接」。
+ * 样式与展开状态持久化全部沿用 Starlight 原组件。
+ */
+import MobileMenuFooter from 'virtual:starlight/components/MobileMenuFooter';
+import SidebarPersister from '@astrojs/starlight/components/SidebarPersister.astro';
+import SidebarSublist from './SidebarSublist.astro';
+
+const { sidebar } = Astro.locals.starlightRoute;
+---
+
+<SidebarPersister>
+	<SidebarSublist sublist={sidebar} />
+</SidebarPersister>
+
+<div class="md:sl-hidden">
+	<MobileMenuFooter />
+</div>

@@ -1,0 +1,151 @@
+---
+/**
+ * 覆盖 Starlight 的 Footer。
+ *
+ * 在默认的编辑链接、更新时间、翻页之后，加上一块刊记。
+ * 版权、作者、许可排成一行，条目之间用间隔号，窄屏按条目折行。
+ * 许可链到协议全文，页脚只写简称。作者链到 /about/author/。
+ * 两个备案号只在中文站，单独一行：ICP 链到工信部，公网安备链到公安备案查询。
+ */
+import EditLink from 'virtual:starlight/components/EditLink';
+import LastUpdated from 'virtual:starlight/components/LastUpdated';
+import Pagination from 'virtual:starlight/components/Pagination';
+import { CURRENT } from '../../config/site';
+
+const isZh = CURRENT.code === 'zh';
+const licenseHref = isZh
+	? 'https://creativecommons.org/licenses/by-nc-nd/4.0/deed.zh-hans'
+	: 'https://creativecommons.org/licenses/by-nc-nd/4.0/deed.en';
+---
+
+<footer class="sl-flex">
+	<div class="meta sl-flex">
+		<EditLink />
+		<LastUpdated />
+	</div>
+	<Pagination />
+	<div class="colophon">
+		<p class="credits">
+			<span>© 2026 <strong>RustRoot</strong> ({isZh ? 'rustroot.cn' : 'rustroot.dev'})</span>
+			<span>
+				{
+					isZh ? (
+						<>
+							作者 <a href="/about/author/">jimichen</a>
+						</>
+					) : (
+						<>
+							Author <a href="/about/author/">jimichen</a>
+						</>
+					)
+				}
+			</span>
+			<span>
+				{
+					isZh ? (
+						<>
+							正文与配图{' '}
+							<a href={licenseHref} target="_blank" rel="noopener noreferrer">
+								CC BY-NC-ND 4.0
+							</a>
+						</>
+					) : (
+						<>
+							Text{' '}
+							<a href={licenseHref} target="_blank" rel="noopener noreferrer">
+								CC BY-NC-ND 4.0
+							</a>
+						</>
+					)
+				}
+			</span>
+			<span>{isZh ? '示例代码 MIT' : 'Code MIT'}</span>
+		</p>
+		{
+			isZh && (
+				<p class="filings">
+					<span>
+						<a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">
+							沪ICP备2026029910号-3
+						</a>
+					</span>
+					<span>
+						<a
+							href="https://beian.mps.gov.cn/#/query/webSearch?code=31011702892479"
+							target="_blank"
+							rel="noreferrer"
+						>
+							沪公网安备31011702892479号
+						</a>
+					</span>
+				</p>
+			)
+		}
+		<p class="disclaimer">
+			{
+				isZh
+					? '独立开源指南，不是 Rust 官方项目，也未获 Rust 基金会背书。'
+					: 'An independent open guide. Not an official Rust Project site, and not endorsed by the Rust Foundation.'
+			}
+		</p>
+	</div>
+</footer>
+
+<style>
+	@layer starlight.core {
+		footer {
+			flex-direction: column;
+			gap: 1.5rem;
+		}
+		.meta {
+			gap: 0.75rem 3rem;
+			justify-content: space-between;
+			flex-wrap: wrap;
+			margin-top: 3rem;
+			font-size: var(--sl-text-sm);
+			color: var(--sl-color-gray-3);
+		}
+		.meta > :global(p:only-child) {
+			margin-inline-start: auto;
+		}
+		.colophon {
+			display: flex;
+			flex-direction: column;
+			gap: 0.4rem;
+			font-size: var(--sl-text-xs);
+			line-height: 1.6;
+			color: var(--sl-color-gray-3);
+		}
+		.credits,
+		.filings,
+		.disclaimer {
+			margin: 0;
+		}
+		.credits,
+		.filings {
+			display: flex;
+			flex-wrap: wrap;
+			align-items: center;
+			column-gap: 0.45rem;
+			row-gap: 0.2rem;
+		}
+		.credits > span,
+		.filings > span {
+			white-space: nowrap;
+		}
+		.credits > span + span::before,
+		.filings > span + span::before {
+			content: '·';
+			margin-inline-end: 0.45rem;
+			color: var(--sl-color-gray-4);
+		}
+		.colophon a {
+			color: var(--sl-color-gray-2);
+			text-decoration-thickness: 1px;
+			text-underline-offset: 0.15em;
+		}
+		.colophon a:hover {
+			color: var(--sl-color-white);
+		}
+	}
+</style>

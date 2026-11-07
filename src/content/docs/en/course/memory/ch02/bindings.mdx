@@ -1,0 +1,144 @@
+---
+title: "Declarations and bindings: Copy, Move, and borrowing"
+description: Meet let and type inference in a first runnable Rust program, then compare how the same equals sign splits into Copy and Move for integers and String.
+sidebar:
+  label: Declarations and bindings
+  order: 1
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import StringMove from '../../../../../../components/course/StringMove.astro';
+import binding from '../../../../../../../examples/memory/variables/src/bin/binding.rs?raw';
+import copy from '../../../../../../../examples/memory/variables/src/bin/init-copy.rs?raw';
+import move from '../../../../../../../examples/memory/variables/src/bin/init-move.rs?raw';
+import reference from '../../../../../../../examples/memory/variables/src/bin/init-reference.rs?raw';
+import javaCopy from '../../../../../../../examples/memory/variables/java/ReferenceCopy.java?raw';
+
+
+In Chapter 1, we used pseudocode to derive a memory reclamation model without a garbage collector: each heap resource has a single owner at any moment and is freed automatically when that owner goes out of scope (`}`); on assignment, `=` splits into Copy and Move depending on whether cleanup duty transfers.
+
+Starting in this section, we open the compiler and replace pseudocode with real Rust code.
+
+For many newcomers to Rust, frustration starts with the most basic variable declarations and assignments: you write a few lines of `let` and `=`, and some variables remain usable while others fail to compile on the spot. We'll start with the syntax of a first `let` statement, then match our model from Chapter 1 against the compiler's diagnostics.
+
+## A first runnable program: `let` and type inference
+
+In Rust, `fn main() {}` is the entry point of an executable program; execution begins inside its `{}` block. Here is a minimal program:
+
+<small class="code-source">Source: <code>examples/memory/variables/src/bin/binding.rs</code></small>
+<Code code={binding} lang="rust" />
+
+The three statements inside the function body introduce three pieces of foundational syntax:
+
+- **`let` and bindings**: `let n = 7;` declares a variable and associates the name `n` with the stack value `7`—an action called establishing a **binding**. Statements end with a semicolon `;`.
+- **Type annotations and type inference**: `let count: i32 = 7;` uses `: i32` to state explicitly that the variable is a 32-bit signed integer (occupying a fixed 4 bytes on the stack); `let n = 7;` omits `: i32`, leaving the compiler to infer `i32` from the literal `7` on the right.
+- **Printing output**: `println!("{n} {count}");` prints the current values of both variables to the terminal (`println!` ends with an exclamation mark because it is a macro; for now, treat it as a built-in printing tool).
+
+Click the Playground button on the code block to run it; the output is `7 7`.
+
+Hold on to one key distinction here: **omitting a type annotation never means a variable is untyped or dynamically typed.**
+
+To generate machine code, the compiler must know how many stack bytes every variable occupies and whether it needs to free heap memory on scope exit. Even when `: i32` is omitted, the compiler determines at compile time that `n` has the concrete type `i32`—fixing both its memory size and its usage constraints ahead of time.
+
+## Why does the same `=` mean Copy for some types and Move for others?
+
+In the program above, the right-hand side of `=` is the literal `7`. What happens when the right-hand side is an existing variable used to initialize a new one?
+
+In most languages, `b = a` and `t = s` behave identically, leaving both variables readable afterward. In Rust, applying the exact same syntax to an integer `i32` and a heap-backed `String` produces opposite outcomes.
+
+### 1. Integer initialization: bitwise copy on the stack
+
+Start with `i32`. This program initializes `b` from `a`, then prints both `a` and `b`:
+
+<small class="code-source">Source: <code>examples/memory/variables/src/bin/init-copy.rs</code></small>
+<Code code={copy} lang="rust" />
+
+Running the program prints `7 7`.
+
+Match this against the memory layout from Chapter 1: all 4 bytes of the integer `7` sit directly in the stack frame, with no heap allocation that needs to be returned. `let b = a;` copies those 4 stack bytes bitwise from `a` into `b`—**Copy** semantics. Afterward, `a` and `b` each hold an independent `7`, and both remain usable.
+
+### 2. String initialization: the original variable becomes invalid on the spot
+
+Now keep the exact same code structure and replace the integer with a `String` backed by a heap character buffer:
+
+<small class="code-source">Source: <code>examples/memory/variables/src/bin/init-move.rs</code></small>
+<Code code={move} lang="rust" />
+
+Here `String::from("hello")` allocates a heap buffer holding `"hello"` and stores the three-word control header (heap pointer `ptr`, length `len`, capacity `cap`) in the stack variable `s`.
+
+The line that prints `s` is commented out by default. Uncomment `// println!("{s}");` and try printing `s` the same way we printed the integer `a`.
+
+The compiler rejects the program immediately with the most common ownership error in Rust:
+
+<small class="code-source">Compiler diagnostic: after uncommenting the marked line in init-move.rs</small>
+```text
+error[E0382]: borrow of moved value: `s`
+```
+
+The syntax is identical to `let b = a;`. Why does switching to `String` forbid even printing `s`? Trace it line by line with the model from Chapter 1:
+
+1. **Before `let t = s;`**: `s` is the sole **owner** of `"hello"` on the heap, responsible for freeing that buffer when leaving `main` (`}`).
+2. **At `let t = s;`**: if both `s` and `t` stayed valid after copying the three-word header, leaving `}` would trigger a **double free**. To uphold the single-owner rule, this line performs a **Move**—the three-word stack header is copied into `t` (without duplicating `"hello"` on the heap), **the original variable `s` is invalidated immediately**, and cleanup duty transfers to `t`.
+3. **At `println!("{s}");`**: the **borrow checker** sees an attempt to read the invalidated variable `s` and halts compilation with `error[E0382]`.
+
+<StringMove />
+
+<Aside type="note" title="If you come from Java: reference copy vs. ownership move">
+In Java, nearly identical code prints both variables without issue:
+
+<small class="code-source">Source: <code>examples/memory/variables/java/ReferenceCopy.java</code></small>
+<Code code={javaCopy} lang="java" />
+
+Java's `s` and `t` hold object references to the same heap object (ultimately reclaimed by the runtime GC), so `t = s` copies only the reference address and leaves both variables sharing the object.
+
+In Rust, a `String` variable holds the three-word control header directly and carries cleanup responsibility. Rather than quietly establishing shared access, `let t = s;` transfers ownership and invalidates `s`.
+</Aside>
+
+<Aside type="note" title="The compiler's exact criterion and low-level optimization">
+In Chapter 1, we derived Copy versus Move from whether a value carries a heap resource that needs freeing. Inside the Rust compiler, the single static rule is **whether the type implements `Copy`**: types that implement `Copy` (such as `i32`, `bool`, and shared references `&T`) are copied; types that do not (such as `String`) are moved.
+
+At the level of the local-variable model, we explain a Move as copying the three-word stack header into the new variable and marking the old variable invalid. When emitting machine code, however, the compiler is free to elide that stack copy and reuse the original stack slot directly.
+</Aside>
+
+### 3. Keeping the original variable valid: creating a reference with `&`
+
+After hitting `error[E0382]`, a natural question follows: what if you write `let` only to read `"hello"` through a second variable, without transferring cleanup duty and invalidating `s`?
+
+Use the **reference** we designed in Section 4 of Chapter 1 by prefixing the variable with `&`:
+
+<small class="code-source">Source: <code>examples/memory/variables/src/bin/init-reference.rs</code></small>
+<Code code={reference} lang="rust" />
+
+Running this program prints `hello hello`; both `s` and `r` remain usable.
+
+Here `&s` is a **borrowing** operation: instead of moving the three-word header out of `s`, it takes the stack address of `s` and produces an 8-byte reference of type `&String` stripped of cleanup duty. Because cleanup responsibility stays with `s`, `s` remains valid and still frees the heap buffer when `main` closes at `}`.
+
+## Summary: comparing the three initializations
+
+Putting all three forms of `let` initialization side by side:
+
+| Initialization statement | Action performed by `=` | Remains original variable usable? | Who frees the heap character buffer? |
+| --- | --- | --- | --- |
+| `let b = a;` (`a: i32`) | **Copy**: copies the 4-byte integer on the stack (`i32` implements `Copy`) | Yes | No heap buffer |
+| `let t = s;` (`s: String`) | **Move**: copies the header and transfers cleanup duty (`String` does not implement `Copy`) | **No (`E0382`)** | The new variable `t` |
+| `let r: &String = &s;` | **Borrow**: takes the stack address of `s`, stripped of cleanup duty | Yes | Still the original variable `s` |
+
+### Hands-on check
+
+Open `init-move.rs` (or launch its Playground), change `let t = s;` to `let t = &s;`, and uncomment `println!("{s}");`.
+
+Before running it, trace two steps using the table above:
+1. After adding `&`, what type does the compiler infer for `t`?
+2. Why does `s` no longer trigger `error[E0382]`, and which variable ultimately frees `"hello"` on the heap?
+
+Answer: adding `&` turns the right-hand side into a borrow, so `t` is inferred as `&String`. Because borrowing does not transfer cleanup duty, `s` stays valid, both `println!` calls print `hello`, and `s` still frees the heap buffer when leaving `}`.
+
+---
+
+Every `=` in this section had `let` on the left—creating a brand-new variable to take on its first value.
+
+What happens if a variable already exists and we write `s = ...` later **without `let`** to put a new value into that existing variable? And where does the old heap memory it was holding go?
+
+With that question, let's move on to the next section.
+
+[Next: Mutability and reassignment →](/memory/reassignment/)

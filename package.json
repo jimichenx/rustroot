@@ -1,0 +1,23 @@
+{
+  "name": "rustroot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Rust Root — 从底层理念与思维方式理解 Rust 的课程网站（rustroot.cn / rustroot.dev）",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/ensure-locale-astro-dir.mjs && astro dev",
+    "dev:en": "node scripts/ensure-locale-astro-dir.mjs && SITE_LOCALE=en astro dev --ignore-lock",
+    "build": "npm run build:zh && npm run build:en",
+    "build:zh": "node scripts/ensure-locale-astro-dir.mjs && SITE_LOCALE=zh astro build --outDir dist/zh",
+    "build:en": "node scripts/ensure-locale-astro-dir.mjs && SITE_LOCALE=en astro build --outDir dist/en",
+    "preview": "astro preview --outDir dist/zh",
+    "preview:en": "SITE_LOCALE=en astro preview --outDir dist/en",
+    "check": "astro check",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.42.8",
+    "astro": "^7.4.5",
+    "sharp": "^0.35.4"
+  }
+}

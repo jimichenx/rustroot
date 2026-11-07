@@ -1,0 +1,152 @@
+---
+/**
+ * 1.6 的交互配图：容量满时 `push` 触发重新分配。
+ *
+ * 点一次按钮播放：新块淡入 → 元素逐格搬过去 → 旧块释放（灰色虚线）→
+ * Vec 的指针改指新块，而 elem 仍指着旧块，变成失效的虚线 → 编译错误条出现。
+ * 再点一次复位。
+ *
+ * 动画与控件样式在 src/styles/diagrams.css 的「交互式配图」一段，组件里不写 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			caption: 'Press push: the full Vec grows into a new block, the old block is freed, and elem is left pointing at it.',
+			title: 'What push does when the Vec is already full',
+			desc:
+				'On the left, the stack holds Vec (pointer, length, capacity) and elem, a reference to element 0. On the right, the heap holds a full block of four elements. Pressing push allocates a new block of eight slots, moves the four elements across, and frees the old block. Vec now points at the new block, while a dashed arrow from elem still points at the freed block. A compile error appears below.',
+			stack: 'stack',
+			heap: 'heap',
+			pointer: 'ptr · len · cap',
+			reference: 'reference → elem[0]',
+			oldBlock: 'old block · cap 4',
+			newBlock: 'new block · cap 8',
+			fresh: 'new',
+			push: 'push(60)',
+			reset: 'reset',
+			error: 'E0502: cannot borrow `v` as mutable because it is also borrowed as immutable',
+		}
+	: {
+			caption: '按一次 push：放满的 Vec 换到新块，旧块被释放，elem 仍指着它。',
+			title: '容量已经放满时，push 做了什么',
+			desc:
+				'左边栈上放着 Vec（指针、长度、容量）与 elem（指向第 0 个元素的引用）。右边堆上是一块放满 4 个元素的旧数据。按 push 之后，系统分配一块 8 个槽位的新数据，把 4 个元素搬过去，并释放旧块。Vec 的指针改指新块，而 elem 的一条虚线箭头仍然指向已经释放的旧块。下方出现编译错误。',
+			stack: '栈',
+			heap: '堆',
+			pointer: 'ptr · len · cap',
+			reference: '引用 → elem[0]',
+			oldBlock: '旧数据 · cap 4',
+			newBlock: '新数据 · cap 8',
+			fresh: '新',
+			push: 'push(60)',
+			reset: '重置',
+			error: 'E0502: cannot borrow `v` as mutable because it is also borrowed as immutable',
+		};
+
+const elements = [10, 50, 30, 80];
+const columns = [0, 1, 2, 3];
+const rows = [0, 1];
+---
+
+<figure class="diagram grow-figure">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 440" role="img" aria-labelledby="vg-title vg-desc">
+		<title id="vg-title">{t.title}</title>
+		<desc id="vg-desc">{t.desc}</desc>
+
+		{/* 栈 */}
+		<rect class="panel" x="16" y="40" width="280" height="250" rx="12"></rect>
+		<text class="label" x="36" y="66">{t.stack}</text>
+		<text class="name" x="36" y="100">Vec</text>
+		<rect class="slot" x="36" y="110" width="220" height="40" rx="8"></rect>
+		<text class="name" x="146" y="135" text-anchor="middle">{t.pointer}</text>
+		<text class="name" x="36" y="196">elem</text>
+		<rect class="slot" x="36" y="206" width="220" height="40" rx="8"></rect>
+		<text class="name" x="146" y="231" text-anchor="middle">{t.reference}</text>
+
+		{/* 堆 */}
+		<rect class="panel" x="344" y="40" width="280" height="380" rx="12"></rect>
+		<text class="label" x="364" y="66">{t.heap}</text>
+
+		{/* 新块（先淡入，等元素搬过来） */}
+		<g class="grow-new">
+			<text class="label" x="384" y="230">{t.newBlock}</text>
+			<rect class="object" x="384" y="238" width="200" height="146" rx="10"></rect>
+			{rows.map((row) =>
+				columns.map((col) => (
+					<rect
+						class="slot"
+						x={390 + col * 48}
+						y={244 + row * 70}
+						width="44"
+						height="64"
+						rx="6"
+					></rect>
+				))
+			)}
+		</g>
+
+		{/* 旧块（扩容后释放） */}
+		<rect class="object grow-old" x="384" y="106" width="200" height="76" rx="10"></rect>
+		<text class="label" x="384" y="98">{t.oldBlock}</text>
+
+		{/* 放满的 4 个元素：扩容时逐格搬进新块 */}
+		<g class="grow-chips">
+			{elements.map((value, i) => (
+				<g>
+					<rect class="slot" x={390 + i * 48} y="112" width="44" height="64" rx="6"></rect>
+					<text class="name" x={412 + i * 48} y="152" text-anchor="middle">{value}</text>
+				</g>
+			))}
+		</g>
+
+		{/* push 进来的新元素，落进新块第一个空位 */}
+		<g class="grow-fresh">
+			<rect class="slot" x="390" y="314" width="44" height="64" rx="6"></rect>
+			<text class="name" x="412" y="354" text-anchor="middle">{t.fresh}</text>
+		</g>
+
+		{/* elem 一直指着旧块 */}
+		<path class="arrow grow-elem-arrow" d="M256 226 H300 V160 H384" marker-end="url(#vg-head)"></path>
+		{/* Vec 的指针：扩容前指旧块，扩容后指新块 */}
+		<path class="arrow grow-arrow-old" d="M256 130 H384" marker-end="url(#vg-head)"></path>
+		<path class="arrow grow-arrow-new" d="M256 130 H336 V310 H384" marker-end="url(#vg-head)"></path>
+
+		<defs>
+			<marker id="vg-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+			<marker id="vg-head-muted" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line-muted)"></path>
+			</marker>
+		</defs>
+	</svg>
+
+	<div class="grow-controls">
+		<button
+			type="button"
+			class="grow-button"
+			data-grow-button
+			data-label-push={t.push}
+			data-label-reset={t.reset}
+			aria-pressed="false"
+		>
+			{t.push}
+		</button>
+		<p class="grow-error" role="status">{t.error}</p>
+	</div>
+</figure>
+
+<script>
+	document.querySelectorAll('[data-grow-button]').forEach((button) => {
+		button.addEventListener('click', () => {
+			const figure = button.closest('.diagram');
+			if (!figure) return;
+			const grown = figure.classList.toggle('is-grown');
+			button.textContent = grown ? button.dataset.labelReset : button.dataset.labelPush;
+			button.setAttribute('aria-pressed', String(grown));
+		});
+	});
+</script>

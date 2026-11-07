@@ -1,0 +1,171 @@
+---
+/**
+ * 4.4「字符串：str、&str 与 String」。
+ * owned 的 24 字节控制头拥有堆上的 hello world；
+ * borrowed_full 是指向这块控制头的 8 字节瘦指针；
+ * slice_part 与 literal 都是 16 字节胖指针，一个看堆上的前 5 个字节，一个看只读数据段里的字面量。
+ * 变量名与 examples/types/slices/src/bin/string-and-str.rs 一致。
+ * 样式见 src/styles/diagrams.css。
+ */
+import { CURRENT } from '../../config/site';
+
+const isEn = CURRENT.code === 'en';
+const t = isEn
+	? {
+			caption:
+				'On the stack, owned is a 24-byte String header that owns the 11-byte heap buffer. borrowed_full is an 8-byte thin pointer to that header. slice_part and literal are 16-byte fat pointers: one views heap bytes 0..5 with no copy, and the other views hello rust in read-only data.',
+			title: 'Where owned, borrowed_full, slice_part, and literal point',
+			desc: 'The stack frame main holds four locals. owned is a 24-byte String header with ptr, len 11, and cap 11; its arrow leaves ptr and lands on the first byte of hello world on the heap, the buffer it frees. borrowed_full is an 8-byte thin pointer; a curved arrow points back at the left side of owned. slice_part is a 16-byte fat pointer with ptr and len 5; its arrow lands on the same first heap byte, and a dashed box marks bytes 0..5. literal is a 16-byte fat pointer with ptr and len 10; its arrow lands on the first byte of hello rust in read-only data, a literal written into the executable with a static lifetime and no heap allocation.',
+			stack: 'stack frame · main',
+			heap: 'heap',
+			heapNote: 'hello world · 11 bytes',
+			ro: 'read-only data',
+			roNote1: 'baked into the executable',
+			roNote2: "'static · no heap allocation",
+			owned: 'owned: String',
+			ownedSize: '24B',
+			borrowed: 'borrowed_full: &String',
+			borrowedSize: '8B',
+			slice: 'slice_part: &str',
+			sliceSize: '16B',
+			literal: 'literal: &str',
+			literalSize: '16B',
+			ptr: 'ptr',
+			len11: 'len: 11',
+			cap11: 'cap: 11',
+			len5: 'len: 5',
+			len10: 'len: 10',
+			ownedRange: 'owned · 0..11 · len 11 · frees it',
+			sliceRange: 'slice_part · 0..5 · len 5 · zero-copy',
+			literalRange: '0..10 · len 10',
+		}
+	: {
+			caption:
+				'栈上的 owned 用 24 字节控制头拥有堆里的 11 个字节；borrowed_full 是指向这块控制头的 8 字节瘦指针。slice_part 与 literal 都是 16 字节胖指针，前者零拷贝看堆上的 0..5，后者看只读数据段里的 hello rust。',
+			title: 'owned、borrowed_full、slice_part 与 literal 的指向',
+			desc: '左侧是栈帧 main 的四个局部变量。owned 是 24 字节的 String 控制头，字段为 ptr、len 11、cap 11，箭头从 ptr 指向堆上 hello world 的首字节，这块缓冲区由它负责释放。borrowed_full 是 8 字节瘦指针，弯箭头指回 owned 的左侧。slice_part 是 16 字节胖指针，字段为 ptr 与 len 5，箭头同样落在堆的首字节，虚线框标出 0..5。literal 是 16 字节胖指针，字段为 ptr 与 len 10，箭头指向只读数据段里 hello rust 的首字节；这段字面量在编译期写入可执行文件，静态存活，没有堆分配。',
+			stack: '栈帧 main',
+			heap: '堆',
+			heapNote: 'hello world · 11 字节',
+			ro: '只读数据段',
+			roNote1: '编译期写入可执行文件',
+			roNote2: "'static 存活 · 无堆分配",
+			owned: 'owned: String',
+			ownedSize: '24B',
+			borrowed: 'borrowed_full: &String',
+			borrowedSize: '8B',
+			slice: 'slice_part: &str',
+			sliceSize: '16B',
+			literal: 'literal: &str',
+			literalSize: '16B',
+			ptr: 'ptr',
+			len11: 'len: 11',
+			cap11: 'cap: 11',
+			len5: 'len: 5',
+			len10: 'len: 10',
+			ownedRange: 'owned · 0..11 · len 11 · 负责释放',
+			sliceRange: 'slice_part · 0..5 · len 5 · 零拷贝子串',
+			literalRange: '0..10 · len 10',
+		};
+
+const heapChars = ['h', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd'];
+const roChars = ['h', 'e', 'l', 'l', 'o', ' ', 'r', 'u', 's', 't'];
+const cellX = (i: number) => 380 + i * 24;
+const cellCx = (i: number) => 390 + i * 24;
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 680 444" role="img" aria-labelledby="smv-title smv-desc">
+		<title id="smv-title">{t.title}</title>
+		<desc id="smv-desc">{t.desc}</desc>
+
+		<rect class="panel" x="16" y="16" width="308" height="384" rx="12"></rect>
+		<rect class="panel" x="356" y="16" width="308" height="214" rx="12"></rect>
+		<rect class="panel" x="356" y="246" width="308" height="182" rx="12"></rect>
+
+		<text class="label" x="44" y="40">{t.stack}</text>
+
+		<text class="code" x="44" y="64">{t.owned}</text>
+		<text class="label" x="304" y="64" text-anchor="end">{t.ownedSize}</text>
+		<rect class="object" x="36" y="74" width="276" height="46" rx="8"></rect>
+		<rect class="slot" x="44" y="80" width="84" height="34" rx="6"></rect>
+		<text class="code" x="86" y="101" text-anchor="middle">{t.ptr}</text>
+		<rect class="slot" x="132" y="80" width="84" height="34" rx="6"></rect>
+		<text class="code" x="174" y="101" text-anchor="middle">{t.len11}</text>
+		<rect class="slot" x="220" y="80" width="84" height="34" rx="6"></rect>
+		<text class="code" x="262" y="101" text-anchor="middle">{t.cap11}</text>
+
+		<text class="code" x="44" y="148">{t.borrowed}</text>
+		<text class="label" x="304" y="148" text-anchor="end">{t.borrowedSize}</text>
+		<rect class="slot" x="44" y="160" width="260" height="34" rx="6"></rect>
+		<text class="code" x="174" y="181" text-anchor="middle">{t.ptr}</text>
+
+		<text class="code" x="44" y="220">{t.slice}</text>
+		<text class="label" x="304" y="220" text-anchor="end">{t.sliceSize}</text>
+		<rect class="slot" x="44" y="232" width="128" height="34" rx="6"></rect>
+		<text class="code" x="108" y="253" text-anchor="middle">{t.ptr}</text>
+		<rect class="slot" x="176" y="232" width="128" height="34" rx="6"></rect>
+		<text class="code" x="240" y="253" text-anchor="middle">{t.len5}</text>
+
+		<text class="code" x="44" y="304">{t.literal}</text>
+		<text class="label" x="304" y="304" text-anchor="end">{t.literalSize}</text>
+		<rect class="slot" x="44" y="316" width="128" height="34" rx="6"></rect>
+		<text class="code" x="108" y="337" text-anchor="middle">{t.ptr}</text>
+		<rect class="slot" x="176" y="316" width="128" height="34" rx="6"></rect>
+		<text class="code" x="240" y="337" text-anchor="middle">{t.len10}</text>
+
+		<text class="label" x="372" y="40">{t.heap}</text>
+		<text class="edge-sub" x="372" y="60">{t.heapNote}</text>
+		{
+			heapChars.map((ch, i) => (
+				<g>
+					<rect class="slot" x={cellX(i)} y="108" width="20" height="40" rx="4"></rect>
+					<text class="code" x={cellCx(i)} y="133" text-anchor="middle">
+						{ch === ' ' ? '·' : ch}
+					</text>
+					<text class="edge-sub" x={cellCx(i)} y="168" text-anchor="middle">
+						{i}
+					</text>
+				</g>
+			))
+		}
+		<rect class="edge" x="378" y="106" width="120" height="44" rx="6"></rect>
+		<text class="edge-label" x="372" y="192">{t.ownedRange}</text>
+		<text class="edge-sub" x="372" y="214">{t.sliceRange}</text>
+
+		<text class="label" x="372" y="270">{t.ro}</text>
+		<text class="edge-sub" x="648" y="270" text-anchor="end">{t.literalRange}</text>
+		<text class="edge-sub" x="372" y="300">{t.roNote1}</text>
+		<text class="edge-sub" x="372" y="324">{t.roNote2}</text>
+		{
+			roChars.map((ch, i) => (
+				<g>
+					<rect class="slot" x={cellX(i)} y="348" width="20" height="36" rx="4"></rect>
+					<text class="code" x={cellCx(i)} y="371" text-anchor="middle">
+						{ch === ' ' ? '·' : ch}
+					</text>
+					<text class="edge-sub" x={cellCx(i)} y="408" text-anchor="middle">
+						{i}
+					</text>
+				</g>
+			))
+		}
+		<rect class="edge" x="378" y="346" width="240" height="40" rx="6"></rect>
+
+		<path class="arrow" d="M 86 114 V 128 H 376" marker-end="url(#smv-head)"></path>
+		<path
+			class="arrow"
+			d="M 44 177 H 32 Q 26 177 26 171 V 97 Q 26 90 32 90 H 44"
+			marker-end="url(#smv-head)"
+		></path>
+		<path class="arrow" d="M 108 266 V 278 H 346 V 142 H 376" marker-end="url(#smv-head)"></path>
+		<path class="arrow" d="M 108 350 V 366 H 376" marker-end="url(#smv-head)"></path>
+
+		<defs>
+			<marker id="smv-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

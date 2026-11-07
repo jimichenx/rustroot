@@ -1,0 +1,151 @@
+---
+/**
+ * 3.4「长度 N 存在哪里」。
+ * 左边 [i32; 4]：N 记在编译期类型实体里，运行时栈上只有连续 4 个 i32，共 16 字节。
+ * 右边 Java int[]：栈上是引用，堆对象带对象头和运行时 length，元素另占 16 字节。
+ * 样式见 src/styles/diagrams.css。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			caption:
+				'The length of [i32; 4] is stored in the compile-time type and erased at runtime, so the stack value is exactly 16 bytes. A Java int[] keeps a reference on the stack; the heap array also carries an object header and a runtime length.',
+			title: 'The length lives in the type, not in the runtime bytes',
+			desc: 'On the left, Rust variable a has type [i32; 4]. The compile-time type entity records N = 4 and that fact is erased at runtime, taking 0 bytes. The stack frame holds four contiguous i32 slots, [0] 10, [1] 20, [2] 30, and [3] 40, totaling 16 bytes, with no heap allocation, no pointer, and no runtime length. Where a Java array would store metadata, the picture says there is no object header and no runtime length. On the right, Java int[] a = new int[4] keeps reference a on the stack. An arrow points at the array object on the heap. Inside it, a dashed object header of 12 bytes and a dashed runtime length field of 4 bytes sit above the same four ints, 10, 20, 30, and 40, which occupy 16 bytes.',
+			rust: 'Rust',
+			java: 'Java',
+			rustCode: 'let a: [i32; 4]',
+			javaCode: 'int[] a = new int[4]',
+			typeHead: 'compile-time type',
+			typeName: '[i32; 4]',
+			typeN: 'N = 4',
+			typeNote: 'erased at runtime · 0 bytes',
+			stackHead: 'stack',
+			refNote: 'reference on the stack',
+			arrow: 'to the heap',
+			frame: 'stack frame',
+			absentHeader: 'no object header · 0 bytes',
+			absentLen: 'no runtime length · 0 bytes',
+			total: '4 × 4 bytes = 16 bytes',
+			foot: 'no heap, no pointer, no runtime length',
+			heap: 'heap',
+			heapHeader: 'Object Header · 12B',
+			heapLen: 'length: 4 · 4B',
+			jTotal: 'elements · 16 bytes',
+			jFoot: 'plus header 12B + length 4B',
+		}
+	: {
+			caption:
+				'[i32; 4] 的长度记在编译期类型实体里，栈上只有连续 16 字节；Java 的 int[] 在栈上是引用，堆对象还带着对象头和运行时 length。',
+			title: '长度在类型实体里，不在运行时字节里',
+			desc: '左边是 Rust 的变量 a，类型为 [i32; 4]。编译期类型实体记下 N = 4，运行时抹掉，不占内存。栈帧里是连续四个 i32 槽位：[0] 为 10，[1] 为 20，[2] 为 30，[3] 为 40，一共 16 字节；没有堆分配，没有指针，也没有运行时 length。Java 数组用来放对象头和 length 的位置，这里标明无对象头、无运行时 length，各为 0 字节。右边是 Java 的 int[] a = new int[4]。栈上的 a 是引用，箭头指向堆上的数组对象。对象内部用虚线画出 12 字节的对象头和 4 字节的运行时 length，下面是同样的四个 int：10、20、30、40，共 16 字节。',
+			rust: 'Rust',
+			java: 'Java',
+			rustCode: 'let a: [i32; 4]',
+			javaCode: 'int[] a = new int[4]',
+			typeHead: '编译期类型实体',
+			typeName: '[i32; 4]',
+			typeN: 'N = 4',
+			typeNote: '编译期记录，运行时抹掉',
+			stackHead: '栈',
+			refNote: '栈上的引用',
+			arrow: '指向堆',
+			frame: '栈帧',
+			absentHeader: '无对象头 · 0 字节',
+			absentLen: '无运行时 length · 0 字节',
+			total: '4 × 4 字节 = 16 字节',
+			foot: '无堆、无指针、无运行时 length',
+			heap: '堆',
+			heapHeader: '对象头 · 12B',
+			heapLen: 'length: 4 · 4B',
+			jTotal: '元素 · 16 字节',
+			jFoot: '另加对象头 12B + length 4B',
+		};
+
+const cells = [
+	{ index: '[0]', value: '10' },
+	{ index: '[1]', value: '20' },
+	{ index: '[2]', value: '30' },
+	{ index: '[3]', value: '40' },
+];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 636" role="img" aria-labelledby="asl-title asl-desc">
+		<title id="asl-title">{t.title}</title>
+		<desc id="asl-desc">{t.desc}</desc>
+
+		<rect class="panel" x="16" y="16" width="296" height="604" rx="12"></rect>
+		<rect class="panel" x="328" y="16" width="296" height="604" rx="12"></rect>
+
+		<text class="label" x="36" y="46">{t.rust}</text>
+		<text class="label" x="348" y="46">{t.java}</text>
+
+		<text class="code" x="36" y="76">{t.rustCode}</text>
+		<text class="code" x="348" y="76">{t.javaCode}</text>
+
+		<text class="label" x="36" y="108">{t.typeHead}</text>
+		<text class="label" x="348" y="108">{t.stackHead}</text>
+
+		<rect class="panel" x="36" y="130" width="256" height="104" rx="8"></rect>
+		<text class="code" x="164" y="164" text-anchor="middle">{t.typeName}</text>
+		<text class="edge-label" x="164" y="192" text-anchor="middle">{t.typeN}</text>
+		<text class="edge-sub" x="164" y="216" text-anchor="middle">{t.typeNote}</text>
+
+		<rect class="slot" x="348" y="146" width="256" height="76" rx="8"></rect>
+		<text class="name" x="476" y="178" text-anchor="middle">a</text>
+		<text class="edge-sub" x="476" y="202" text-anchor="middle">{t.refNote}</text>
+
+		<path class="arrow" d="M476 222 V290" marker-end="url(#asl-head)"></path>
+		<text class="edge-label" x="488" y="256">{t.arrow}</text>
+
+		<text class="name" x="36" y="268">a</text>
+		<text class="label" x="292" y="268" text-anchor="end">{t.frame}</text>
+		<text class="label" x="360" y="268">{t.heap}</text>
+
+		<rect class="panel" x="36" y="290" width="256" height="250" rx="10"></rect>
+		<text class="edge-label" x="164" y="334" text-anchor="middle">{t.absentHeader}</text>
+		<text class="edge-label" x="164" y="398" text-anchor="middle">{t.absentLen}</text>
+
+		<rect class="object" x="348" y="290" width="256" height="250" rx="10"></rect>
+		<rect class="freed" x="360" y="304" width="232" height="48" rx="8"></rect>
+		<text class="label" x="476" y="334" text-anchor="middle">{t.heapHeader}</text>
+		<rect class="freed" x="360" y="368" width="232" height="48" rx="8"></rect>
+		<text class="label" x="476" y="398" text-anchor="middle">{t.heapLen}</text>
+
+		{
+			cells.map((cell, i) => (
+				<g>
+					<rect class="slot" x={48 + i * 60} y="436" width="52" height="88" rx="8"></rect>
+					<text class="label" x={74 + i * 60} y="470" text-anchor="middle">
+						{cell.index}
+					</text>
+					<text class="name" x={74 + i * 60} y="502" text-anchor="middle">
+						{cell.value}
+					</text>
+					<rect class="slot" x={360 + i * 60} y="436" width="52" height="88" rx="8"></rect>
+					<text class="label" x={386 + i * 60} y="470" text-anchor="middle">
+						{cell.index}
+					</text>
+					<text class="name" x={386 + i * 60} y="502" text-anchor="middle">
+						{cell.value}
+					</text>
+				</g>
+			))
+		}
+
+		<text class="edge-label" x="164" y="572" text-anchor="middle">{t.total}</text>
+		<text class="label" x="164" y="596" text-anchor="middle">{t.foot}</text>
+		<text class="edge-label" x="476" y="572" text-anchor="middle">{t.jTotal}</text>
+		<text class="label" x="476" y="596" text-anchor="middle">{t.jFoot}</text>
+
+		<defs>
+			<marker id="asl-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

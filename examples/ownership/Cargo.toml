@@ -1,0 +1,27 @@
+[package]
+name = "ownership"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "所有权推导的代码实验。会编译失败的片段写在注释里，并注明错误码。"
+
+[[bin]]
+name = "moved"
+path = "src/bin/moved.rs"
+
+[[bin]]
+name = "copied"
+path = "src/bin/copied.rs"
+
+[[bin]]
+name = "inspect"
+path = "src/bin/inspect.rs"
+
+[[bin]]
+name = "share"
+path = "src/bin/share.rs"
+
+[[bin]]
+name = "borrow-span"
+path = "src/bin/borrow-span.rs"

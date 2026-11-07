@@ -1,0 +1,7 @@
+[package]
+name = "representation-and-rules"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "Lesson 2.2 · What a type is: representation and rules"

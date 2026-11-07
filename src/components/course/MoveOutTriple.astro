@@ -1,0 +1,101 @@
+---
+/**
+ * 附录《位置表达式与值表达式》分步配图：同一个「把值移走」，三种结局。
+ *
+ * 共享引用（*r）和静态变量（TEXT）被 E0507 拒绝；Box 的 *boxed 放行。
+ * 底部进度条可点节点逐步观看；入视口自动播一遍。
+ */
+import { SITE_LOCALE } from '../../config/site';
+import FigureControls from './FigureControls.astro';
+
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			caption:
+				'One action, three sources. Moving a value out of a shared reference or a static is refused with E0507; the same move out of a Box is allowed.',
+			title: 'One move-out, three outcomes',
+			desc: 'Three rows. `let s = *r` on a shared reference is refused with E0507. `let s = TEXT` on a static is refused with E0507. `let s = *boxed` on a Box passes, and the value moves out to s.',
+			refCode: 'let s = *r;',
+			refType: 'r: &String · shared reference',
+			staticCode: 'let s = TEXT;',
+			staticType: 'TEXT: static String · static',
+			boxCode: 'let s = *boxed;',
+			boxType: 'boxed: Box<String> · Box',
+			refErr: 'behind a shared borrow, cannot move out',
+			staticErr: 'a static item, cannot move out',
+			ok: 'value moves out, s takes ownership',
+			stepper: 'Steps',
+			steps: ['move out of a shared reference', 'move out of a static', 'move out of a Box'],
+		}
+	: {
+			caption:
+				'同一个「把值移走」，三个来源三种结局：共享引用和静态变量被 E0507 拒绝，Box 放行。',
+			title: '同一个移出动作，三种结局',
+			desc: '三行。`let s = *r` 在共享引用上被 E0507 拒绝；`let s = TEXT` 在静态变量上被 E0507 拒绝；`let s = *boxed` 在 Box 上通过，值移出给 s。',
+			refCode: 'let s = *r;',
+			refType: 'r: &String · 共享引用',
+			staticCode: 'let s = TEXT;',
+			staticType: 'TEXT: static String · 静态变量',
+			boxCode: 'let s = *boxed;',
+			boxType: 'boxed: Box<String> · Box',
+			refErr: '只有共享借用，移不出',
+			staticErr: '静态变量，移不出',
+			ok: '值移出，s 拿到所有权',
+			stepper: '步骤',
+			steps: ['移出共享引用', '移出静态变量', '移出 Box'],
+		};
+
+const rows = [
+	{ y: 56, code: t.refCode, type: t.refType, kind: 'fail', reason: t.refErr },
+	{ y: 168, code: t.staticCode, type: t.staticType, kind: 'fail', reason: t.staticErr },
+	{ y: 280, code: t.boxCode, type: t.boxType, kind: 'ok', reason: t.ok },
+];
+---
+
+<figure class="diagram moveout-figure" data-stepper>
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 380" role="img" aria-labelledby="mo-title mo-desc">
+		<title id="mo-title">{t.title}</title>
+		<desc id="mo-desc">{t.desc}</desc>
+
+		{rows.map((row, i) => (
+			<g>
+				{/* 来源位置：常驻 */}
+				<rect class="slot" x="40" y={row.y} width="200" height="56" rx="8"></rect>
+				<text class="code" x="140" y={row.y + 26} text-anchor="middle">{row.code}</text>
+				<text class="label" x="140" y={row.y + 46} text-anchor="middle">{row.type}</text>
+
+				{/* 移出尝试与结局：一步 */}
+				<g class="step" data-step={i + 1}>
+					<path class="arrow" d={`M240 ${row.y + 28} H356`} marker-end="url(#mo-head)"></path>
+					{row.kind === 'fail' ? (
+						<>
+							<rect class="freed" x="356" y={row.y} width="220" height="56" rx="8"></rect>
+							<text class="code" x="466" y={row.y + 26} text-anchor="middle">E0507</text>
+							<text class="label" x="466" y={row.y + 46} text-anchor="middle">{row.reason}</text>
+						</>
+					) : (
+						<>
+							<rect class="object" x="356" y={row.y} width="220" height="56" rx="8"></rect>
+							<text class="name" x="466" y={row.y + 26} text-anchor="middle">s</text>
+							<text class="label" x="466" y={row.y + 46} text-anchor="middle">{row.reason}</text>
+						</>
+					)}
+				</g>
+			</g>
+		))}
+
+		<defs>
+			<marker id="mo-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+
+	<FigureControls controls="stepper" label={t.stepper} steps={t.steps} />
+</figure>
+
+<script>
+	import { initFigures } from '../../scripts/motion';
+	initFigures();
+</script>

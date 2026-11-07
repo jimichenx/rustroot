@@ -1,0 +1,124 @@
+---
+/**
+ * 3.5「同一个 &，瘦指针或胖指针」。
+ * 长度还在编译期类型 &[i32; 4] 里时，栈上的 r1 只有一个机器字。
+ * [i32] 擦掉 ; N 之后，栈上的 r2 变成两个机器字，第二个字记下运行时长度。
+ * 样式见 src/styles/diagrams.css。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			caption:
+				'The same & on [i32; 4] stores an 8-byte thin pointer: the length stays in the type. On [i32], which has erased ; N, it stores a 16-byte fat pointer whose second word holds the runtime length, here 2, covering a[1] and a[2].',
+			title: 'The same & yields a thin pointer or a fat pointer',
+			desc: 'On the upper left, r1 has type &[i32; 4] and is created by &a. Its compile-time type records N = 4 and takes 0 bytes at runtime. The stack holds one machine word, ptr, 8 bytes; an arrow points at a[0]. On the lower left, r2 has type &[i32] and is created by &a[1..3]. Because [i32] erased ; N, the pointer stores two machine words: ptr, 8 bytes, pointing at a[1], and len 2, another 8 bytes. On the right, array a has type [i32; 4]: four contiguous i32 slots, 10, 20, 30, and 40, 16 bytes in all, with no length field in the elements. A bracket marks the two slots r2 covers, [1] and [2]. [0] and [3] sit outside that slice.',
+			thinHead: 'thin pointer · 8 bytes',
+			thinCode: 'r1: &[i32; 4] = &a',
+			typeHead: 'compile-time type',
+			typeName: '&[i32; 4]',
+			typeNote: 'N = 4 · 0 bytes',
+			ptr: 'ptr · 8B',
+			fatHead: 'fat pointer · 16 bytes',
+			fatCode: 'r2: &[i32] = &a[1..3]',
+			erased1: '[i32] erased ; N',
+			erased2: 'len stored in the pointer',
+			len: 'len: 2 · 8B',
+			stack: 'stack',
+			arrCode: 'a: [i32; 4]',
+			arrNote: '4 × i32 · 16 bytes',
+			span: 'r2 covers [1] and [2]',
+			outside: '[0] and [3] are outside',
+		}
+	: {
+			caption:
+				'同一个 & 碰到 &[i32; 4] 时，栈上的 r1 只有 8 字节，长度 4 留在类型里；碰到长度被擦掉的 &[i32] 时，栈上的 r2 有 16 字节，第二个机器字记下运行时长度 2，覆盖 a 的 [1] 与 [2]。',
+			title: '同一个 &，瘦指针或胖指针',
+			desc: '左上方是 r1，类型 &[i32; 4]，由 &a 得到。编译期类型记下 N = 4，运行时占 0 字节。栈上只有一个机器字 ptr，8 字节，箭头指向 a 的 [0]。左下方是 r2，类型 &[i32]，由 &a[1..3] 得到。[i32] 擦掉了 ; N，所以指针在栈上占两个机器字：ptr 为 8 字节，指向 [1]；len 为 2，再占 8 字节。右边是数组 a，类型 [i32; 4]，连续四格为 10、20、30、40，共 16 字节，元素里没有长度字段。括号标出 r2 覆盖的两格 [1] 与 [2]。[0] 与 [3] 不在这次切片里。',
+			thinHead: '瘦指针 · 8 字节',
+			thinCode: 'r1: &[i32; 4] = &a',
+			typeHead: '编译期类型实体',
+			typeName: '&[i32; 4]',
+			typeNote: 'N = 4 · 0 字节',
+			ptr: 'ptr · 8B',
+			fatHead: '胖指针 · 16 字节',
+			fatCode: 'r2: &[i32] = &a[1..3]',
+			erased1: '[i32] 擦掉了 ; N',
+			erased2: '长度记在这个指针里',
+			len: 'len: 2 · 8B',
+			stack: '栈',
+			arrCode: 'a: [i32; 4]',
+			arrNote: '4 × i32 · 16 字节',
+			span: 'r2 覆盖 [1] 与 [2]',
+			outside: '[0] 与 [3] 不在切片里',
+		};
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 584" role="img" aria-labelledby="fpc-title fpc-desc">
+		<title id="fpc-title">{t.title}</title>
+		<desc id="fpc-desc">{t.desc}</desc>
+
+		<rect class="panel" x="16" y="16" width="372" height="188" rx="12"></rect>
+		<rect class="panel" x="16" y="220" width="372" height="176" rx="12"></rect>
+		<rect class="panel" x="436" y="16" width="188" height="552" rx="12"></rect>
+
+		<text class="label" x="32" y="44">{t.thinHead}</text>
+		<text class="code" x="32" y="72">{t.thinCode}</text>
+
+		<rect class="panel" x="32" y="112" width="200" height="76" rx="8"></rect>
+		<text class="label" x="132" y="134" text-anchor="middle">{t.typeHead}</text>
+		<text class="code" x="132" y="156" text-anchor="middle">{t.typeName}</text>
+		<text class="edge-sub" x="132" y="174" text-anchor="middle">{t.typeNote}</text>
+
+		<rect class="slot" x="248" y="122" width="120" height="56" rx="8"></rect>
+		<text class="code" x="308" y="155" text-anchor="middle">{t.ptr}</text>
+
+		<text class="label" x="450" y="44">{t.stack}</text>
+		<text class="code" x="450" y="70">{t.arrCode}</text>
+		<text class="edge-sub" x="450" y="92">{t.arrNote}</text>
+
+		<rect class="slot" x="450" y="112" width="128" height="76" rx="8"></rect>
+		<text class="label" x="514" y="142" text-anchor="middle">[0]</text>
+		<text class="name" x="514" y="170" text-anchor="middle">10</text>
+
+		<path class="arrow" d="M 368 150 H 450" marker-end="url(#fpc-head)"></path>
+
+		<rect class="object" x="450" y="220" width="128" height="176" rx="8"></rect>
+		<rect class="slot" x="458" y="228" width="112" height="76" rx="8"></rect>
+		<text class="label" x="514" y="258" text-anchor="middle">[1]</text>
+		<text class="name" x="514" y="286" text-anchor="middle">20</text>
+		<rect class="slot" x="458" y="312" width="112" height="76" rx="8"></rect>
+		<text class="label" x="514" y="342" text-anchor="middle">[2]</text>
+		<text class="name" x="514" y="370" text-anchor="middle">30</text>
+		<path class="arrow" d="M 590 228 H 606 V 388 H 590"></path>
+
+		<rect class="slot" x="450" y="416" width="128" height="76" rx="8"></rect>
+		<text class="label" x="514" y="446" text-anchor="middle">[3]</text>
+		<text class="name" x="514" y="474" text-anchor="middle">40</text>
+
+		<text class="edge-label" x="450" y="520">{t.span}</text>
+		<text class="edge-sub" x="450" y="542">{t.outside}</text>
+
+		<text class="label" x="32" y="258">{t.fatHead}</text>
+		<text class="code" x="32" y="280">{t.fatCode}</text>
+		<text class="edge-sub" x="32" y="324">{t.erased1}</text>
+		<text class="edge-sub" x="32" y="346">{t.erased2}</text>
+
+		<rect class="panel" x="236" y="230" width="136" height="148" rx="8"></rect>
+		<rect class="slot" x="248" y="238" width="112" height="56" rx="8"></rect>
+		<text class="code" x="304" y="271" text-anchor="middle">{t.ptr}</text>
+		<rect class="slot" x="248" y="306" width="112" height="56" rx="8"></rect>
+		<text class="code" x="304" y="339" text-anchor="middle">{t.len}</text>
+
+		<path class="arrow" d="M 360 266 H 458" marker-end="url(#fpc-head)"></path>
+
+		<defs>
+			<marker id="fpc-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

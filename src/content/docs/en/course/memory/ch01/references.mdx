@@ -1,0 +1,145 @@
+---
+title: "References: how to use data without taking responsibility for cleanup"
+description: In the minimal model, passing a value to a function moves it and invalidates the caller's variable; to let functions read data without freeing the heap, we design a reference that carries no cleanup responsibility.
+sidebar:
+  label: References and sharing
+  order: 4
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import ReferencePoints from '../../../../../../components/course/ReferencePoints.astro';
+
+By the end of the previous section, our minimal model stood on two rules: when a stack variable goes out of scope (`}`), the heap resource it points to is freed automatically; when a heap-backed value is assigned with `=`, it follows Move semantics and invalidates the old variable immediately.
+
+We ended with a test question: under those two rules alone, can we still pass a value into a function for it to use?
+
+## The parameter-passing dilemma: one read invalidates the variable
+
+Real programs cannot get far without calling functions. Suppose we write the simplest possible helper, `print_it`, which does nothing more than take a string `s` and print it once:
+
+<small class="code-source">Pseudocode for reasoning</small>
+```text
+fn print_it(msg) {
+    print(msg)
+}   // ← msg goes out of scope here
+
+{
+    s = alloc_heap("hello")
+    print_it(s)
+    print(s)   // ← can we still use s here?
+}
+```
+
+Trace what happens when `print_it(s)` runs under our minimal model:
+
+1. **Passing an argument is an assignment**: calling `print_it(s)` assigns the argument `s` to the parameter `msg` (effectively executing `msg = s`).
+2. **A Move is triggered**: because the string is backed by a heap resource, `msg = s` follows Move semantics—the caller's variable `s` is invalidated immediately, and the responsibility for freeing the heap transfers to the parameter `msg` inside the function.
+3. **The heap is freed when the function returns**: as soon as `print_it` finishes printing and returns, `msg` goes out of scope, firing our scope-exit rule and freeing the `"hello"` buffer on the heap right there.
+4. **The caller is left with nothing**: back in the outer block, not only is `s` invalid, the heap data itself has already been destroyed by `print_it`.
+
+If we refuse to change the model, the only way to keep using the string after calling `print_it` is to **have the function `return` the parameter back at the end, and have the caller catch it in a variable all over again**:
+
+<small class="code-source">Pseudocode for reasoning</small>
+```text
+fn print_it(msg) {
+    print(msg)
+    return msg   // ← forced to hand the value back after reading it
+}
+
+{
+    s = alloc_heap("hello")
+    s = print_it(s)   // ← assign the returned value back to s
+    print(s)
+}
+```
+
+Imagine a function that merely wants to inspect three strings and return a computed result of its own: you would have to pass in three arguments, return a four-element tuple `(result, s1, s2, s3)`, and unpack all of them at every call site.
+
+When even a read-only function call becomes that clumsy, a language built solely on the minimal model is unusable in real engineering.
+
+## Diagnosis: where is the flaw?
+
+In our minimal model, using a `String` and freeing its heap buffer come together. To let `print_it` read the data, the caller must pass the entire value: its heap pointer `ptr`, length `len`, and capacity `cap`. The function parameter then becomes responsible for freeing the buffer.
+
+In the first version of `print_it`, the parameter goes out of scope when the function returns, and the buffer is freed. Even a function that only reads the data requires the caller to give up responsibility for cleanup.
+
+To separate these two actions, the model needs a new type: **one that can locate the data without being responsible for freeing it.**
+
+## Designing it ourselves: an address type without cleanup responsibility
+
+Put yourself in the language designer's shoes. How can we let a function reach `"hello"` without freeing the heap when the function returns?
+
+Look at the memory layout and the answer is straightforward: **instead of passing the three machine words of `s` into the function, create a tiny value that records only the stack address of `s`, and pass that address instead.**
+
+To distinguish it from `s` itself, let's write `&s` for the action of taking the stack address of `s`, and `&String` for this new type that holds the stack address of a `String`. In the following model, we use a 64-bit machine, where this address occupies eight bytes. Here is what it looks like in memory:
+
+<ReferencePoints />
+
+Compare the physical layout of the new value against the original variable:
+
+- The original variable `s` (`String`) occupies **three machine words** on the stack (`ptr`, `len`, `cap`), where `ptr` holds the starting address of the heap character buffer. Only the variable holding this full control header is responsible for freeing the heap block when it goes out of scope.
+- Our newly designed `&s` (`&String`) occupies **one machine word (8 bytes)** on the stack, holding nothing more than **the stack address of variable `s`**. Reading the characters through it takes two hops: first follow the stack address to `s`, then follow `ptr` inside `s` to `"hello"` on the heap.
+
+Now ask a question about role separation: **why doesn't a variable of this new type free the heap when it goes out of scope?**
+
+Because from the moment we designed it, it was built to read data without managing cleanup—the two types play fundamentally different roles in the model:
+- The original type `String`: directly holds the three-word control header and **is responsible for freeing the heap** when it goes out of scope.
+- The new type `&String`: holds only the 8-byte stack address pointing to `s` and **carries no cleanup responsibility**. Its type also prevents moving the value out of `s` through that address. When the reference goes out of scope, the heap resource is untouched.
+
+Cleanup duty stays firmly with the original variable `s`—**you get the address to use the data; the duty to free it stays with me.**
+
+In Rust, a value that refers to data without taking ownership of it is called a **reference**. The `&String` in this example is one kind of reference; not every Rust reference has the same representation.
+
+<Aside type="note" title="How does a reference (&T) differ from a raw pointer in C?">
+In this 64-bit example, a reference `&String` and a C pointer can both be represented as an 8-byte address. A raw pointer in C does not carry the same **type constraints** regarding cleanup responsibility or validity: C permits passing a pointer to `free` or dereferencing a pointer whose target has already been freed, even when doing so causes undefined behavior.
+
+In our model, a reference is an address type governed by strict **constraints**: first, cleanup duty is stripped away at the type level (you cannot free heap memory through a reference); second, the model must guarantee that the data it points to remains valid for as long as the reference is used (how we enforce that second constraint is the subject of the next section).
+</Aside>
+
+## A natural corollary: read-only references follow Copy semantics
+
+Once we define this reference as an address without heap-cleanup responsibility, the model permits another behavior.
+
+Recall how we drew the line between Copy and Move in the previous section: because a heap block can have only one variable responsible for freeing it at any moment, assigning a value that **carries cleanup duty** must invalidate the old variable (Move); by contrast, stack bytes that **carry no heap-cleanup duty**—like an ordinary integer—can be copied bitwise so that both variables remain valid (Copy).
+
+Now look at our newly designed reference type `&String`:
+- On the stack, it holds an 8-byte address.
+- It **carries zero responsibility for freeing any heap resource**.
+
+Even if you copy `&s` bitwise a hundred times, when those hundred reference variables eventually go out of scope, each one merely discards its own 8-byte stack slot. Not one of them touches the heap, so a double free is impossible.
+
+In our model, **read-only references follow Copy semantics**: assigning or passing one copies the address without transferring cleanup responsibility. In Rust, shared references implement `Copy`; the absence of cleanup responsibility alone does not make every type `Copy`.
+
+Rewrite our opening pseudocode with references, and the parameter-passing dilemma vanishes:
+
+<small class="code-source">Pseudocode for reasoning</small>
+```text
+fn print_it(msg: &String) {   // ← receives a reference; takes on no cleanup duty
+    print(msg)
+}   // ← msg goes out of scope; only the 8-byte stack address is discarded
+
+{
+    s = alloc_heap("hello")
+    print_it(&s)   // ← pass only the address of s
+    r1 = &s        // ← copy the address (Copy semantics)
+    r2 = &s        // ← copy the address again; multiple read-only references coexist
+    print(s)       // ← s was never invalidated and works as usual
+}   // ← only s frees the heap resource once, right here at scope exit
+```
+
+<Aside type="note" title="Why restrict references to read-only here?">
+The reference `&T` we designed in this section only allows **reading** data through the address, not mutating it. Because everyone is only reading, any number of references can coexist without interfering with one another. Allowing mutation through a reference (such as appending characters to a string, which might reallocate the heap buffer and invalidate the old heap address) introduces a new conflict—how to design mutable references is a topic we will tackle in a later chapter.
+</Aside>
+
+## Is this model finally complete?
+
+Let's take stock of what our automatic reclamation model can do now that we have added reference types (`&T`):
+
+1. **Deterministic, single-point cleanup**: each heap resource is the responsibility of a single original variable (such as `s`) and is freed automatically when that variable goes out of scope—no GC, and no double frees.
+2. **Reading and sharing**: when code only needs to use data, it passes a reference `&s`. Because the reference carries no cleanup responsibility, functions can return without destroying the heap, and multiple read-only references can be copied.
+
+The model now supports sharing without double frees. But a reference does not control when the original variable releases its data.
+
+**What happens if that variable goes out of scope and frees the data while a reference in an outer scope is still in use?**
+
+Keep that question in mind as we head into the next section.

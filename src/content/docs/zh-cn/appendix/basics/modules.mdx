@@ -1,0 +1,66 @@
+---
+title: "模块、可见性（pub）与 Prelude 机制"
+description: 速查 Rust 的 mod 模块定义、pub 封装边界、use 路径引入，以及为什么 String、Vec、Option、Result 不需要手动 use 就能直接使用。
+sidebar:
+  label: "模块与 Prelude"
+  order: 4
+---
+
+import { Code } from '@astrojs/starlight/components';
+import modulesPub from '../../../../../../examples/appendix/basic-syntax/src/bin/modules-and-pub.rs?raw';
+
+:::note[阅读指引]
+- **定位**：基础速查。遇到主线示例里的写法时再翻，不必按顺序读完。
+- **关联主线**：第 4 章（数据封装）、第 5 章（Trait 作用域与标准库类型）
+- **核心解决**：Rust 里的 `mod`、`pub` 和 `use` 怎么配合？为什么结构体是 `pub` 的，里面的字段却还是访问不了？为什么 `HashMap` 必须写 `use std::collections::HashMap;`，而 `String`、`Vec`、`Option`、`Result` 却从来不用写 `use`？
+:::
+
+当你阅读包含多个模块的代码，或者疑惑某些标准库类型从哪里来时，只需要掌握下面两条关于代码组织与可见性的基础规则。
+
+## 一、`mod`、`pub` 与 `use`：默认私有的模块边界
+
+在 Java 或 C++ 中，可见性（`public` / `private`）是以**类（`class`）**为单位划分的；而在 Rust 中，封装的边界是**模块（Module，用 `mod` 定义）**，并且遵守一条铁律：**模块内部的所有条目（函数、结构体、结构体里的字段、模块），默认对外部模块一律是私有的（Private）**，只有显式加上 `pub` 关键字才能被模块外部访问。
+
+<small class="code-source">源文件：<code>examples/appendix/basic-syntax/src/bin/modules-and-pub.rs</code></small>
+<Code code={modulesPub} lang="rust" />
+
+运行程序，输出 `id=1 ok=true`。
+
+仔细看这段代码里的三个关键细节：
+
+1. **结构体是 `pub`，不代表它的字段自动是 `pub`**：
+   在 `mod auth` 里，虽然我们写了 `pub struct Token`，但这只允许模块外部知道 `Token` 这个类型的存在。它内部的字段默认依然是私有的：`pub id: u32` 加了 `pub`，所以在 `main` 里可以直接读 `t.id`；而 `secret: u32` 没有加 `pub`，一旦取消第 25 行 `println!("{}", t.secret);` 的注释，编译器就会报 `error[E0616]: field secret of struct Token is private`。
+   **工程后果**：因为模块外部无法直接读写私有字段 `secret`，外部代码也**无法直接使用 `Token { id: 1, secret: 999 }` 字面量来构造它**，必须调用模块公开提供的构造函数 `Token::new(1, 999)`。这样仅靠字段可见性就完成了安全封装。
+2. **注意区分 `enum` 的可见性**：
+   与 `struct` 不同，只要你在枚举前写上 `pub enum Status`，**它内部的所有枚举变体自动全部公开**，不需要（也不允许）在每个变体前再单独写 `pub`。因为枚举本就是要让外部匹配它是哪一种变体的。
+3. **`use` 只是把长路径引入当前作用域创建快捷方式**：
+   原本在 `main` 里需要使用完整路径 `auth::Token::new(...)`；写上 `use auth::Token;` 之后，就可以直接简写为 `Token::new(...)`。
+
+---
+
+## 二、为什么 `String` 和 `Option` 不用写 `use`？（Prelude 机制）
+
+在写 Rust 代码时，如果你要用哈希表，必须在文件开头写一行 `use std::collections::HashMap;`；[标量那一节](/appendix/basics/scalars-and-tuples/)测类型大小时，也写了 `use std::mem::size_of;`。
+
+但你可能会奇怪：**像 `String`、`Vec<T>`、`Box<T>`、`Option<T>`（以及它的变体 `Some` / `None`）、`Result<T, E>`（以及 `Ok` / `Err`），还有 `Copy`、`Clone`、`Drop` 这些天天在用的东西，它们明明也全都是标准库里定义的类型和 Trait，并不是语言关键字，为什么我们从来不需要写 `use` 就能直接用？**
+
+原因在于 Rust 标准库的 **Prelude（预导入模块）** 机制。
+
+因为这些核心类型和 Trait 在几乎每一个 Rust 文件里都会用到，如果每次都要手写十几行 `use std::string::String; use std::option::Option; ...` 会极其繁琐。于是，Rust 编译器在编译你的每一个模块时，都会在后台**自动为你隐式插入一行导入语句**：
+
+```rust
+use std::prelude::rust_2024::*; // （具体版本号随 Cargo.toml 的 edition 而定）
+```
+
+这行隐式导入把最核心的一小批标准库符号直接带进了每个文件的作用域里。提前认识这份预导入清单里最常出场的成员，你在主线章节里看到它们时就不会疑惑它们从何而来：
+
+| 预导入类别 | 自动可用的名字（无需手写 `use`） | 在主线哪一章详解 |
+| --- | --- | --- |
+| **常用堆容器与智能指针** | `String`、`Vec<T>`、`Box<T>` | 第 1～3 章、第 7 章 |
+| **可选值与错误处理枚举** | `Option<T>`（及直接可用的变体 `Some`、`None`）<br/>`Result<T, E>`（及直接可用的变体 `Ok`、`Err`） | 第 4 章（4.3、4.4） |
+| **复制、释放与大小约束 Trait** | `Copy`、`Clone`、`Drop`、`Sized` | 第 1～3 章、第 5 章 |
+| **引用转换与类型转换 Trait** | `Deref`、`AsRef`、`From`、`Into`、`TryFrom`、`TryInto` | 第 5 章、第 7 章 |
+| **迭代与闭包调用 Trait** | `Iterator`、`IntoIterator`、`Fn`、`FnMut`、`FnOnce` | 第 6 章（6.1、6.2） |
+| **并发安全标记 Trait** | `Send`、`Sync` | 第 8 章（8.3） |
+
+这印证了主线第 5 章将要揭示的一个重要事实：**Rust 的语言内核非常小。** 连 `String`、`Option`、`Result`、`Box` 甚至 `Drop` 都是写在标准库里的普通类型或 Trait，只是通过 Prelude 默认摆在了你的手边。

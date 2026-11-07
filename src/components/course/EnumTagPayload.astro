@@ -1,0 +1,191 @@
+---
+/**
+ * 6.1「标签加共享载荷区」。
+ * 上方 BadRole：四个字段并排，对齐后各占 8 字节，共 32 字节。
+ * 下方 Role：标签 8 字节加共享载荷 16 字节，三个变体都是这固定的 24 字节。
+ * 样式见 src/styles/diagrams.css。
+ */
+import { CURRENT } from '../../config/site';
+
+const isEn = CURRENT.code === 'en';
+const t = isEn
+	? {
+			caption:
+				'BadRole lays role_tag, vip_points, dept_id, and security_key out side by side in one struct; once role_tag\'s u8 is padded to eight bytes, the total is 32 bytes. Role pads a one-byte tag out to eight bytes and keeps a 16-byte shared payload sized to the largest variant, Admin. Guest, Member, and Admin each occupy that fixed 24 bytes.',
+			title: 'A struct stores every field; an enum shares one payload',
+			desc: 'The upper panel is the struct BadRole, a product type, 32 bytes. Four equal slots sit side by side. role_tag is a u8 plus seven bytes of alignment padding, eight bytes in all. vip_points, dept_id, and security_key are each a u64, eight bytes. The lower panel is the enum Role, a sum type, fixed at 24 bytes by its largest variant, Admin. The column header labels the tag as one byte plus seven bytes of alignment, eight bytes, and the shared payload as 16 bytes. Three rows use that same footprint. r1 is Role::Guest: tag 0, and the 16-byte payload is unused. r2 is Role::Member(500): tag 1, vip_points 500 in the first eight bytes, and the remaining eight bytes unused. r3 is Role::Admin with dept_id 1 and security_key 9999: tag 2, and both payload slots are filled.',
+			total32: '32B',
+			structLine: 'struct · Product Type · four fields side by side',
+			total24: 'fixed 24B',
+			enumLine: 'enum · Sum Type · fixed by the largest variant',
+			tagHead: 'Tag · 8B',
+			tagNote: '1B + 7B align',
+			payloadHead: 'shared payload · 16B',
+			payloadNote: 'largest variant · Admin',
+			tagCell: 'Tag · 8B',
+			unused: 'unused',
+			kindNote: 'u8 · +7B align',
+			rowBytes: '24B',
+		}
+	: {
+			caption:
+				'BadRole 把 role_tag、vip_points、dept_id、security_key 并排在同一个结构体里，role_tag 的 u8 对齐到 8 字节后一共 32 字节。Role 把 1 字节标签对齐到 8 字节，再按最大变体 Admin 留出 16 字节共享载荷；Guest、Member、Admin 三个值都占这固定的 24 字节。',
+			title: '结构体并排全部字段，枚举共用一块载荷区',
+			desc: '上方面板是结构体 BadRole，积类型，共 32 字节。四个等宽槽位并排：role_tag 是 u8，加 7 字节对齐填充，占 8 字节；vip_points、dept_id、security_key 各是一个 u64，各占 8 字节。下方面板是枚举 Role，和类型，固定 24 字节，由最大变体 Admin 决定。列头标明标签为 1 字节加 7 字节对齐，共 8 字节，共享载荷区为 16 字节。下面三行占用同一块 24 字节。r1 是 Role::Guest，标签为 0，16 字节载荷全部闲置。r2 是 Role::Member(500)，标签为 1，前 8 字节是 500: u64，后 8 字节闲置。r3 是 Role::Admin，标签为 2，载荷两格分别是 dept_id: 1 与 security_key: 9999。',
+			total32: '共 32B',
+			structLine: 'struct · 积类型 · 四个字段并排',
+			total24: '固定 24B',
+			enumLine: 'enum · 和类型 · 由最大变体决定大小',
+			tagHead: '标签 · 8B',
+			tagNote: '1B + 7B 对齐',
+			payloadHead: '共享载荷区 · 16B',
+			payloadNote: '最大变体 · Admin',
+			tagCell: '标签 · 8B',
+			unused: '闲置',
+			kindNote: 'u8 · +7B 对齐',
+			rowBytes: '24B',
+		};
+
+const x0 = 20;
+const unit = 144;
+const gap = 8;
+const xs = [0, 1, 2, 3].map((i) => x0 + i * (unit + gap));
+const payloadW = unit * 2 + gap;
+const slotH = 80;
+
+const fields = [
+	{ name: 'role_tag', note: t.kindNote },
+	{ name: 'vip_points', note: 'u64' },
+	{ name: 'dept_id', note: 'u64' },
+	{ name: 'security_key', note: 'u64' },
+];
+
+const rows = [
+	{
+		label: 384,
+		slot: 402,
+		code: 'r1 = Role::Guest',
+		tag: '0',
+		cells: [{ x: xs[1], w: payloadW, text: t.unused, sub: '16B', freed: true }],
+	},
+	{
+		label: 508,
+		slot: 526,
+		code: 'r2 = Role::Member(500)',
+		tag: '1',
+		cells: [
+			{ x: xs[1], w: unit, text: '500: u64', sub: '8B', freed: false },
+			{ x: xs[2], w: unit, text: t.unused, sub: '8B', freed: true },
+		],
+	},
+	{
+		label: 632,
+		slot: 650,
+		code: 'r3 = Role::Admin { dept_id: 1, security_key: 9999 }',
+		tag: '2',
+		cells: [
+			{ x: xs[1], w: unit, text: 'dept_id: 1', sub: '8B', freed: false },
+			{ x: xs[2], w: unit, text: 'security_key: 9999', sub: '8B', freed: false },
+		],
+	},
+];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 762" role="img" aria-labelledby="etp-title etp-desc">
+		<title id="etp-title">{t.title}</title>
+		<desc id="etp-desc">{t.desc}</desc>
+
+		<rect class="panel" x="8" y="12" width="624" height="188" rx="12"></rect>
+		<text class="code" x="20" y="40">BadRole</text>
+		<text class="edge-label" x="620" y="40" text-anchor="end">{t.total32}</text>
+		<text class="edge-sub" x="20" y="64">{t.structLine}</text>
+
+		{
+			fields.map((field, i) => (
+				<g>
+					<rect class="slot" x={xs[i]} y="80" width={unit} height="100" rx="8"></rect>
+					<text class="code" x={xs[i] + unit / 2} y="108" text-anchor="middle">
+						{field.name}
+					</text>
+					<text class="edge-sub" x={xs[i] + unit / 2} y="132" text-anchor="middle">
+						{field.note}
+					</text>
+					<text class="edge-label" x={xs[i] + unit / 2} y="158" text-anchor="middle">
+						8B
+					</text>
+				</g>
+			))
+		}
+
+		<rect class="panel" x="8" y="216" width="624" height="534" rx="12"></rect>
+		<text class="code" x="20" y="244">Role</text>
+		<text class="edge-label" x="620" y="244" text-anchor="end">{t.total24}</text>
+		<text class="edge-sub" x="20" y="268">{t.enumLine}</text>
+
+		<rect class="panel" x={xs[0]} y="288" width={unit} height="68" rx="8"></rect>
+		<text class="edge-label" x={xs[0] + unit / 2} y="314" text-anchor="middle">
+			{t.tagHead}
+		</text>
+		<text class="edge-sub" x={xs[0] + unit / 2} y="338" text-anchor="middle">
+			{t.tagNote}
+		</text>
+
+		<rect class="panel" x={xs[1]} y="288" width={payloadW} height="68" rx="8"></rect>
+		<text class="edge-label" x={xs[1] + payloadW / 2} y="314" text-anchor="middle">
+			{t.payloadHead}
+		</text>
+		<text class="edge-sub" x={xs[1] + payloadW / 2} y="338" text-anchor="middle">
+			{t.payloadNote}
+		</text>
+
+		{
+			rows.map((row) => (
+				<g>
+					<text class="code" x="20" y={row.label}>
+						{row.code}
+					</text>
+					<text class="edge-label" x="484" y={row.slot + 32}>
+						{t.rowBytes}
+					</text>
+					<rect class="slot" x={xs[0]} y={row.slot} width={unit} height={slotH} rx="8"></rect>
+					<text class="name" x={xs[0] + unit / 2} y={row.slot + 32} text-anchor="middle">
+						{row.tag}
+					</text>
+					<text class="edge-sub" x={xs[0] + unit / 2} y={row.slot + 58} text-anchor="middle">
+						{t.tagCell}
+					</text>
+					{row.cells.map((cell) => (
+						<g>
+							<rect
+								class={cell.freed ? 'freed' : 'slot'}
+								x={cell.x}
+								y={row.slot}
+								width={cell.w}
+								height={slotH}
+								rx="8"
+							></rect>
+							<text
+								class={cell.freed ? 'label' : 'code'}
+								x={cell.x + cell.w / 2}
+								y={row.slot + 32}
+								text-anchor="middle"
+							>
+								{cell.text}
+							</text>
+							<text
+								class="edge-label"
+								x={cell.x + cell.w / 2}
+								y={row.slot + 58}
+								text-anchor="middle"
+							>
+								{cell.sub}
+							</text>
+						</g>
+					))}
+				</g>
+			))
+		}
+	</svg>
+</figure>

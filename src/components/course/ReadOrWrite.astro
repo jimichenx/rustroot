@@ -1,0 +1,211 @@
+---
+/**
+ * 1.6 的两张示意图。
+ * grow：Vec 扩容后指向新的一块数据，elem 仍指向已经释放的旧数据。
+ * exclusive：只读引用可以有多份；独占引用只能有一份。
+ * 样式见 src/styles/diagrams.css。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	part: 'grow' | 'exclusive';
+}
+
+const { part } = Astro.props;
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			growCaption:
+				'elem and Vec point at the same data. After Vec grows, it points at a new block. The old block is freed, and elem still points at it.',
+			growTitle: 'Growing a Vec frees the block a reference still aims at',
+			growDesc:
+				'Two states. Before the write, Vec and elem both have arrows to one block of data. After the write, Vec has an arrow to a new block. The old block is freed, and a dashed arrow still runs from elem to it.',
+			before: 'before the write',
+			afterGrow: 'after it grows',
+			stack: 'stack',
+			heap: 'heap',
+			addr: 'address',
+			ref: 'reference',
+			data: 'data',
+			fresh: 'new data',
+			old: 'old data',
+			shareCaption:
+				'Several read-only references may point at the same data. An exclusive reference is the only one, and no other reference sits beside it.',
+			shareTitle: 'Shared references may overlap. An exclusive reference may not.',
+			shareDesc:
+				'Two panels. The left panel has two read-only references, and both arrows run to one block of data. The right panel has a single exclusive reference, and one arrow runs to the data.',
+			shared: 'read-only, several allowed',
+			alone: 'exclusive, only one',
+			dataShort: 'data',
+		}
+	: {
+			growCaption: 'elem 和 Vec 指向同一块数据。Vec 扩容后指向新的一块，旧的被释放，elem 仍指向旧的。',
+			growTitle: 'Vec 扩容之后，引用还指着被释放的旧数据',
+			growDesc:
+				'两种状态。写入之前，Vec 和 elem 都有箭头指向同一块数据。写入并扩容之后，Vec 的箭头指向新的一块数据。旧的那块被释放，elem 仍有一条虚线箭头指向它。',
+			before: '写入之前',
+			afterGrow: '扩容之后',
+			stack: '栈',
+			heap: '堆',
+			addr: '地址',
+			ref: '引用',
+			data: '数据',
+			fresh: '新数据',
+			old: '旧数据',
+			shareCaption: '只读引用可以有多份，一起指向同一块数据。独占引用只能有一份，旁边不能再有别的引用。',
+			shareTitle: '只读可以重叠，独占不能旁边再有引用',
+			shareDesc:
+				'两块面板。左边有两份只读引用，两支箭头都指向同一块数据。右边只有一份独占引用，一支箭头指向数据。',
+			shared: '只读，可以有多份',
+			alone: '独占，只能有一份',
+			dataShort: '数据',
+		};
+---
+
+{
+	part === 'grow' && (
+		<figure class="diagram">
+			<figcaption>{t.growCaption}</figcaption>
+			<svg viewBox="0 0 640 500" role="img" aria-labelledby="rw-grow-title rw-grow-desc">
+				<title id="rw-grow-title">{t.growTitle}</title>
+				<desc id="rw-grow-desc">{t.growDesc}</desc>
+
+				<text class="label" x="20" y="28">
+					{t.before}
+				</text>
+				<rect class="panel" x="16" y="40" width="280" height="210" rx="12"></rect>
+				<text class="label" x="36" y="64">
+					{t.stack}
+				</text>
+				<text class="name" x="36" y="96">
+					Vec
+				</text>
+				<rect class="slot" x="36" y="104" width="220" height="40" rx="8"></rect>
+				<text class="name" x="146" y="130" text-anchor="middle">
+					{t.addr}
+				</text>
+				<text class="name" x="36" y="164">
+					elem
+				</text>
+				<rect class="slot" x="36" y="172" width="220" height="40" rx="8"></rect>
+				<text class="name" x="146" y="198" text-anchor="middle">
+					{t.ref}
+				</text>
+
+				<rect class="panel" x="344" y="40" width="280" height="210" rx="12"></rect>
+				<text class="label" x="364" y="64">
+					{t.heap}
+				</text>
+				<rect class="object" x="384" y="108" width="200" height="100" rx="10"></rect>
+				<text class="name" x="484" y="164" text-anchor="middle">
+					{t.data}
+				</text>
+				<path class="arrow" d="M256 124 H384" marker-end="url(#rw-grow-head)"></path>
+				<path class="arrow" d="M256 192 H384" marker-end="url(#rw-grow-head)"></path>
+
+				<text class="label" x="20" y="278">
+					{t.afterGrow}
+				</text>
+				<rect class="panel" x="16" y="290" width="280" height="194" rx="12"></rect>
+				<text class="label" x="36" y="314">
+					{t.stack}
+				</text>
+				<text class="name" x="36" y="342">
+					Vec
+				</text>
+				<rect class="slot" x="36" y="350" width="220" height="40" rx="8"></rect>
+				<text class="name" x="146" y="376" text-anchor="middle">
+					{t.addr}
+				</text>
+				<text class="name" x="36" y="406">
+					elem
+				</text>
+				<rect class="slot" x="36" y="414" width="220" height="40" rx="8"></rect>
+				<text class="name" x="146" y="440" text-anchor="middle">
+					{t.ref}
+				</text>
+
+				<rect class="panel" x="344" y="290" width="280" height="194" rx="12"></rect>
+				<text class="label" x="364" y="314">
+					{t.heap}
+				</text>
+				<rect class="object" x="384" y="338" width="200" height="52" rx="10"></rect>
+				<text class="name" x="484" y="370" text-anchor="middle">
+					{t.fresh}
+				</text>
+				<rect class="freed" x="384" y="404" width="200" height="52" rx="10"></rect>
+				<text class="label" x="484" y="436" text-anchor="middle">
+					{t.old}
+				</text>
+				<path class="arrow" d="M256 370 H384" marker-end="url(#rw-grow-head-2)"></path>
+				<path class="arrow danger" d="M256 434 H384" marker-end="url(#rw-grow-danger)"></path>
+
+				<defs>
+					<marker id="rw-grow-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+						<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+					</marker>
+					<marker id="rw-grow-head-2" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+						<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+					</marker>
+					<marker id="rw-grow-danger" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+						<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line-muted)"></path>
+					</marker>
+				</defs>
+			</svg>
+		</figure>
+	)
+}
+
+{
+	part === 'exclusive' && (
+		<figure class="diagram">
+			<figcaption>{t.shareCaption}</figcaption>
+			<svg viewBox="0 0 640 230" role="img" aria-labelledby="rw-share-title rw-share-desc">
+				<title id="rw-share-title">{t.shareTitle}</title>
+				<desc id="rw-share-desc">{t.shareDesc}</desc>
+
+				<rect class="panel" x="16" y="16" width="296" height="198" rx="12"></rect>
+				<text class="label" x="32" y="42">
+					{t.shared}
+				</text>
+				<rect class="slot" x="32" y="64" width="88" height="40" rx="8"></rect>
+				<text class="name" x="76" y="90" text-anchor="middle">
+					&amp;
+				</text>
+				<rect class="slot" x="32" y="118" width="88" height="40" rx="8"></rect>
+				<text class="name" x="76" y="144" text-anchor="middle">
+					&amp;
+				</text>
+				<rect class="object" x="176" y="78" width="112" height="80" rx="10"></rect>
+				<text class="name" x="232" y="124" text-anchor="middle">
+					{t.dataShort}
+				</text>
+				<path class="arrow" d="M120 84 H176" marker-end="url(#rw-share-head)"></path>
+				<path class="arrow" d="M120 138 H176" marker-end="url(#rw-share-head)"></path>
+
+				<rect class="panel" x="328" y="16" width="296" height="198" rx="12"></rect>
+				<text class="label" x="344" y="42">
+					{t.alone}
+				</text>
+				<rect class="slot" x="348" y="92" width="88" height="44" rx="8"></rect>
+				<text class="name" x="392" y="120" text-anchor="middle">
+					&amp;mut
+				</text>
+				<rect class="object" x="492" y="82" width="112" height="64" rx="10"></rect>
+				<text class="name" x="548" y="120" text-anchor="middle">
+					{t.dataShort}
+				</text>
+				<path class="arrow" d="M436 114 H492" marker-end="url(#rw-share-head-2)"></path>
+
+				<defs>
+					<marker id="rw-share-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+						<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+					</marker>
+					<marker id="rw-share-head-2" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+						<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+					</marker>
+				</defs>
+			</svg>
+		</figure>
+	)
+}

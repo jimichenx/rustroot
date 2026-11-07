@@ -1,0 +1,90 @@
+---
+/** 1.1 的两张示意图。文字跟正文走，图只负责把两个名字和一块内存的关系画出来。样式见 src/styles/diagrams.css。 */
+import { SITE_LOCALE } from '../../config/site';
+
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			shareCaption: 'Garbage-collected languages: assignment copies the address, so two names point at one block of memory.',
+			shareTitle: 'Two names share one block of memory',
+			shareDesc: 'The names a and b each hold an address; both arrows point at the same object. Reclamation happens later, when the runtime scans for names still pointing at it.',
+			freeCaption: 'C and C++ pointers: the free happens on the line you wrote. The other name still holds the old address.',
+			freeTitle: 'Freeing is left to the programmer',
+			freeDesc: 'After the name a frees the object, that block is marked freed. The name b still holds the original address.',
+			names: 'names',
+			objectLabel: 'object',
+			sameMemory: 'same memory',
+			aFrees: 'a frees',
+			bPoints: 'b still points',
+			returnedMemory: 'memory already returned',
+			freed: 'freed',
+		}
+	: {
+			shareCaption: '垃圾回收的语言：赋值再抄一份地址，两个名字指向同一块内存。',
+			shareTitle: '两个名字共享一块内存',
+			shareDesc: '名字 a 和名字 b 各放一个地址，箭头都指向同一个对象。回收发生在以后，由运行时扫描还有没有名字指向它。',
+			freeCaption: 'C 和 C++ 的指针：释放由你写的那一行执行。另一个名字里的地址还在。',
+			freeTitle: '释放交给人',
+			freeDesc: '名字 a 执行释放之后，那个对象标记为已释放。名字 b 仍然保存着原来的地址。',
+			names: '名字',
+			objectLabel: '对象',
+			sameMemory: '同一块内存',
+			aFrees: 'a 释放',
+			bPoints: 'b 仍指着',
+			returnedMemory: '已经还回去的内存',
+			freed: '已释放',
+		};
+---
+
+<figure class="diagram">
+	<figcaption>{t.shareCaption}</figcaption>
+	<svg viewBox="0 0 640 200" role="img" aria-labelledby="share-title share-desc">
+		<title id="share-title">{t.shareTitle}</title>
+		<desc id="share-desc">{t.shareDesc}</desc>
+		<rect class="panel" x="16" y="16" width="250" height="168" rx="12"></rect>
+		<text class="label" x="36" y="44">{t.names}</text>
+		<rect class="slot" x="36" y="64" width="88" height="44" rx="8"></rect>
+		<text class="name" x="80" y="92" text-anchor="middle">a</text>
+		<rect class="slot" x="36" y="122" width="88" height="44" rx="8"></rect>
+		<text class="name" x="80" y="150" text-anchor="middle">b</text>
+		<path class="arrow" d="M124 86 H360" marker-end="url(#head)"></path>
+		<path class="arrow" d="M124 144 H188 V110 H360" marker-end="url(#head)"></path>
+		<defs>
+			<marker id="head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+		<rect class="panel" x="300" y="16" width="324" height="168" rx="12"></rect>
+		<text class="label" x="320" y="44">{t.objectLabel}</text>
+		<rect class="object" x="360" y="78" width="200" height="72" rx="10"></rect>
+		<text class="name" x="460" y="120" text-anchor="middle">{t.sameMemory}</text>
+	</svg>
+</figure>
+
+<figure class="diagram">
+	<figcaption>{t.freeCaption}</figcaption>
+	<svg viewBox="0 0 640 200" role="img" aria-labelledby="free-title free-desc">
+		<title id="free-title">{t.freeTitle}</title>
+		<desc id="free-desc">{t.freeDesc}</desc>
+		<rect class="panel" x="16" y="16" width="250" height="168" rx="12"></rect>
+		<text class="label" x="36" y="44">{t.names}</text>
+		<rect class="slot" x="36" y="64" width="120" height="44" rx="8"></rect>
+		<text class="name" x="96" y="92" text-anchor="middle">{t.aFrees}</text>
+		<rect class="slot" x="36" y="122" width="120" height="44" rx="8"></rect>
+		<text class="name" x="96" y="150" text-anchor="middle">{t.bPoints}</text>
+		<path class="arrow" d="M156 86 H360" marker-end="url(#head-free)"></path>
+		<path class="arrow danger" d="M156 144 H200 V110 H360" marker-end="url(#head-free-dim)"></path>
+		<defs>
+			<marker id="head-free" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+			<marker id="head-free-dim" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line-muted)"></path>
+			</marker>
+		</defs>
+		<rect class="panel" x="300" y="16" width="324" height="168" rx="12"></rect>
+		<text class="label" x="320" y="44">{t.returnedMemory}</text>
+		<rect class="freed" x="360" y="78" width="200" height="72" rx="10"></rect>
+		<text class="name" x="460" y="120" text-anchor="middle">{t.freed}</text>
+	</svg>
+</figure>

@@ -1,0 +1,171 @@
+---
+title: "Shadowing and scope: why same-named variables can coexist"
+description: Contrast reassignment with repeating let (shadowing), verify through a reference experiment that a shadowed variable is not dropped in place, and complete the chapter review.
+sidebar:
+  label: Shadowing and scope
+  order: 3
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import ShadowCoexist from '../../../../../../components/course/ShadowCoexist.astro';
+import shadow from '../../../../../../../examples/memory/variables/src/bin/shadow.rs?raw';
+import nested from '../../../../../../../examples/memory/variables/src/bin/nested-shadow.rs?raw';
+import reference from '../../../../../../../examples/memory/variables/src/bin/shadow-reference.rs?raw';
+import move from '../../../../../../../examples/memory/variables/src/bin/shadow-move.rs?raw';
+import review from '../../../../../../../examples/memory/variables/src/bin/review.rs?raw';
+
+
+The previous section established two rules: reassigning an already-initialized variable without `let` (`n = n + 1;`) requires `mut` at declaration time (or fails with `E0384`) and never allows turning an integer variable into a `String` (or fails with `E0308`).
+
+In the program below, however, the variable name `n` appears three times without a single `mut`, computes `n + 1`, and finally turns `n` into a `String`—yet the compiler accepts it without complaint:
+
+<small class="code-source">Source: <code>examples/memory/variables/src/bin/shadow.rs</code></small>
+<Code code={shadow} lang="rust" />
+
+Running it prints `8` and then `eight`. Why do both restrictions from the previous section disappear as soon as we put `let` in front? More importantly, since reassignment drops the old value in place, does writing a second `let` also drop the old variable's heap memory on the spot?
+
+## Reassignment vs. shadowing
+
+A single fact explains the difference: **every `let` creates a brand-new variable on the stack.**
+
+Trace `shadow.rs` line by line:
+
+1. `let n = 7;`: creates **the first variable** on the stack (type `i32`, value `7`) and binds the name `n` to it.
+2. `let n = n + 1;`: the right-hand side first reads the first variable currently bound to `n` (getting `7`) and computes `8`; the `let` on the left then creates **a second variable** on the stack (holding `8`) and rebinds the name `n` to this second variable.
+3. `let n = String::from("eight");`: the `let` on the left creates **a third variable** on the stack. Because it is a brand-new variable, its type is determined independently as `String`—the 4-byte integer variable from earlier never changed its type at runtime.
+
+In Rust, declaring a new variable with the same name via `let`—so that subsequent uses of that name resolve to the new variable and can no longer access the old one directly by name—is called **shadowing**.
+
+Placing reassignment and shadowing side by side makes the boundary clear:
+
+| Dimension | Reassignment (`n = n + 1;`) | Shadowing (`let n = n + 1;`) |
+| --- | --- | --- |
+| **Which variable is operated on** | The same existing variable | **Creates a brand-new variable** and rebinds the name to it |
+| **Does the original variable need `mut`?** | **Yes** (otherwise `E0384`) | **No** (the original variable is not being modified) |
+| **Can the type change?** | **No**; the new value must match the existing variable's type | **Yes**; the new variable's type is inferred independently |
+
+<Aside type="note" title="Why does Rust support shadowing?">
+Languages like Java forbid declaring a second local variable with the same name in overlapping method scopes, so shadowing can look unusual at first. In everyday Rust, it solves two practical engineering problems:
+
+1. **Transforming values or types without inventing throwaway names**: suppose you read a configuration string and immediately parse it into a port number. Without shadowing, you have to invent names like `port_str` and `port_num`, leaving `port_str` exposed to accidental use later; with shadowing, writing `let port = ...;` twice keeps the clearest name while hiding the unparsed string.
+2. **Freezing mutability after initialization**: when a variable needs mutation only during setup (`let mut s`) and should be read-only afterward, a single line `let s = s;` rebinds the name `s` as immutable without copying the heap buffer.
+</Aside>
+
+### Shadowing inside a block scope
+
+Since shadowing rebinds a name within the current scope, what happens when the second `let n` sits inside an inner `{}` block?
+
+<small class="code-source">Source: <code>examples/memory/variables/src/bin/nested-shadow.rs</code></small>
+<Code code={nested} lang="rust" />
+
+Running the program prints `8` and then `7`.
+
+A **scope** determines the region of source code in which a binding is accessible. The inner `let n = n + 1;` creates a new variable that belongs only to the inner block:
+- Inside the inner `{}`, the name `n` resolves to the inner variable (`8`), temporarily shadowing the outer `n`.
+- Once execution passes the inner `}`, the inner variable goes out of scope and the shadowing ends—the outer `n` was never modified, so printing `n` in the outer scope still reads `7`.
+
+---
+
+## When is a shadowed value freed?
+
+Now we can answer the central physical question of this section.
+
+In the previous section's reassignment `target = source;`, because the new value overwrote `target`'s stack slot, the `"old"` heap buffer previously held by `target` was **dropped on the spot** at the `=` line.
+
+What about shadowing? Suppose we write `let s = String::from("hello");` and immediately write `let s = 7;` in the same scope. Now the original string variable is shadowed and can no longer be accessed through the name `s`. **Is the `"hello"` heap buffer held by that old string variable dropped right at `let s = 7;`?**
+
+Instead of guessing, we can test it directly with a **shared reference (`&T`)**: before the first `s` is shadowed, record its address in a reference `r = &s`; after `let s = 7;` shadows `s`, read through `r`.
+
+Think about what must happen: if the old `String` were dropped at `let s = 7;`, then `r` would immediately become a dangling reference pointing at freed memory, and the borrow checker would reject the program. Let's see what the compiler does:
+
+<small class="code-source">Source: <code>examples/memory/variables/src/bin/shadow-reference.rs</code></small>
+<Code code={reference} lang="rust" />
+
+The program compiles cleanly and prints `hello 7`.
+
+<ShadowCoexist />
+
+This experiment confirms the physical reality of shadowing on the stack and the heap:
+
+1. **Shadowing neither invalidates the old variable nor drops the old value in place.**
+2. After `let s = String::from("hello");` and `let s = 7;`, **two distinct variables coexist on the current stack frame**: the old variable `s` (`String`) remains on the stack holding the three-word header for `"hello"`, while the new variable `s` (`i32`) occupies a fresh 4-byte integer slot.
+3. All `let s = 7;` changes is that subsequent occurrences of the name `s` in source code resolve to the new variable. Because the old variable has neither been invalidated nor left its scope, the reference `r` created earlier can still read `"hello"` through its address; the heap buffer held by the old variable follows the baseline rule from Chapter 1 and **is freed only when `main` closes at `}`**.
+
+(This also illustrates a detail from Section 5 of Chapter 1: the borrow checker computes the valid span of `r` up to its last use at `println!`, whereas the old variable frees its heap memory later at the closing `}`. Because the reference's use span stays inside the owner's live span, compilation succeeds.)
+
+### When shadowing meets a Move: `let s = s;`
+
+What if the right-hand side of a shadowing statement uses the shadowed variable itself? Look at these three lines:
+
+<small class="code-source">Source: <code>examples/memory/variables/src/bin/shadow-move.rs</code></small>
+<Code code={move} lang="rust" />
+
+At `let s = s;`, **shadowing** and a **Move** happen together:
+- The `s` on the right reads the old variable; because `String` does not implement `Copy`, its control header and cleanup duty **move** into the new variable `s` created by `let` on the left.
+- Here the old variable does become invalid—not because the left-hand side wrote a same-named `let`, but because the right-hand side performed a **Move**. When `main` closes at `}`, only the new variable `s` frees `"hello"` once.
+
+---
+
+## Chapter summary and comprehensive review
+
+Across these three sections, you now have **three yardsticks** for checking variable validity and drop timing on any line of Rust code that uses `let` or `=`:
+
+| Syntax form | Underlying action | Effect on the old variable and heap memory |
+| --- | --- | --- |
+| **Initial binding** (`let b = a;`) | Creates a new variable to take an initial value | Bitwise copy if `Copy`; **Move** if not `Copy` (old variable invalidated, duty transferred); **borrow** if prefixed with `&` (duty stays put) |
+| **Reassignment** (`x = new_val;`) | Updates the same existing variable (requires `let mut`, cannot change type) | If `x` holds an active Move value, **drops the old value at the `=` line** before taking the new one; if already moved out or uninitialized, takes the new value directly |
+| **Shadowing** (repeating `let x = ...;`) | Creates a new variable with the same name and rebinds subsequent uses of the name (no `mut` needed, can change type) | **Does not drop the old variable in place**; old and new variables coexist on the stack frame, and the old value is freed at its scope exit `}` (unless moved by the right-hand side) |
+
+### Comprehensive review
+
+Before running the program below, trace it line by line using the three yardsticks above:
+
+<small class="code-source">Source: <code>examples/memory/variables/src/bin/review.rs</code></small>
+<Code code={review} lang="rust" />
+
+Answer three review questions:
+
+1. What do the three `println!` calls print?
+2. Is the heap string `"second"` freed when the inner block closes (`}`), or dropped in place when `s = t;` runs afterward?
+3. When `main` finishes and exits at `}`, which variable is responsible for freeing `"first"`?
+
+<details>
+<summary>Click to check the line-by-line trace</summary>
+
+1. **Printed output**: `second`, then `7 first`, then `first`.
+2. **First four statements in outer scope (Move and refilling a vacated variable)**:
+   - `let mut s = String::from("first");`: outer `s` holds `"first"`.
+   - `let t = s;`: **moves** `"first"` into `t`; `t` is now responsible for freeing `"first"`, and outer `s` becomes vacated (moved-from).
+   - `s = String::from("second");`: assigns a new value into the vacated outer `s` (Case 2: old value already moved out, no drop triggered); outer `s` becomes valid again and takes cleanup duty for `"second"`. The first `println!` prints `second`.
+3. **Inner `{}` block (borrowing and shadowing)**:
+   - `let r = &t;`: borrows `t` (which holds `"first"`).
+   - `let s = 7;`: creates a brand-new integer variable `s` inside the inner block, **shadowing** the outer string variable `s`. The second `println!` prints the inner `s` (`7`) and the reference `r` (`first`).
+   - Inner `}` closes: only the inner integer `s` and the reference `r` exit scope. Because the outer string variable `s` belongs to the outer scope, **`"second"` is not freed at the inner `}`**.
+4. **Final three statements in outer scope (in-place drop and same-name Move)**:
+   - `s = t;`: outer `s` is currently holding the active value `"second"` (Case 1: reassigning an active value). Therefore, **`"second"` is dropped in place right at `s = t;`**, while `"first"` moves out of `t` into outer `s` (`t` becomes invalid).
+   - `let s = s;`: creates a new variable `s` with the same name and **moves** `"first"` from the old outer `s` into this new `s`.
+   - At the closing `}` of `main`, **the new variable `s`** created by `let s = s;` frees `"first"`; both `t` and the old outer `s` were already moved from and do nothing.
+
+</details>
+
+### Hands-on modification
+
+After checking your trace, make one small edit in `review.rs`: inside the inner block, change `let s = 7;` to `s = String::from("third");` (without `let`), leaving every other line unchanged.
+
+Think first, then run: **after removing `let`, which variable does that line operate on? How does the drop timing of `"second"` change? And which string gets dropped in place at `s = t;` later?**
+
+Answer: removing `let` turns the inner line from shadowing into a reassignment on **the outer mutable variable `s`**. As a result, `"second"` held by outer `s` is dropped in place right inside the inner block, and outer `s` takes `"third"` (so the inner `println!` prints `third first`); when `s = t;` runs afterward, the string replaced and dropped in place is now `"third"`.
+
+---
+
+## Moving on to Part 2: Types
+
+Across the two chapters of Part 1, we derived the **ownership, borrowing, and lifetime model** from physical memory and verified variable declarations, reassignment, and shadowing in real Rust code.
+
+Along the way, a deeper thread has surfaced:
+
+- Why does the exact same syntax `let b = a;` behave so differently depending solely on whether the right-hand side is `i32`, `String`, or `&String`?
+- Why does adding `mut` to a variable declaration unlock mutation without ever allowing the variable's declared type to change? And how—as we asked in the previous section—can the compiler tell at the call site `s.push_str("!")` that the method mutates memory without inspecting the function body?
+- How do we express the first open problem left at the end of Chapter 1: mutating data through a reference while keeping read and write access from interfering?
+
+Every one of those questions points to the same core question: **what is a "type" in Rust?** In Rust, a type is never just a label stating how many bytes a value occupies—it is a compile-time set of rules bundling **memory representation** together with **usage constraints** (who may mutate it, who is responsible for freeing it, and over what span it remains valid).

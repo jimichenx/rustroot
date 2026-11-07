@@ -1,0 +1,146 @@
+---
+/**
+ * 动图底部的控件。
+ * - `controls="stepper"`：进度条（节点 + 线段）+ 一组图标按钮（上一步 / 下一步 / 自动播放）；
+ * - `controls="play"`：居中的播放 / 重播按钮。
+ *
+ * 行为由 src/scripts/motion.js 绑定，样式由 diagrams.css 提供。
+ * 图标按钮的文案（读屏 / 悬停）有中英默认值，图里不传也行。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	controls: 'stepper' | 'play';
+	/** 进度条的组标签（读屏用） */
+	label?: string;
+	/** 进度条节点数 = steps.length，每项同时用作节点的 aria-label / title */
+	steps?: string[];
+	/** 播放按钮的两个文案 */
+	playLabel?: string;
+	replayLabel?: string;
+	/** 图标按钮的文案，默认按语言 */
+	prevLabel?: string;
+	nextLabel?: string;
+	autoLabel?: string;
+	pauseLabel?: string;
+}
+
+const en = SITE_LOCALE === 'en';
+const {
+	controls,
+	label = '',
+	steps = [],
+	playLabel = '',
+	replayLabel = '',
+	prevLabel = en ? 'Previous' : '上一步',
+	nextLabel = en ? 'Next' : '下一步',
+	autoLabel = en ? 'Auto-play' : '自动播放',
+	pauseLabel = en ? 'Pause' : '暂停',
+} = Astro.props;
+---
+
+{
+	controls === 'stepper' && (
+		<div class="stepper-bar">
+			<div class="stepper">
+				<div class="stepper-dots" role="group" aria-label={label}>
+					{steps.map((stepLabel, i) => (
+						<>
+							{i > 0 && (
+								<button
+									type="button"
+									class="stepper-seg"
+									data-seg={i}
+									tabindex="-1"
+									aria-hidden="true"
+								/>
+							)}
+							<button
+								type="button"
+								class="stepper-dot"
+								data-step-target={i + 1}
+								aria-label={stepLabel}
+								title={stepLabel}
+							>
+								{i + 1}
+							</button>
+						</>
+					))}
+				</div>
+			</div>
+
+			<div class="stepper-nav-group">
+				<button
+					type="button"
+					class="stepper-icon"
+					data-step-prev
+					aria-label={prevLabel}
+					title={prevLabel}
+				>
+					<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+						<path
+							d="M10 3.5 L5.5 8 L10 12.5"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="1.6"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						/>
+					</svg>
+				</button>
+				<button
+					type="button"
+					class="stepper-icon"
+					data-step-next
+					aria-label={nextLabel}
+					title={nextLabel}
+				>
+					<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+						<path
+							d="M6 3.5 L10.5 8 L6 12.5"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="1.6"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						/>
+					</svg>
+				</button>
+				<button
+					type="button"
+					class="stepper-icon stepper-icon-auto"
+					data-step-auto
+					data-label-auto={autoLabel}
+					data-label-pause={pauseLabel}
+					aria-label={autoLabel}
+					title={autoLabel}
+					aria-pressed="false"
+				>
+					<svg class="icon-play" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+						<path d="M5.5 3.5 L12 8 L5.5 12.5 Z" fill="currentColor" />
+					</svg>
+					<svg class="icon-pause" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+						<rect x="5" y="4" width="2.2" height="8" fill="currentColor" />
+						<rect x="8.8" y="4" width="2.2" height="8" fill="currentColor" />
+					</svg>
+				</button>
+			</div>
+		</div>
+	)
+}
+
+{
+	controls === 'play' && (
+		<div class="play-row">
+			<button
+				type="button"
+				class="play-button"
+				data-play-button
+				data-label-play={playLabel}
+				data-label-replay={replayLabel}
+			>
+				{playLabel}
+			</button>
+		</div>
+	)
+}

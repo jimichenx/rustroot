@@ -1,0 +1,258 @@
+---
+title: "转换契约与一揽子实现：From / Into、替代函数重载与 ? 错误归并"
+description: 拆解一揽子实现（Blanket Implementation）如何让你只实现 From 即自动获得 Into，看清 Rust 如何用泛型加 Into 契约替代传统语言的函数重载，并揭晓 ? 运算符跨错误类型自动转换的底层机制。
+sidebar:
+  label: 转换契约与 ? 错误归并
+  order: 4
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import overloadViaInto from '../../../../../../../examples/types/traits/src/bin/overload-via-into.rs?raw';
+import fromAndQuestion from '../../../../../../../examples/types/traits/src/bin/from-and-question.rs?raw';
+
+在上一节中，我们用 `trait MyFrom<T>` 演示了「一对多」的泛型 Trait：同一个目标类型，可以针对多种不同的源类型 `T` 分别编写转换实现。
+
+在 Rust 标准库中，负责这项无损类型转换的正式契约正是 **`From<T>`**（从 `T` 转换而来）与它的孪生搭档 **`Into<U>`**（转换成 `U`）。
+
+围绕这一对看似普通的转换契约，初学者常常会产生三个疑问：
+1. **为什么我只给自己的类型实现了 `From`，从来没写过 `Into`，变量身上却自动多出了 `.into()` 方法？**
+2. **为什么 Rust 不像 C++、Java 或 TypeScript 那样支持定义多个同名不同参的「函数重载（Function Overloading）」？没有函数重载，怎么写出能同时接收多种参数类型的灵活接口？**
+3. **第 6 章留下的悬念：当一个函数内部调用了返回不同错误类型的底层函数时，`?` 运算符到底是怎么把它们自动归并成同一个顶层错误的？**
+
+本节把这三个问题一次打通。
+
+---
+
+## 一揽子实现（Blanket Implementation）：为什么实现 `From` 就自动白拿了 `Into`？
+
+先看标准库中 `From<T>` 与 `Into<U>` 的定义：
+
+<small class="code-source">标准库源码结构示意（<code>core::convert::From</code> 与 <code>Into</code>）</small>
+```rust
+pub trait From<T> {
+    fn from(value: T) -> Self;
+}
+
+pub trait Into<U> {
+    fn into(self) -> U;
+}
+```
+
+假设我们定义了一个网络端点结构体 `Endpoint`，并为它实现了从字符串切片 `&str` 转换而来的 `From<&str>`：
+
+<small class="code-source">推演用伪代码：为 <code>Endpoint</code> 实现 <code>From&lt;&amp;str&gt;</code></small>
+```rust
+struct Endpoint {
+    host: String,
+    port: u16,
+}
+
+impl From<&str> for Endpoint {
+    fn from(host: &str) -> Self {
+        Endpoint { host: String::from(host), port: 80 }
+    }
+}
+```
+
+写完这几行代码后，你不仅能写 `Endpoint::from("example.com")`，还可以直接在字符串字面量上倒过来写：
+
+<small class="code-source">推演用伪代码</small>
+```rust
+let ep: Endpoint = "example.com".into();
+```
+
+我们明明没有写过 `impl Into<Endpoint> for &str`，为什么 `"example.com"` 会自动获得 `.into()` 方法？
+
+打开标准库源码，谜底只有短短几行普通代码：
+
+<small class="code-source">标准库源码结构示意：一揽子实现（Blanket Implementation）</small>
+```rust
+// 凡是目标类型 U 已经实现了 From<T>，就自动为源类型 T 实现 Into<U>：
+impl<T, U> Into<U> for T
+where
+    U: From<T>,
+{
+    fn into(self) -> U {
+        U::from(self)
+    }
+}
+```
+
+请仔细看 `impl<T, U> Into<U> for T` 这一行：
+在 7.2 节中，我们写的 `impl Summary for Article` 是给**某一个具体的结构体**挂载能力；而这里，标准库把 `for` 后面的目标类型直接写成了一个带约束的**泛型参数 `T`**。
+
+这种**「直接对满足特定约束的所有类型 `T` 批量实现某个 Trait」**的写法，叫做**一揽子实现（Blanket Implementation）**。
+它没有任何编译器后门，纯粹是 7.1 节的泛型 `<T>` 与 7.2 节的 `impl Trait for Type` 组合出的自然结果：
+- 一旦你写下 `impl From<&str> for Endpoint`，就满足了约束 `Endpoint: From<&str>`；
+- 标准库里那条一揽子实现立刻自动生效，为 `&str` 挂上了 `Into<Endpoint>` 的能力；
+- 更有意思的是，标准库还内置了另一条自反一揽子实现 **`impl<T> From<T> for T`**（任何类型都能从自己转成自己），所以 `Endpoint` 自身也天然满足 `Into<Endpoint>`。
+
+<Aside type="tip" title="工程铁律：永远只手写 From，不要手写 Into">
+正因为标准库已经通过一揽子实现写死了 `impl<T, U> Into<U> for T where U: From<T>`，在为你自己的类型编写无损转换逻辑时，**永远只需要实现 `From`**，这样调用方既能用 `Target::from(src)`，又能自动白拿 `src.into()`（关于可能失败的受检转换 `TryFrom` 以及零成本借用转换 `AsRef`，详见[附录 B.6：生态约定 Trait 详解](/appendix/mechanisms/convention-traits/)）。
+</Aside>
+
+---
+
+## 为什么 Rust 不需要语言级的「函数重载」？
+
+在 C++ 或 Java 中，如果我们希望一个 `connect` 函数既能接收单个域名字符串 `"example.com"`，又能接收带端口的二元组 `("127.0.0.1", 8080)`，还能直接接收现成的 `Endpoint` 结构体，就必须依赖语言层面的**函数重载（Function Overloading）**——在代码里连写三个同名的 `connect` 函数。
+
+而 Rust 在语言层**明确禁止定义同名函数**。这难道会让 API 变得难用吗？
+
+恰恰相反。有了刚刚学过的 `From` / `Into`，我们只需要为 `Endpoint` 补上从二元组 `(&str, u16)` 转换的 `From` 实现：
+
+<small class="code-source">推演用伪代码</small>
+```rust
+impl From<(&str, u16)> for Endpoint {
+    fn from((host, port): (&str, u16)) -> Self {
+        Endpoint { host: String::from(host), port }
+    }
+}
+```
+
+然后，只写**唯一一个**带 `<T: Into<Endpoint>>` 约束的泛型函数 `connect`：
+
+<small class="code-source">推演用伪代码：用泛型 + <code>Into</code> 契约替代函数重载</small>
+```rust
+fn connect<T: Into<Endpoint>>(target: T) {
+    let ep: Endpoint = target.into();
+    println!("connecting to {}:{}", ep.host, ep.port);
+}
+```
+
+现在看调用点的效果：
+
+<small class="code-source">推演用伪代码</small>
+```rust
+connect("example.com");                                        // T = &str
+connect(("127.0.0.1", 8080));                                  // T = (&str, u16)
+connect(Endpoint { host: String::from("localhost"), port: 3000 }); // T = Endpoint
+```
+
+运行下面这份完整源码，核对这三种传参方式：
+
+<small class="code-source">源文件：<code>examples/types/traits/src/bin/overload-via-into.rs</code></small>
+<Code code={overloadViaInto} lang="rust" collapse={16} />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+connecting to example.com:80
+connecting to 127.0.0.1:8080
+connecting to localhost:3000
+```
+
+对比传统语言内置的「同名函数重载」，用「泛型 `<T>` + `Into` 契约」实现的多参数兼容有两大显著优势：
+1. **函数主体零重复**：你只需要编写并维护唯一一份 `connect` 函数体，编译器会在单态化阶段按每次调用的具体类型自动展开；
+2. **对第三方扩展开放**：在 C++ 或 Java 中，如果另一个模块的开发者定义了一个新的自定义地址结构体 `MyCustomAddr`，他无法去修改你已经写好的 `connect` 重载列表；但在 Rust 中，他只需为自己的类型写一行 `impl From<MyCustomAddr> for Endpoint`，就能立刻把 `MyCustomAddr` 直接传进你的 `connect` 函数里（关于为什么 Rust 禁止同名函数重载以及参数个数不同、默认参数等场景的完整替代方案，详见[附录 C.4：没有「函数重载」与「默认参数」，Rust 如何设计灵活 API？](/appendix/comparisons/function-overloading/)）。
+
+---
+
+## 填平第 6 章悬念：`?` 运算符是如何跨错误类型自动转换的？
+
+看懂了 `From<T>` 的工作方式，现在我们终于可以揭开[第 6 章 6.4 节](/types/result-and-try/)留下的那个工程谜题了。
+
+在真实项目中，一个顶层业务函数往往会调用多个底层模块的 API：
+- 第一步检查输入字符串是否为空，若为空则返回自定义的 `AppError::EmptyInput`；
+- 第二步调用标准库的 `.parse::<u32>()`，若解析失败则返回标准库的 **`ParseIntError`**。
+
+如果函数签名统一写为 `fn parse_positive_double(raw: &str) -> Result<u32, AppError>`，由于 `.parse::<u32>()` 返回的错误类型是 `ParseIntError`，与函数签名要求的 `AppError` 并不是同一个类型，为什么我们在工程代码里依然能直接写 `let n = raw.parse::<u32>()?;` 而无需在每一处手写错误转换？
+
+因为我们在 6.4 节展示的 `?` 展开式，省略了最后半步。在编译器内部，当 `?` 遇到 `Err(e)` 分支时，展开的完整代码其实是：
+
+<small class="code-source">推演用伪代码：<code>?</code> 运算符带 <code>From::from</code> 的真实编译期展开</small>
+```rust
+let n = match raw.parse::<u32>() {
+    Ok(v) => v,
+    // 注意这里：不是直接 return Err(e)，而是先调用 From::from(e) 转换错误类型
+    Err(e) => return Err(From::from(e)),
+};
+```
+
+看到 `return Err(From::from(e))` 这一行，一切就彻底通透了：
+当 `?` 遇到底层的 `Err(e)`（类型为 `ParseIntError`）准备提前返回时，它会自动调用 **`<AppError as From<ParseIntError>>::from(e)`**。
+
+因此，我们只需要为顶层错误枚举 `AppError` 签下一份 5 行的 `From<ParseIntError>` 契约：
+
+<small class="code-source">推演用伪代码：为自定义错误实现 <code>From&lt;ParseIntError&gt;</code></small>
+```rust
+#[derive(Debug)]
+enum AppError {
+    EmptyInput,
+    BadNumber(ParseIntError),
+}
+
+impl From<ParseIntError> for AppError {
+    fn from(err: ParseIntError) -> Self {
+        AppError::BadNumber(err)
+    }
+}
+```
+
+一旦签下了这份 `From` 契约，在整个项目的所有函数中，任何返回 `ParseIntError` 的调用后面都可以直接写一个 `?`，编译器会在单态化阶段自动把底层错误转换成 `AppError::BadNumber(err)` 并向上返回。
+
+运行下面这份完整源码，核对 `From` 与 `?` 运算符的协同工作过程：
+
+<small class="code-source">源文件：<code>examples/types/traits/src/bin/from-and-question.rs</code></small>
+<Code code={fromAndQuestion} lang="rust" collapse={18} />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+"21" -> Ok(42)
+"" -> Err(EmptyInput)
+"abc" -> Err(BadNumber: invalid digit found in string)
+```
+
+---
+
+## 小结
+
+1. **一揽子实现（Blanket Implementation）**：通过 `impl<T, U> Into<U> for T where U: From<T>`，标准库对所有满足条件的类型参数 `T` 批量挂载能力，使实现 `From` 的类型自动获得 `Into`。
+2. **用 `Into` 契约替代函数重载**：Rust 无需在语言层引入复杂的同名函数重载规则，只需编写一个带 `<T: Into<Target>>`（或 `<T: AsRef<Target>>`）约束的泛型函数，即可同时接纳多种输入类型并对外部新类型保持开放。
+3. **`?` 运算符的自动错误归并**：`expr?` 在遇到 `Err(e)` 时展开为 `return Err(From::from(e))`；只需为顶层错误实现底层错误的 `From` 契约，即可用 `?` 无缝归并不同模块的错误。
+
+到这里，我们已经见识了 Trait 如何化解函数重载与跨模块错误转换。在进入下一章之前，让我们退后一步，站在编程语言设计的最高处思考一个问题：**为什么在别的语言里需要做成编译器内置语法特性的东西（从复制、运算符、函数重载到错误处理），在 Rust 里全都变成了一个个普通的库级 Trait？Rust 的语言内核到底有多小？**
+
+下一节，我们就为第 7 章做一个顶层视野收束。
+
+[继续：章末视野 · Rust 语言到底有多小？ →](/abstraction/kernel-and-library/)
+
+### 动手核对与小练习
+
+1. **一揽子实现与伪重载判断**：为什么在 `overload-via-into.rs` 中，我们只实现了 `From<&str> for Endpoint` 和 `From<(&str, u16)> for Endpoint`，却连现成的 `Endpoint` 实例自己也能直接传给 `fn connect<T: Into<Endpoint>>(target: T)`？
+2. **用 `From` 打通跨错误类型的 `?`**：下面这段代码中，`load_port` 调用了 `parse::<u16>()`（产生 `ParseIntError`），但函数签名返回的是自定义的 `ConfigError`，目前在第 10 行报 `error[E0277]: ? couldn't convert the error to ConfigError`。请在不修改 `load_port` 函数体的前提下，补充一段 `impl` 代码让程序编译通过：
+   ```rust
+   use std::num::ParseIntError;
+
+   #[derive(Debug)]
+   enum ConfigError {
+       InvalidPort(ParseIntError),
+   }
+
+   // 请在此处补充 impl 块：
+
+   fn load_port(raw: &str) -> Result<u16, ConfigError> {
+       let port = raw.parse::<u16>()?;
+       Ok(port)
+   }
+   ```
+
+<details>
+<summary>点击核对参考答案</summary>
+
+1. **一揽子实现与伪重载判断**：
+   因为标准库中内置了一条自反的一揽子实现 `impl<T> From<T> for T`（任何类型 `T` 都天然实现了从自身到自身的 `From`），再叠加 `impl<T, U> Into<U> for T where U: From<T>`，使得 `Endpoint` 天然满足 `Endpoint: Into<Endpoint>`，无需额外编写转换代码即可直接传入 `connect`。
+2. **补充 `impl From<ParseIntError> for ConfigError`**：
+   ```rust
+   impl From<ParseIntError> for ConfigError {
+       fn from(err: ParseIntError) -> Self {
+           ConfigError::InvalidPort(err)
+       }
+   }
+   ```
+   补上该实现后，`raw.parse::<u16>()?` 展开出的 `return Err(From::from(e))` 即可自动将 `ParseIntError` 转换为 `ConfigError::InvalidPort(e)`。
+
+</details>

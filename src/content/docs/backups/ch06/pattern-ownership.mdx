@@ -1,0 +1,92 @@
+---
+title: "从变体里取值：模式里的所有权"
+description: "`match` 的臂把变体里的数据绑到新名字上，这也是一次绑定，走移动或复制。隔着共享引用按值绑定，会从别人的值里搬走数据，被 `error[E0507]` 拦下。只看就让绑定也变成引用；真要拿走，必须放回一个合法的值，这就是 `take`。"
+sidebar:
+  label: 模式里的所有权
+  order: 7
+  badge:
+    text: 草稿
+    variant: caution
+draft: true
+---
+
+import { Code } from '@astrojs/starlight/components';
+
+import patternMove from '../../../../../../../examples/types/pattern-ownership/src/bin/pattern-move.rs?raw';
+import behindRef from '../../../../../../../examples/types/pattern-ownership/src/bin/behind-ref.rs?raw';
+import asRefTake from '../../../../../../../examples/types/pattern-ownership/src/bin/as-ref-take.rs?raw';
+import ifLet from '../../../../../../../examples/types/pattern-ownership/src/bin/if-let.rs?raw';
+
+## 我们要解决的问题
+
+`match maybe { Some(name) => ... }` 把变体里的 `String` 取出来，绑到 `name` 上。
+
+这是一次绑定。4.1 定下，每次绑定都要判断复制还是移动。在 `match` 里，这个判断怎么做？隔着一个引用去 `match` 的时候呢？
+
+## 臂里的绑定，也是一次赋值
+
+<Code code={patternMove} lang="rust" />
+
+`Some(name)` 把 `String` 绑到 `name`。若 `maybe` 和 `name` 都还能用，同一块堆就有两个所有者。所以这次绑定是移动：取消最后一行的注释，报 `error[E0382]`：`maybe` 已经被部分移动。
+
+`match` 臂里的名字、`let` 左边的名字、函数的参数，都是接值的位置，统称模式（Pattern）。值进了模式，规则和 `b = a` 一样。被搬走的那部分在原值里失效，是 5.2 的部分移动落在变体上。
+
+## 隔着引用，按值绑定
+
+在 `&self` 方法里 `match` 一个字段：
+
+<Code code={behindRef} lang="rust" />
+
+`self` 是 `&User`，`name_len` 只是借着这个用户。
+
+先按值绑定：把两行 `match` 对调，写成 `match self.name`。`Some(n)` 要把 `String` 移给 `n`。移走之后，`User` 的所有者还以为自己拥有这个名字，离开作用域时会去释放它；而 `n` 离开 `name_len` 时也会释放它。同一块堆释放两次。
+
+编译器报 `error[E0507]`：不能把 `self.name` 里 `Some` 变体的值，从共享引用后面搬出来。这和 5.3 里从 `&String` 调用 `into_bytes` 是同一堵墙：借来的东西，交不出所有权。
+
+## 只是看：让绑定也借
+
+`name_len` 只要长度，用不着拿走名字。那就让绑定也是借用：写 `match &self.name`，匹配的对象是 `&Option<String>`，`Some(n)` 里的 `n` 就是 `&String`。
+
+`n` 前面没有写 `&`，编译器看匹配的对象是引用，让绑定也变成了引用。这是 5.3 那座桥修在了匹配点：替你补一次借用。补上的仍然只是借用，从共享引用后面照样拿不走值。
+
+还有一种写法，把「借」写在值上：
+
+<Code code={asRefTake} lang="rust" />
+
+`u.name.as_ref()` 把 `&Option<String>` 换成 `Option<&String>`：外面的 `Option` 是新造的，里面装的是借来的引用，原值没动。要把「也许有的名字」交给一个只读的函数，用它。
+
+## 真要拿走：放回一个合法的值
+
+有时确实要把名字拿走，比如用户注销，名字交给别处存档。手里有 `&mut User`。
+
+直接移走不行。`&mut` 是借来的，借完要还，还回去的必须是一个完整的 `User`；而且 `User` 的所有者离开作用域时要释放每一个字段，字段不能是空的。
+
+那就换：拿走的同时，放一个合法的值进去。`Option` 正好有一个现成的合法值：`None`。
+
+`u.name.take()` 做的就是这件事：把 `Some("Ferris")` 换出来交给你，原地留下 `None`。所有权转了手，字段仍然是一个合法的 `Option`，借用还回去时 `User` 是完整的。它需要 `&mut`，因为它改了字段。
+
+| 手里有 | 想要 | 写法 |
+| :--- | :--- | :--- |
+| `&Option<String>` | 看一眼里面的名字 | `match &opt`，或 `opt.as_ref()` |
+| `&mut Option<String>` | 拿走里面的名字 | `opt.take()`，原地留下 `None` |
+| `Option<String>` 本身 | 拿走里面的名字 | 直接 `match opt` |
+
+## 只关心一个变体
+
+只处理 `Some` 的时候，`match` 还要为 `None` 写一条什么都不做的臂。`if let` 和 `let else` 是它的简写：
+
+<Code code={ifLet} lang="rust" />
+
+`if let Some(n) = name` 只在是 `Some` 时进入代码块，其余变体什么都不做。`let Some(n) = name else { ... }` 反过来：是 `Some` 就绑定 `n` 往下走；不是就执行 `else`，`else` 里不能落回原处接着往下走，要 `return`、`break` 或 panic。这两种写法里的绑定，移动和借用的规则与 `match` 一样。
+
+## 顿悟时刻
+
+模式是接值的位置。按值绑定走移动，匹配引用走借用，规则和 `b = a` 是同一套。
+
+隔着共享引用按值绑定，会从别人的值里搬走数据，`error[E0507]`。只是看，就让绑定也借；真要拿走，必须放回一个合法的值，所以 `take` 要 `&mut`，原地留下 `None`。
+
+## 动手
+
+去官方 Book 第 6 章，读 6.3 节《`if let` 简洁控制流》。
+
+在 `behind-ref.rs` 里给 `User` 加一个 `&mut self` 方法 `clear_name`，把名字拿走并返回。先写 `match self.name`，读报错；再改成 `self.name.take()`。

@@ -1,0 +1,13 @@
+[workspace]
+resolver = "3"
+members = ["foundations/*", "ownership", "memory/*", "types/*", "appendix/*"]
+exclude = ["target"]
+
+# 课程代码实验。一课或一组课一个 crate，例如 examples/ownership/。
+# 每个 crate 只验证一个概念，代码不超过 10~15 行；故意编译失败的例子放在
+# src/bin/ 下以 `fail_*.rs` 命名并在 Cargo.toml 中声明 `required-features`，或直接注释说明。
+
+[workspace.package]
+edition = "2024"
+publish = false
+license = "MIT"

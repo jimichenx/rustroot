@@ -1,0 +1,262 @@
+---
+title: "字符串：str、&str 与 String"
+description: 从切片与胖指针模型推导 str、&str 与 String 的物理表示，理解 UTF-8 变长编码对下标与切片边界的约束，并建立函数签名与结构体的工程选型判据。
+sidebar:
+  label: 字符串
+  order: 5
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import StringMemoryViews from '../../../../../../components/course/StringMemoryViews.astro';
+import stringAndStr from '../../../../../../../examples/types/slices/src/bin/string-and-str.rs?raw';
+import utf8Indexing from '../../../../../../../examples/types/slices/src/bin/utf8-indexing.rs?raw';
+import utf8Boundary from '../../../../../../../examples/types/slices/src/bin/utf8-boundary.rs?raw';
+
+在日常写代码时，字符串是使用频率最高的数据类型之一。但在初学 Rust 时，几乎每个从 Java、Python 或 Go 转过来的开发者都会被下面三个问题卡住：
+
+- 为什么别的语言里只有一个 `String`，Rust 里却同时冒出 **`String`**、**`&String`**、**`str`**、**`&str`** 四种写法？
+- 为什么直接写双引号字面量 `"hello"`，它的类型不是 `String`，而是 `&str`？
+- 为什么连最基础的按下标取第一个字符 `s[0]`，编译器都直接报错拒绝？
+
+现在你手里已经有了前两节推导出的连续内存三成员——**动态大小类型 `[T]`、16 字节胖指针 `&[T]` 与 24 字节动态数组 `Vec<T>`**。把这三样东西搬过来，Rust 字符串的设计细节就能直接对上。
+
+---
+
+## 一张表看清对应关系：加了 UTF-8 约束的字节序列
+
+上一节我们拆解了 `Vec<T>` 的 24 字节控制头（`ptr`、`len`、`cap`）。而在底层内存布局上，`String` 内部直接包着一个字节动态数组 `Vec<u8>`。区别在于，**`String` 的类型实体里多了一条安全约束：内部的字节序列在任何时刻都必须是合法的 UTF-8 编码。**
+
+顺着这个事实，把前两节学过的 `[u8]`、`&[u8]`、`Vec<u8>` 全部加上「合法 UTF-8」这条约束，Rust 字符串家族的四个类型就一一对应上了：
+
+| 通用字节序列 | 加上「合法 UTF-8」约束后的字符串类型 | 栈上物理表示 | 本质角色 |
+| --- | --- | --- | --- |
+| **`[u8]`** | **`str`** | 编译期大小未知（**DST**，无法直接上栈） | **字符串切片本体**：内存中任意一段连续的合法 UTF-8 字节序列 |
+| **`&[u8]`** | **`&str`** | **16 字节胖指针** `(ptr, len)` | **字符串切片引用**（日常简称字符串切片）：零分配的只读借用视图 |
+| **`Vec<u8>`** | **`String`** | **24 字节控制头** `(ptr, len, cap)` | **拥有所有权的堆字符串**：负责释放堆内存，支持动态追加与扩容 |
+| **`&Vec<u8>`** | **`&String`** | **8 字节瘦指针** `ptr` | 指向栈上 `String` 控制头的普通只读引用 |
+
+把这张表拆开来看：
+- 不带 `&` 的 **`str`**，完全对应上一节不带 `&` 的 **`[u8]`**。它描述的是内存中一段连续的 UTF-8 文本字节；因为编译期不知道一段文本有多长，所以 `str` 是一个**动态大小类型（DST）**，永远不能直接写 `let s: str = ...;`。
+- 平时无处不在的 **`&str`**，是用引用构造器 `&` 包住 `str` 合成出的 **16 字节胖指针 `(ptr, len)`**——完全对应上一节的 **`&[u8]`**。
+
+### 为什么字面量 `"hello"` 的类型是 `&str`？
+
+当你在代码里写下 `let literal = "hello rust";` 时，`"hello rust"` 这 10 个字节在编译期就已经直接固化在可执行文件的**只读数据段（Read-Only Data Segment）**里了。
+
+程序运行时不需要去堆上申请内存，只需要在栈上放一个 16 字节的胖指针 `&str`（`ptr` 指向只读数据段里的起始地址，`len` 为 `10`），就能零成本地使用这段文本。因为这块内存从程序启动一直存活到程序退出，所以字符串字面量的完整类型是带静态生命周期的 **`&'static str`**。
+
+运行下面这段代码，核对它们的物理大小与通用视图能力：
+
+<small class="code-source">源文件：<code>examples/types/slices/src/bin/string-and-str.rs</code></small>
+<Code code={stringAndStr} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+String:  24 bytes
+&String: 8 bytes
+&str:    16 bytes
+greeting (11 bytes): hello world
+greeting (5 bytes): hello
+greeting (10 bytes): hello rust
+```
+
+<StringMemoryViews />
+
+`print_greeting(text: &str)` 接收的是一个 16 字节的胖指针。它不在乎那段 UTF-8 字节到底是住在**堆上**（来自 `String` 的全文或局部切片 `&owned[0..5]`），还是住在**只读数据段里**（来自字面量 `"hello rust"`）。而且得益于上一节提过的**解引用强制转换（Deref Coercion）**，当你传入 `&String`（`borrowed_full`）时，编译器会自动从 `String` 控制头里取出堆地址和长度，把它转换成 `&str` 胖指针。
+
+---
+
+## UTF-8 变长编码：为什么 Rust 禁止写 `s[0]`？
+
+在其他许多语言里，取字符串的第 0 个字符是一件习以为常的事（比如 Python 的 `s[0]`）。可当你在 Rust 里写下 `let first = s[0];` 时，编译器会直接拒绝。
+
+运行下面这段包含中英文混合字符的代码：
+
+<small class="code-source">源文件：<code>examples/types/slices/src/bin/utf8-indexing.rs</code></small>
+<Code code={utf8Indexing} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+byte length (.len()): 10
+char count (.chars()): 6
+slices: Rust | 语言
+chars: [R] [u] [s] [t] [语] [言] 
+```
+
+取消第 7 行 `// let first = s[0];` 的注释，编译器立刻以 `error[E0277]` 拒绝编译：
+
+<small class="code-source">编译器诊断摘要：取消 utf8-indexing.rs 中 let first = s[0]; 的注释后</small>
+```text
+error[E0277]: the type `str` cannot be indexed by `{integer}`
+ --> src/bin/utf8-indexing.rs:7:19
+  |
+7 |     let first = s[0];
+  |                   ^ string indices are ranges of `usize`
+  |
+  = help: the trait `SliceIndex<str>` is not implemented for `{integer}`
+```
+
+### 1. `.len()` 返回的是字节数，不是字符数
+
+先看上面代码的输出：`"Rust语言"` 明明只有 **6 个字符**（4 个英文字母 + 2 个汉字），为什么 `s.len()` 返回的却是 **`10`**？
+
+因为 UTF-8 是一种**变长编码**：
+- 一个英文 ASCII 字符（如 `'R'`、`'u'`、`'s'`、`'t'`）在 UTF-8 中占 **1 个字节**（4 个字母共占 4 字节）；
+- 一个常用中文字符（如 `'语'`、`'言'`）在 UTF-8 中占 **3 个字节**（2 个汉字共占 6 字节）；如果是 Emoji 表情（如 `'🦀'`），则占 **4 个字节**。
+- 既然 `str` 和 `String` 的底层是 UTF-8 字节序列，胖指针和控制头里的 `len` 记录的自然是**总字节数**（`4 + 6 = 10` 字节）。
+
+### 2. 为什么不能用 `s[i]` 直接下标取值？
+
+明白了 UTF-8 是变长编码，就能看清语言设计者为什么封禁了 `s[i]`：
+
+1. **含义歧义**：如果允许写 `s[4]`，你想要的到底是第 4 个**字节**（只是汉字 `'语'` 的前三分之一个残缺字节），还是第 4 个**人类字符**（`'语'`）？
+2. **拒绝隐藏的性能成本**：在内存中，所有下标操作 `arr[i]` 给人的直觉都是**常数时间 `O(1)`**（直接用 `首地址 + i × 元素大小` 一步算出位置）。但由于 UTF-8 每个字符占 1 到 4 字节不等，要想找到「第 `i` 个字符」，CPU **必须从第 0 个字节开始逐个解码扫描**（时间复杂度是 `O(N)`）。Rust 绝不允许一个看起来像 `O(1)` 的 `s[i]` 语法在背后偷偷做 `O(N)` 的全量遍历。
+
+因此，Rust 要求你在代码里显式表明意图：
+- 按**人类字符（Unicode 标量值 `char`）**遍历或计数，显式调用 **`s.chars()`**；
+- 按**原始字节（`u8`）**访问，显式调用 **`s.as_bytes()`**。
+
+### 3. 范围切片 `&s[a..b]` 的边界检查与线上防崩
+
+虽然不能写单个整数 `s[0]`，但范围切片 `&s[start..end]` 是允许的，因为它的语义很明确：**直接从第 `start` 个字节切到第 `end` 个字节（左闭右开），耗时是 `O(1)`**。
+
+但这里有一条必须遵守的规则：**`start` 和 `end` 字节偏移量，必须刚好落在 UTF-8 字符的边界上。**
+
+如果一个汉字 `'语'` 占第 `0..3` 共 3 个字节，你却写 `&s[0..1]` 只切出它的前 1 个字节，会发生什么？看下面这段代码：
+
+<small class="code-source">源文件：<code>examples/types/slices/src/bin/utf8-boundary.rs</code></small>
+<Code code={utf8Boundary} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+first char slice: 语
+safe get 0..3: Some("语")
+safe get 0..1: None
+```
+
+一旦取消最后一行 `// let bad_slice = &s[0..1];` 的注释并运行，程序会在运行时当场触发 `panic` 终止：
+
+<small class="code-source">运行输出：取消 utf8-boundary.rs 中标记行的注释后</small>
+```text
+thread 'main' panicked at src/bin/utf8-boundary.rs:11:22:
+byte index 1 is not a char boundary; it is inside '语' (bytes 0..3) of `语言`
+```
+
+为什么必须当场报错终止？因为 **`str` 这个类型实体的核心安全约束，就是「内部字节在任何时刻都必须是合法的 UTF-8」**。如果允许 `&s[0..1]` 切出半个汉字并构造出 `&str`，就会制造出一个破坏了 UTF-8 约束的非法 `&str`。
+
+**代码审查（Code Review）防崩警示**：在线上服务中，审查你自己的代码或 AI 生成的代码时，一旦看到对外部输入的字符串直接写硬编码的 `&s[0..10]`，必须立刻拦截——只要用户输入的第 10 个字节正好卡在某个中文字符或 Emoji 中间，线程就会当场崩溃。在不确定字节边界或长度时，始终改用 **`s.get(0..10)`**：边界合法时它返回 `Some(&str)`，切在字符中间或越界时它安全地返回 `None`。
+
+---
+
+## 工程选型与签名裁决：什么时候用 `&str`，什么时候用 `String`？
+
+在实际项目中设计接口签名、定义结构体，或者审查 AI 写出的代码时，对照下面四条工程判据来做裁决：
+
+| 工程场景 | 选型判据 | 底层原因 |
+| --- | --- | --- |
+| **1. 函数参数（只读）** | **优先写 `fn process(s: &str)`**（不写 `&String`） | 16 字节胖指针 `&str` 既能直接接收字面量 `"abc"` 和子串切片，也能通过解引用强制转换零成本接收 `&String`，通用性最广。 |
+| **2. 函数参数（需持有所有权）** | **写 `fn take(s: String)`** | 当函数内部必须把这段字符串存进结构体或交给新线程时，直接按值要求 `String`。把「是否需要克隆分配」的决定权交给调用方：调用方若不再使用原 `String`，可直接移动进来。 |
+| **3. 函数返回值** | **内部新生成的文本返回 `String`；截取自输入参数的子串返回 `&str`** | 函数内部动态拼出的文本住在当前栈帧管理的堆上，必须返回 `String` 把释放责任移交给调用方；如果只是在传入的 `&str` 里切出一段子串，直接返回胖指针 `&str` 即可。 |
+| **4. 结构体（Struct）字段** | **默认用 `String`** | 结构体通常需要独立存活并到处移动，让它自己拥有堆上文本的所有权（`String`）最稳妥。除非在写零拷贝解析器，否则不要轻易在结构体里放 `&'a str`，那会让整个结构体带上生命周期参数的约束。 |
+
+<Aside type="tip" title="扩展速查：日常转换、+ 号拼接机制与文档阅读技巧">
+为了保持主线推导紧凑，我们将字符串在日常编码中的高频 API 细节收拢在了附录 **[《字符串转换、拼接与高频操作机制》](/appendix/mechanisms/strings/)** 中。需要时可随时翻阅：
+- `String::from("hi")`、`"hi".to_owned()` 与 `"hi".to_string()` 三种转换写法到底有什么区别？
+- 为什么 `let s3 = s1 + &s2;` 会把左边的 `s1` 移走并原地复用堆缓冲区？
+- 为什么 `.trim()`、`.split()` 等几十个常用方法在 `String` 文档里找不到，却能直接在 `String` 上调用？
+</Aside>
+
+---
+
+## 小结
+
+把字符串放回我们的类型构造器与切片模型里，所有的设计都严丝合缝：
+
+1. **`str` 与 `String` 就是加上了 UTF-8 约束的 `[u8]` 与 `Vec<u8>`**：`str` 是编译期大小未知的动态大小类型（DST）；`&str` 是 **16 字节胖指针 `(ptr, len)`**；`String` 是拥有堆内存所有权的 **24 字节控制头 `(ptr, len, cap)`**；
+2. **UTF-8 变长编码决定了访问与安全边界**：`.len()` 返回的是**字节数**而非字符数；为了避免语义歧义与隐藏的 `O(N)` 遍历开销，Rust 禁止整数下标 `s[i]`（报 `E0277`），而范围切片在不确定边界时应优先使用 `s.get(a..b)` 防止运行时 `panic`；
+3. **签名选型遵循所有权需求**：只读参数一律写 `&str`，结构体字段与需要交出所有权的返回值使用 `String`。
+
+### 动手核对
+
+在 `utf8-boundary.rs` 中，`let s = String::from("语言");`（两个汉字，每个汉字在 UTF-8 中占 3 个字节，共 6 个字节）。
+1. 如果想用范围切片取出第二个汉字 `"言"`，应该写 `&s[?..?]`？
+2. 在审查一段处理用户输入的代码时，如果看到 `let preview = &user_input[0..20];`，这行代码有什么隐患？应该改成什么？
+
+核对答案：
+1. 应该写 **`&s[3..6]`**（或简写为 **`&s[3..]`**）。因为第一个汉字 `'语'` 占据了字节索引 `0, 1, 2`（即 `0..3`），第二个汉字 `'言'` 从字节索引 `3` 开始，占据 `3, 4, 5`（即 `3..6`）。
+2. 隐患：如果 `user_input` 总字节数不足 20，或者第 20 个字节恰好落在某个中文字符或 Emoji 的多字节中间，程序会在运行时直接触发 `panic` 崩溃。应改为 **`user_input.get(0..20)`** 安全获取 `Option<&str>`。
+
+---
+
+## 实战演练：审查并重写日志提取函数
+
+学完引用（`&T` / `&mut T`）、数组（`[T; N]`）、切片（`&[T]`）、动态数组（`Vec<T>`）和字符串（`&str` / `String`），我们用一道综合任务检验连续序列与字符串的工程裁决力。
+
+**业务需求**：
+写一个函数 `extract_errors`，从一组日志行中找出所有以 `"[ERROR] "`（共 8 个 ASCII 字节）开头的日志，去掉前面的 `"[ERROR] "` 前缀后，把剩余的错误消息收集起来返回给调用方；调用方在调用完函数后，还要继续使用原来的日志列表。
+
+某位新手（或 AI）写出了下面这段**问题百出**的初版代码：
+
+```rust
+// 初版问题代码（请勿在生产环境模仿）
+fn extract_errors(logs: &Vec<String>) -> Vec<String> {
+    let mut result: Vec<String> = Vec::new();
+    for i in 0..logs.len() {
+        let line: String = logs[i]; // 问题 A
+        if &line[0..8] == "[ERROR] " { // 问题 B
+            result.push(line[8..].to_string());
+        }
+    }
+    result
+}
+```
+
+请独立完成以下三项任务：
+
+1. **找出编译错误与运行时崩溃隐患**：
+   - **问题 A（第 5 行 `let line: String = logs[i];`）**：编译器会直接拒绝编译这一行。请说出它会报什么错误码，以及为什么不能这样写？
+   - **问题 B（第 6 行 `if &line[0..8] == "[ERROR] "`）**：即使把第 5 行改成借用 `let line = &logs[i];` 让代码编译通过，第 6 行在线上遇到什么样的日志文本时会当场触发 `panic` 崩溃（说出两种情况）？
+2. **优化函数签名（零拷贝设计）**：
+   - 初版签名写成了 `fn extract_errors(logs: &Vec<String>) -> Vec<String>`，每次提取子串都要调用 `.to_string()` 在堆上重新分配一块内存。
+   - 既然错误消息本身就是原日志字符串的一部分（子串），如果要求**函数内部不拷贝任何字符串内容（只返回指向原日志子串的胖指针）**，参数类型和返回值类型分别应该改成什么？
+3. **写出修正后的实现**：用 `s.get(0..8)`（或 `s.strip_prefix("[ERROR] ")`）写出安全、无堆拷贝的 `extract_errors` 函数。
+
+<details>
+<summary>点击核对参考答案与完整代码</summary>
+
+1. **错误与崩溃诊断**：
+   - **问题 A**：报 **`error[E0507]: cannot move out of index of Vec<String>`**。因为 `logs` 是只读引用 `&Vec<String>`，且 `String` 未实现 `Copy`，直接写 `logs[i]` 会试图把 `Vec` 内部第 `i` 个槽位的 `String` 所有权移走，破坏 `Vec` 连续有效区间的约束。应改为借用 `let line = &logs[i];`（或直接 `for line in logs`）。
+   - **问题 B**：`&line[0..8]` 会在以下两种情况下当场 `panic`：①某行日志总长度不足 8 个字节（如空行 `""` 或 `"ok"`），触发越界 `panic`；②某行日志开头包含中文字符或 Emoji（例如 `"警告：连接超时"`，每个汉字占 3 字节，第 8 个字节正好卡在第三个汉字中间），触发非 UTF-8 字符边界 `panic`。
+2. **签名优化**：
+   - 参数应将 `&Vec<String>` 拓宽为切片 **`&[String]`**（如果输入源本身是 `&str` 列表则可用 `&[&str]`）；
+   - 返回值不需要重新分配 `String`，直接返回存放字符串切片胖指针的动态数组 **`Vec<&str>`**，里面的每个 `&str`（16 字节）直接借用自输入 `logs` 中的堆缓冲区。
+3. **安全、零字符串拷贝的参考实现**：
+   ```rust
+   fn extract_errors(logs: &[String]) -> Vec<&str> {
+       let mut result: Vec<&str> = Vec::new();
+       for line in logs {
+           // 使用 get(0..8) 安全检查前缀，既防越界又防切碎多字节字符
+           if line.get(0..8) == Some("[ERROR] ") {
+               if let Some(msg) = line.get(8..) {
+                   result.push(msg);
+               }
+           }
+           // 注：日常工程中也可直接用标准库提供的 line.strip_prefix("[ERROR] ")
+       }
+       result
+   }
+   ```
+
+</details>
+
+---
+
+前五节我们拆解的 `[T; N]`、`&[T]`、`Vec<T>` 和 `String` 都按顺序存放元素，通过整数下标或字节范围来访问。下一节我们看标准库里另一个高频容器 `HashMap<K, V>`：当数据不再按位置顺序排列、而是按键（Key）查找值（Value）时，所有权与借用规则怎样约束它的接口设计。
+
+[继续：键值容器 `HashMap<K, V>` →](/types/hashmaps/)

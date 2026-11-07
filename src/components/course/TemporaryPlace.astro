@@ -1,0 +1,115 @@
+---
+/**
+ * 附录《位置表达式与值表达式》分步配图：值表达式的结果落进临时位置。
+ *
+ * existing 借的是已经存在的位置 text；extended 借的是 String::from("temp")
+ * 刚算出来的结果——它先落进一个临时位置，绑定再把这个临时位置的存活拉长到块结束。
+ *
+ * 底部进度条可点节点逐步观看；入视口自动播一遍。样式见 src/styles/diagrams.css。
+ */
+import { SITE_LOCALE } from '../../config/site';
+import FigureControls from './FigureControls.astro';
+
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			caption:
+				'existing borrows the place text, which already exists. The result of String::from("temp") first lands in a temporary place; extended borrows that, and the binding stretches its lifetime to the end of the block.',
+			title: 'The result of a value expression lands in a temporary place',
+			desc: 'Two borrows. Above, existing borrows the existing place text, alive for the whole block. Below, String::from("temp") computes a value that lands in a temporary place, extended borrows it, and that temporary lives from the end of the statement out to the end of the block.',
+			block: 'block { … }',
+			existing: 'existing',
+			text: 'text',
+			textValue: 'hello',
+			extended: 'extended',
+			temp: 'temporary',
+			tempValue: 'temp',
+			expr: 'String::from("temp")',
+			stmtEnd: 'end of statement',
+			extendedBy: 'extended by the binding',
+			stepper: 'Steps',
+			steps: [
+				'the value expression computes',
+				'the value lands in a temporary',
+				'extended points at it',
+				'lifetime stretched by the binding',
+			],
+		}
+	: {
+			caption:
+				'existing 借的是已经存在的位置 text；String::from("temp") 的结果先落进一个临时位置，& 再指向它，绑定把这个临时位置的存活拉长到块结束。',
+			title: '值表达式的结果落进临时位置',
+			desc: '两种借用。上面 existing 借的是已经存在的位置 text，活满整块；下面 String::from("temp") 先算出一个值，落进临时位置，extended 借它，这个临时位置从本语句结束被延长到块结束。',
+			block: '块 { … }',
+			existing: 'existing',
+			text: 'text',
+			textValue: 'hello',
+			extended: 'extended',
+			temp: '临时位置',
+			tempValue: 'temp',
+			expr: 'String::from("temp")',
+			stmtEnd: '本语句结束',
+			extendedBy: '被 let 绑定延长',
+			stepper: '步骤',
+			steps: ['值表达式算出值', '落进临时位置', 'extended 指向它', '被绑定延长存活'],
+		};
+---
+
+<figure class="diagram temp-figure" data-stepper>
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 440" role="img" aria-labelledby="tp-title tp-desc">
+		<title id="tp-title">{t.title}</title>
+		<desc id="tp-desc">{t.desc}</desc>
+
+		<rect class="panel" x="16" y="16" width="608" height="408" rx="12"></rect>
+		<text class="label" x="34" y="44">{t.block}</text>
+
+		{/* 借已有位置：整段常驻 */}
+		<rect class="slot" x="40" y="70" width="150" height="46" rx="8"></rect>
+		<text class="code" x="115" y="99" text-anchor="middle">{t.existing}</text>
+		<path class="arrow" d="M190 93 H320" marker-end="url(#tp-head)"></path>
+		<text class="label" x="320" y="64">{t.text}</text>
+		<rect class="object" x="320" y="70" width="220" height="46" rx="8"></rect>
+		<text class="name" x="430" y="99" text-anchor="middle">{t.textValue}</text>
+		<rect class="object" x="320" y="130" width="220" height="10" rx="5"></rect>
+
+		{/* 借值表达式：extended 常驻，其余分步出现 */}
+		<rect class="slot" x="40" y="210" width="150" height="46" rx="8"></rect>
+		<text class="code" x="115" y="239" text-anchor="middle">{t.extended}</text>
+		<line x1="410" y1="266" x2="410" y2="286" stroke="var(--dg-line-muted)" stroke-dasharray="3 3"></line>
+		<text class="label" x="410" y="300" text-anchor="middle">{t.stmtEnd}</text>
+
+		<g class="step" data-step="1">
+			<text class="code" x="430" y="182" text-anchor="middle">{t.expr}</text>
+			<path class="arrow" d="M430 190 V210" marker-end="url(#tp-head)"></path>
+		</g>
+
+		<g class="step" data-step="2">
+			<text class="label" x="320" y="204">{t.temp}</text>
+			<rect class="slot" x="320" y="210" width="220" height="46" rx="8"></rect>
+			<text class="name" x="430" y="239" text-anchor="middle">{t.tempValue}</text>
+			<rect class="object" x="320" y="270" width="90" height="10" rx="5"></rect>
+		</g>
+
+		<g class="step" data-step="3">
+			<path class="arrow" d="M190 233 H320" marker-end="url(#tp-head)"></path>
+		</g>
+
+		{/* 被绑定延长出来的那一截 */}
+		<rect class="object temp-ext" data-step="4" x="410" y="270" width="130" height="10" rx="5"></rect>
+		<text class="label step" data-step="4" x="500" y="258" text-anchor="middle">{t.extendedBy}</text>
+
+		<defs>
+			<marker id="tp-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+
+	<FigureControls controls="stepper" label={t.stepper} steps={t.steps} />
+</figure>
+
+<script>
+	import { initFigures } from '../../scripts/motion';
+	initFigures();
+</script>

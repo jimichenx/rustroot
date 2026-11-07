@@ -1,0 +1,93 @@
+---
+title: "编译器钩子 Trait 速查：运算符、Copy 与语言项（Lang Items）"
+description: 汇总标准库中通过 #[lang = "..."] 与编译器语法直接挂钩的语言项 Trait，包括算术与比较运算符、下标访问、Copy/Clone、Drop 及派生宏规则。
+sidebar:
+  label: 编译器钩子 Trait 速查
+  order: 5
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import langItemTraits from '../../../../../../examples/types/traits/src/bin/lang-item-traits.rs?raw';
+
+在[章末视野：Rust 语言到底有多小？](/abstraction/kernel-and-library/)中我们看到，Rust 编译器内核不能硬编码依赖标准库的具体模块路径，也不能假设 `std` 一定存在（如嵌入式 `#![no_std]` 裸机环境）。
+
+为了实现编译器内核与标准库的彻底解耦，Rust 建立了一套**基于字符串字面量的协议绑定机制——语言项（Lang Items）**。编译器内部只维护一张认识 `"add"`、`"copy"`、`"deref"` 等固定字符串名字的清单；而在标准库（`core`）源码中，对应的 Trait 定义上方则标有 `#[lang = "名称"]` 属性向编译器报名认领。例如加法契约 `Add` 的真实源码结构如下：
+
+<small class="code-source">标准库源码结构示意（<code>core::ops::arith::Add</code>）</small>
+```rust
+#[lang = "add"]
+pub trait Add<Rhs = Self> {
+    type Output;
+    fn add(self, rhs: Rhs) -> Self::Output;
+}
+```
+
+当编译器遇到用户自定义类型的 `a + b` 时，就会查找名为 `"add"` 的语言项，将表达式降级（Desugar）为 `<TypeA as Add>::add(a, b)`。
+
+本节以速查表的形式汇总日常开发中最常接触的编译器钩子 Trait。
+
+---
+
+## 一、 语法糖与编译器钩子 Trait 全景对照表
+
+| 源码中的语法或行为 | 编译器映射的标准库 Trait | 核心方法签名或机制 | 所在章节 |
+| --- | --- | --- | --- |
+| **`b = a`**（按位复制不失效） | `std::marker::Copy` | 无方法（纯编译期标记，要求先实现 `Clone`） | 第 1～3 章、第 7 章 |
+| **`a + b`** / **`a - b`** / **`a * b`** | `std::ops::{Add, Sub, Mul}` | `fn add(self, rhs: Rhs) -> Self::Output` | 第 7 章 |
+| **`a += b`** / **`a -= b`** | `std::ops::{AddAssign, SubAssign}` | `fn add_assign(&mut self, rhs: Rhs)` | 第 7 章 |
+| **`a == b`** / **`a != b`** | `std::cmp::{PartialEq, Eq}` | `fn eq(&self, other: &Rhs) -> bool` | 第 7 章 |
+| **`a < b`** / **`a > b`** | `std::cmp::{PartialOrd, Ord}` | `fn partial_cmp(&self, other: &Rhs) -> Option<Ordering>` | 第 7 章 |
+| **`col[i]`**（下标读取與修改） | `std::ops::{Index, IndexMut}` | `fn index(&self, idx: Idx) -> &Self::Output` | 第 4 章 |
+| **`for x in col`**（循环遍历） | `std::iter::{IntoIterator, Iterator}` | `fn into_iter(self) -> Self::IntoIter` | 第 9 章、[附录 B.3](/appendix/mechanisms/for-loop/) |
+| **`f(arg)`**（函数与闭包调用） | `std::ops::{Fn, FnMut, FnOnce}` | 分别以 `&self`、`&mut self`、`self` 调用 | 第 9 章 |
+| **`*ptr`**（解引用与自动脱壳） | `std::ops::{Deref, DerefMut}` | `fn deref(&self) -> &Self::Target` | 第 10 章 |
+| **离开作用域 `}` 自动清理** | `std::ops::Drop` | `fn drop(&mut self)`（编译器在作用域末尾自动插入） | 第 10 章 |
+| **`expr?`**（错误与空值早退） | `std::ops::{Try, FromResidual}` | 拆分支并在早退时调用 `From::from(e)` | 第 6～7 章 |
+
+<Aside type="note" title="哪些语法是纯编译器内置、不允许通过 Trait 重载的？">
+为了保证代码控制流的可读性，Rust 明确禁止重载短路逻辑运算符 **`&&`（逻辑与）**、**`||`（逻辑或）**，也不允许重载赋值号 **`=`** 本身或 `if` 的布尔判断条件。
+</Aside>
+
+---
+
+## 二、 常用可自动派生（`#[derive(...)]`）的钩子契约
+
+对于结构体和枚举，标准库提供了内置的 `#[derive(...)]` 宏，无需手写样板代码即可自动生成以下契约的实现：
+
+1. **`#[derive(Clone, Copy)]`**：
+   - **`Clone`** 自动按字段逐一调用 `.clone()`；
+   - **`Copy`** 是编译期标记契约（`trait Copy: Clone`）。**边界铁律**：只有当类型的所有字段自身都实现了 `Copy` 时，才允许派生 `Copy`；若字段中含有 `String`、`Vec<T>` 或 `&mut T` 等未实现 `Copy` 的类型，派生 `Copy` 会直接报 **`error[E0204]`**。
+2. **`#[derive(PartialEq, Eq)]`**：
+   - 自动生成逐字段相等比较，使类型支持 `==` 与 `!=`。
+   - **为什么分成两个？** 因为浮点数 `f32` / `f64` 存在特殊的 `NaN != NaN`（不满足自反性 `x == x`），所以浮点数只实现了部分相等 `PartialEq` 而未实现完全相等 `Eq`。如果你的结构体不含浮点数，通常将 `PartialEq, Eq` 成对派生（作为 `HashMap` 的 Key 时必须实现 `Eq + Hash`）。
+3. **`#[derive(PartialOrd, Ord)]`**：
+   - 自动按字段声明顺序（或枚举变体声明顺序）生成大小比较，使类型支持 `<`、`<=`、`>`、`>=` 及数组 `.sort()`。
+
+---
+
+## 三、 完全限定语法（`<Type as Trait>::method`）与同名方法消歧
+
+在本文开头，我们看到编译器把 `a + b` 降级为了 **`<TypeA as Add>::add(a, b)`**；在第 7 章 7.4 节中，我们也见过 `?` 运算符调用 **`<AppError as From<ParseIntError>>::from(e)`**。
+
+这种 **`<具体类型 as Trait名>::方法名(参数...)`** 的写法，在 Rust 中称为**完全限定语法（Fully Qualified Syntax）**。
+
+由于 Rust 允许一个类型同时拥有固有方法（`impl Type`）并实现多个不同的 Trait，如果固有方法与某个 Trait 的方法重名（例如都叫 `fn name(&self)`）：
+- 直接写 `a.name()` 时，编译器**默认优先调用类型自身的固有方法**（`impl Vec2` 中的 `name`）；
+- 如果你想显式调用某个特定 Trait（如 `Label`）里的同名方法，或者在多个 Trait 方法重名时消除歧义，只需写出 **`<Vec2 as Label>::name(&a)`**，即可向编译器精准指明要调用哪一份契约的实现。
+
+---
+
+## 四、 动手核对实验
+
+下面这段代码展示了在自定义结构体 `Vec2` 上派生 `Clone, Copy, PartialEq, Eq`、手写实现 `Add` 运算符钩子，并用 `<Vec2 as Label>::name(&a)` 消除同名方法歧义：
+
+<small class="code-source">源文件：<code>examples/types/traits/src/bin/lang-item-traits.rs</code></small>
+<Code code={langItemTraits} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+sum = Vec2 { x: 2, y: 4 }, equal? true
+inherent = Vec2(inherent), trait = Vec2(Label)
+```

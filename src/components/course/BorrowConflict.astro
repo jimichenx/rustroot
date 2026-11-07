@@ -1,0 +1,169 @@
+---
+/**
+ * 3.3「读写排他：为什么 &T 与 &mut T 不能并存」。
+ *
+ * 三步：只读借用 r 指向还活着的 "hello"；
+ * m.push_str 扩容，释放旧块并把 s 的 ptr 改指 "hello, world"；
+ * println!("{r}") 仍读旧地址，悬垂读取被 E0502 拦住。
+ *
+ * 底部进度条可点节点逐步观看；入视口自动播一遍。
+ * 关掉 JS 时直接是终态（第 3 步）。
+ * 样式见 src/styles/diagrams.css，组件里不写 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+import FigureControls from './FigureControls.astro';
+
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			caption:
+				'Why aliasing and mutability cannot mix: if m reallocates while r is still active, the old heap buffer is freed and r would read dangling memory (prevented at compile time by E0502).',
+			title: 'A shared reference dangles if a mutable reference reallocates',
+			desc: 'On the stack frame, shared reference r (&String) still holds the old view, and a dashed arrow points at the freed 5-byte "hello" buffer on the heap, marked as a dangling read (blocked by E0502). Below, mutable reference m (&mut String) has modified s (String): ptr, len 12, and cap 12 are live, and a solid arrow runs from ptr to the newly allocated 12-byte buffer "hello, world".',
+			stack: 'stack frame',
+			heap: 'heap',
+			shared: 'shared ref',
+			mutable: 'mutable ref',
+			oldView: 'old view',
+			observe: '',
+			dangling: 'dangling read! (blocked by E0502)',
+			stale1: 'old 5-byte buffer',
+			stale2: '(freed on reallocation)',
+			fresh1: 'newly allocated',
+			fresh2: '12-byte buffer',
+			len5: 'len · 5',
+			cap5: 'cap · 5',
+			len: 'len · 12',
+			cap: 'cap · 12',
+			stepper: 'Steps',
+			steps: [
+				'1. let r = &s; shared borrow',
+				'2. m.push_str(...) reallocates & frees old buffer',
+				'3. println!("{r}") dangling read (E0502)',
+			],
+		}
+	: {
+			caption:
+				'为什么读写必须排他：若允许 m 扩容修改的同时保留 r 的读取，旧堆缓冲区释放后会立刻造成悬垂读取（编译器以 E0502 提前拦截）。',
+			title: '若读写同时有效，扩容会让只读引用悬垂',
+			desc: '栈帧上方，只读引用 r（&String）仍保存旧地址，虚线箭头指向堆上已释放的 5 字节缓冲区 "hello"，标注为悬垂读取（E0502 拦截）。下方可变引用 m（&mut String）已修改 s（String）：ptr、len · 12、cap · 12 仍然有效，实线箭头从 ptr 指向新分配的 12 字节缓冲区 "hello, world"。',
+			stack: '栈帧',
+			heap: '堆',
+			shared: '只读引用',
+			mutable: '可变引用',
+			oldView: '旧地址',
+			observe: '观测路径',
+			dangling: '悬垂读取！（E0502 拦截）',
+			stale1: '原 5 字节缓冲区',
+			stale2: '（扩容后当场释放）',
+			fresh1: '新分配的',
+			fresh2: '12 字节缓冲区',
+			len5: 'len · 5',
+			cap5: 'cap · 5',
+			len: 'len · 12',
+			cap: 'cap · 12',
+			stepper: '步骤',
+			steps: [
+				'1. let r = &s; 只读借用',
+				'2. m.push_str(...) 扩容释放旧块',
+				'3. println!("{r}") 悬垂读取（报 E0502）',
+			],
+		};
+---
+
+<figure class="diagram borrow-figure" data-stepper>
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 380" role="img" aria-labelledby="bc-title bc-desc">
+		<title id="bc-title">{t.title}</title>
+		<desc id="bc-desc">{t.desc}</desc>
+
+		<rect class="panel" x="16" y="16" width="280" height="348" rx="12"></rect>
+		<text class="label" x="36" y="42">{t.stack}</text>
+
+		<rect class="panel" x="344" y="16" width="280" height="348" rx="12"></rect>
+		<text class="label" x="364" y="42">{t.heap}</text>
+
+		{/* 第 1 步：r 与 s 登场，之后留在画面上 */}
+		<g class="step" data-step="1">
+			<text class="name" x="36" y="72">r</text>
+			<text class="code" x="56" y="72">{'&String'}</text>
+			<text class="label" x="136" y="72">{t.shared}</text>
+
+			<rect class="slot" x="36" y="84" width="220" height="56" rx="8"></rect>
+			<text class="name" x="146" y={en ? 117 : 106} text-anchor="middle">{t.oldView}</text>
+			{
+				!en && (
+					<text class="edge-sub" x="146" y="128" text-anchor="middle">
+						{t.observe}
+					</text>
+				)
+			}
+
+			<text class="name" x="36" y="200">s</text>
+			<text class="code" x="56" y="200">String</text>
+
+			<rect class="slot" x="36" y="212" width="220" height="36" rx="8"></rect>
+			<text class="code" x="146" y="235" text-anchor="middle">ptr</text>
+
+			<rect class="slot" x="36" y="254" width="220" height="36" rx="8"></rect>
+			<rect class="slot" x="36" y="296" width="220" height="36" rx="8"></rect>
+		</g>
+
+		{/* 第 2 步：m 扩容。先画已释放的旧块，活块盖在上面，淡出后虚线露出来 */}
+		<g class="step" data-step="2">
+			<text class="name" x="36" y="170">m</text>
+			<text class="code" x="58" y="170">{'&mut String'}</text>
+			<text class="label" x="172" y="170">{t.mutable}</text>
+
+			<text class="code" x="146" y="277" text-anchor="middle">{t.len}</text>
+			<text class="code" x="146" y="319" text-anchor="middle">{t.cap}</text>
+
+			<text class="label" x="364" y="70">{t.stale1}</text>
+			<text class="label" x="364" y="92">{t.stale2}</text>
+			<rect class="freed" x="364" y="132" width="240" height="52" rx="10"></rect>
+
+			<text class="label" x="364" y="240">{t.fresh1}</text>
+			<text class="label" x="364" y="262">{t.fresh2}</text>
+			<rect class="object" x="364" y="278" width="240" height="56" rx="10"></rect>
+			<text class="name" x="484" y="311" text-anchor="middle">{'"hello, world"'}</text>
+
+			<path class="arrow" d="M256 230 H332 V306 H364" marker-end="url(#bc-head)"></path>
+		</g>
+
+		{/* 只在武装后的第 1 步：旧块还活着，ptr 与 len/cap 仍是扩容前的样子 */}
+		<g class="bc-before">
+			<rect class="object" x="364" y="132" width="240" height="52" rx="10"></rect>
+			<text class="code" x="146" y="277" text-anchor="middle">{t.len5}</text>
+			<text class="code" x="146" y="319" text-anchor="middle">{t.cap5}</text>
+			<path class="arrow" d="M256 230 H304 V176 H364" marker-end="url(#bc-head)"></path>
+		</g>
+
+		<text class="label step" data-step="1" x="484" y="163" text-anchor="middle">{'"hello"'}</text>
+
+		{/* r 一直指向这块 "hello"：第 3 步改成虚线，标出悬垂读取 */}
+		<g class="bc-shared-arrow">
+			<path class="arrow" d="M256 112 H312 V158 H364" marker-end="url(#bc-head)"></path>
+		</g>
+
+		<g class="step" data-step="3">
+			<text class="edge-label" x="484" y="116" text-anchor="middle">{t.dangling}</text>
+			<path class="arrow danger" d="M256 112 H312 V158 H364" marker-end="url(#bc-danger)"></path>
+		</g>
+
+		<defs>
+			<marker id="bc-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+			<marker id="bc-danger" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line-muted)"></path>
+			</marker>
+		</defs>
+	</svg>
+
+	<FigureControls controls="stepper" label={t.stepper} steps={t.steps} />
+</figure>
+
+<script>
+	import { initFigures } from '../../scripts/motion';
+	initFigures();
+</script>

@@ -1,0 +1,31 @@
+# build output
+dist/
+.astro/
+.astro-zh/
+.astro-en/
+
+# dependencies
+node_modules/
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# environment variables
+.env
+.env.production
+
+# macOS
+.DS_Store
+
+# editors
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Rust examples
+examples/target/
+# 全局 gitignore 可能忽略 `bin`，这里显式放行 Cargo 的 src/bin/ 目录
+!examples/**/src/bin/

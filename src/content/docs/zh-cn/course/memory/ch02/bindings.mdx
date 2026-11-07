@@ -1,0 +1,147 @@
+---
+title: "声明与绑定：复制、移动与借用"
+description: 从第一个可运行的 Rust 程序认识 let 与类型推断，再对比整数与 String 在同一个等号下的 Copy 与 Move 分野。
+sidebar:
+  label: 声明与绑定
+  order: 1
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import StringMove from '../../../../../../components/course/StringMove.astro';
+import binding from '../../../../../../../examples/memory/variables/src/bin/binding.rs?raw';
+import copy from '../../../../../../../examples/memory/variables/src/bin/init-copy.rs?raw';
+import move from '../../../../../../../examples/memory/variables/src/bin/init-move.rs?raw';
+import reference from '../../../../../../../examples/memory/variables/src/bin/init-reference.rs?raw';
+import javaCopy from '../../../../../../../examples/memory/variables/java/ReferenceCopy.java?raw';
+
+
+第一章我们用伪代码推演出了一套不靠 GC 的内存回收模型：每块堆资源在同一时刻只由唯一的所有者负责，在离开作用域（`}`）时自动释放；赋值时根据是否转移释放责任，分成复制（Copy）与移动（Move）。
+
+从这一节开始，我们打开编译器，把伪代码换成真实的 Rust 代码。
+
+许多人第一次写 Rust，挫败感往往从最基础的变量声明和赋值开始：明明只是写下几行 `let` 和 `=`，为什么有的变量能继续用，有的变量却当场报错？我们先从第一行 `let` 的语法看起，再把第一章的模型对上编译器的报错。
+
+## 第一个可运行程序：`let` 与类型推断
+
+在 Rust 中，`fn main() {}` 是可执行程序的入口，代码从它的 `{}` 内部开始执行。先看一段最基础的程序：
+
+<small class="code-source">源文件：<code>examples/memory/variables/src/bin/binding.rs</code></small>
+<Code code={binding} lang="rust" />
+
+函数体内的三行语句分别对应三个基础语法：
+
+- **`let` 与绑定（Binding）**：`let n = 7;` 声明变量，把名字 `n` 与栈上的值 `7` 关联起来——这个动作叫建立**绑定**，语句以分号 `;` 结束。
+- **类型标注（Type Annotation）与类型推断（Type Inference）**：`let count: i32 = 7;` 用 `: i32` 显式指明变量是 32 位有符号整数（在栈上固定占 4 字节）；`let n = 7;` 省略了 `: i32`，由编译器根据右侧的 `7` 自动推算出类型是 `i32`。
+- **打印输出**：`println!("{n} {count}");` 把两个变量的当前值打印到终端（`println!` 末尾带感叹号是因为它是宏，这里先当作现成的打印工具使用）。更多写法可查[格式化打印](/appendix/basics/printing/)。
+
+你可以直接点击代码块的 Playground 按钮运行，预期输出 `7 7`。
+
+这里要先立住一个判断：**省略类型标注，绝不等于没有类型，更不等于动态类型。**（如果你对 `usize`、`bool`、`char` 或单元类型 `()` 等内置基础类型还不熟悉，可随时翻阅[基础速查：标量、元组与单元类型](/appendix/basics/scalars-and-tuples/)。）
+
+因为编译器必须清楚每个变量在栈上占几个字节、离开作用域时要不要释放堆，才能生成机器码。哪怕省略了 `: i32`，编译器依然在编译期为 `n` 确定了具体类型 `i32`——它的内存大小与使用约束在编译期就已经固定。
+
+## 同一个 `=`，为什么有复制和移动？
+
+上面的例子里，`=` 右侧写的是字面量 `7`。如果把 `=` 右侧换成一个已经存在的变量，用它来初始化新变量，会发生什么？
+
+在其他大多数语言里，`b = a` 和 `t = s` 没有任何区别，赋值之后两个变量都能照常读取。但在 Rust 里，把同样的写法分别用在整数 `i32` 和动态字符串 `String` 上，结果截然不同。
+
+### 1. 整数初始化：栈上按位复制
+
+先看 `i32`。下面这段代码用变量 `a` 初始化变量 `b`，随后同时打印 `a` 和 `b`：
+
+<small class="code-source">源文件：<code>examples/memory/variables/src/bin/init-copy.rs</code></small>
+<Code code={copy} lang="rust" />
+
+运行程序，顺利输出 `7 7`。
+
+对照第一章的内存布局：整数 `7` 的 4 个字节全部直接放在栈帧里，没有向堆申请任何需要归还的资源。`let b = a;` 直接把 `a` 在栈上的 4 个字节按位复制一份给 `b`——这就是**复制**。复制完成后，`a` 和 `b` 各自持有独立的 `7`，两个变量都能继续使用。
+
+### 2. 字符串初始化：原变量当场失效
+
+现在保持代码结构完全不变，只把整数换成带着堆上字符缓冲区的 `String`：
+
+<small class="code-source">源文件：<code>examples/memory/variables/src/bin/init-move.rs</code></small>
+<Code code={move} lang="rust" />
+
+这里 `String::from("hello")` 在堆上申请了一块存放 `"hello"` 的字符缓冲区，并把三个机器字的控制头（堆指针 `ptr`、长度 `len`、容量 `cap`）放进栈变量 `s`。
+
+默认源码注释掉了打印 `s` 的那一行。现在把 `// println!("{s}");` 的注释去掉，尝试像刚才打印整数 `a` 那样打印 `s`。
+
+编译器会当场拒绝，并给出我们在 Rust 里最常遇到的第一个所有权报错：
+
+<small class="code-source">编译器诊断摘要：取消 init-move.rs 中标记行的注释后</small>
+```text
+error[E0382]: borrow of moved value: `s`
+```
+
+明明和 `let b = a;` 语法相同，换成 `String` 后为什么连打印原变量 `s` 都不允许？用第一章的模型逐行核对：
+
+1. **执行 `let t = s;` 之前**：`s` 是堆上 `"hello"` 的唯一所有者（Owner），负责在离开 `main` 作用域（`}`）时释放这块堆缓冲区；
+2. **执行 `let t = s;` 时**：若让 `s` 和 `t` 同时有效，离开 `}` 时就会触发双重释放（Double Free）。为守住「同一块堆同一时刻只有一个所有者」，这一行触发**移动**：
+   - **运行时（物理内存）**：把 `s` 栈槽位里的三格控制头（24 字节）按位复制给 `t`，堆上的 `"hello"` 不复制；**`s` 在栈帧上的 24 字节槽位并没有被释放**，内存里也没有打上任何物理标记；
+   - **编译期（编译器状态表）**：编译器在内部的状态表里，把原变量 `s` 的状态改记为**已失效（已移动）**，并将释放责任转记到 `t` 名下；
+3. **执行 `println!("{s}");` 时**：借用检查器（Borrow Checker）在编译期查状态表，发现代码试图读取状态为「已失效」的 `s`，直接以 `error[E0382]` 拒绝编译。
+
+<StringMove />
+（注：图中 `s` 的虚线框与「已失效」表示编译器状态表里的静态状态，它的栈槽位仍留在当前栈帧中，下一节我们会看到如何往这个空置的栈槽位里重新填入新值。）
+
+<Aside type="note" title="如果你来自 Java：引用复制 vs 所有权移动">
+在 Java 中，写出几乎一模一样的代码，两个变量都能正常打印：
+
+<small class="code-source">源文件：<code>examples/memory/variables/java/ReferenceCopy.java</code></small>
+<Code code={javaCopy} lang="java" />
+
+因为 Java 的 `s` 和 `t` 保存的都是指向同一个堆对象的引用（由运行时的 GC 负责最终回收），`t = s` 只是复制了引用地址，两个变量共享同一个对象。
+
+而 Rust 的 `String` 变量直接握着三格控制头并承担释放责任。因此 Rust 的 `let t = s;` 不会暗中建立共享，而是直接转移所有权并让 `s` 失效。
+</Aside>
+
+<Aside type="note" title="编译器的实际判据与底层优化">
+在第一章里，我们顺着「有没有需要释放的堆资源」推导出了复制与移动。落到真实的 Rust 编译器中，静态检查的唯一判据是**该类型是否实现了 `Copy`**：实现了 `Copy`（如 `i32`、布尔值、只读引用 `&T`）就走复制，未实现 `Copy`（如 `String`）就走移动。
+
+另外，在局部变量的逻辑模型中，我们用「把栈上三个机器字的控制头复制给新变量、再将原变量标记为失效」来解释移动；但在生成最终机器码时，编译器完全可能优化掉这次栈字节的复制，直接复用原来的栈内存位置。
+</Aside>
+
+### 3. 不想让原变量失效：用 `&` 创建引用
+
+看到 `error[E0382]`，你自然会问：如果我写下 `let` 时，只是想多一个变量来读取 `s` 里的 `"hello"`，并不想把释放责任移走导致 `s` 失效，在 Rust 代码里该怎么写？
+
+直接用第一章第四节设计出来的**引用（Reference）**——在变量名前加上 `&`：
+
+<small class="code-source">源文件：<code>examples/memory/variables/src/bin/init-reference.rs</code></small>
+<Code code={reference} lang="rust" />
+
+运行这段程序，顺利打印出 `hello hello`，`s` 和 `r` 都能正常使用。
+
+这里的 `&s` 就是**借用（Borrowing）**操作：它不移走 `s` 的三格控制头，而是取出 `s` 在栈上的地址，造出一个只占 8 字节、且在类型上剥离了释放责任的引用（类型为 `&String`）交给 `r`。因为释放责任依然留在 `s` 身上，`s` 不会失效，最终仍由 `s` 在离开 `main` 的 `}` 时释放堆内存。
+
+## 总结：三种初始化对比与动手核对
+
+把这一节的三种初始化写法放在一起对照：
+
+| 初始化语句 | 等号执行的动作 | 原变量还能用吗 | 堆上字符缓冲区由谁负责释放 |
+| --- | --- | --- | --- |
+| `let b = a;`（`a: i32`） | **复制**：复制栈上 4 字节整数（`i32` 实现了 `Copy`） | 能 | 无堆缓冲区 |
+| `let t = s;`（`s: String`） | **移动**：复制控制头，转移释放责任（`String` 未实现 `Copy`） | **不能（报 `E0382`）** | 新变量 `t` |
+| `let r: &String = &s;` | **借用**：取 `s` 的栈地址，剥离释放责任 | 能 | 仍是原变量 `s` |
+
+### 动手核对
+
+打开 `init-move.rs`（或点击它的 Playground），把 `let t = s;` 改成 `let t = &s;`，同时取消 `println!("{s}");` 这一行的注释。
+
+在运行前，先顺着上面的表格推演两步：
+1. 加上 `&` 之后，编译器为 `t` 推断出的类型变成了什么？
+2. 此时 `s` 为什么不再触发 `error[E0382]`，堆上的 `"hello"` 最终由谁释放？
+
+核对答案：加上 `&` 后，右侧变成了借用操作，`t` 的类型推断为 `&String`。因为借用不转移释放责任，原变量 `s` 依然有效，两行 `println!` 都能正常打印 `hello`，堆上的字符缓冲区最终仍由 `s` 在离开 `}` 时释放。
+
+---
+
+这一节我们看到的每一个 `=`，左边都带着 `let`——它们都是在**创建一个全新变量**的同时接手初始值。
+
+如果一个变量已经创建好了，后面不写 `let`，直接写一行 `s = ...` 给这个已有变量换入新值，会发生什么？它原本持有的那块旧堆内存又去了哪里？
+
+带着这个问题，我们进入下一节。
+
+[继续：可变与重新赋值 →](/memory/reassignment/)

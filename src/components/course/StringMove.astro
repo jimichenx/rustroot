@@ -1,0 +1,125 @@
+---
+/**
+ * 2.1「String 移动后的栈堆真实布局」。
+ * let t = s; 之后，栈上 s 的三格控制头（ptr、len、cap）标为已失效，
+ * t 持有复制来的三格控制头并指向堆上唯一一份 "hello" 字符缓冲区。
+ * 样式见 src/styles/diagrams.css。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			caption:
+				'After let t = s;: the three-word header is copied into t, s becomes invalid, and only one character buffer exists on the heap.',
+			title: 'Stack and heap layout of String after let t = s;',
+			desc: 'On the stack frame, variable s (String) is marked invalid with its three machine words (ptr, len 5, cap 5) shown in dashed outlines and no arrow. Below it, variable t (String) holds an active three-word header (ptr, len 5, cap 5), with an arrow from ptr pointing to the five-character buffer hello on the heap.',
+			stack: 'stack frame',
+			heap: 'heap',
+			buffer: 'character buffer',
+			invalid: 'invalid',
+			len: 'len · 5',
+			cap: 'cap · 5',
+		}
+	: {
+			caption:
+				'执行 let t = s; 之后：三格控制头复制给 t，原变量 s 当场失效，堆上的字符缓冲区只有一份。',
+			title: '执行 let t = s; 之后 String 的栈与堆布局',
+			desc: '栈帧里，原变量 s（String）标为已失效，它的三个机器字（ptr、len · 5、cap · 5）呈虚线框，没有箭头。下方的变量 t（String）持有有效的三个机器字（ptr、len · 5、cap · 5），箭头从 t 的 ptr 指向堆上唯一的五个字符 hello。',
+			stack: '栈帧',
+			heap: '堆',
+			buffer: '字符缓冲区',
+			invalid: '已失效',
+			len: 'len · 5',
+			cap: 'cap · 5',
+		};
+
+const chars = ['h', 'e', 'l', 'l', 'o'];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 416" role="img" aria-labelledby="sm-title sm-desc">
+		<title id="sm-title">{t.title}</title>
+		<desc id="sm-desc">{t.desc}</desc>
+
+		<rect class="panel" x="16" y="16" width="280" height="384" rx="12"></rect>
+		<text class="label" x="36" y="42">
+			{t.stack}
+		</text>
+
+		<text class="name" x="36" y="72">
+			s
+		</text>
+		<text class="code" x="54" y="72">
+			String
+		</text>
+		<text class="label" x="114" y="72">
+			{t.invalid}
+		</text>
+
+		<rect class="freed" x="36" y="84" width="220" height="38" rx="8"></rect>
+		<text class="label" x="146" y="108" text-anchor="middle">
+			ptr
+		</text>
+
+		<rect class="freed" x="36" y="128" width="220" height="38" rx="8"></rect>
+		<text class="label" x="146" y="152" text-anchor="middle">
+			{t.len}
+		</text>
+
+		<rect class="freed" x="36" y="172" width="220" height="38" rx="8"></rect>
+		<text class="label" x="146" y="196" text-anchor="middle">
+			{t.cap}
+		</text>
+
+		<text class="name" x="36" y="242">
+			t
+		</text>
+		<text class="code" x="54" y="242">
+			String
+		</text>
+
+		<rect class="slot" x="36" y="254" width="220" height="38" rx="8"></rect>
+		<text class="code" x="146" y="278" text-anchor="middle">
+			ptr
+		</text>
+
+		<rect class="slot" x="36" y="298" width="220" height="38" rx="8"></rect>
+		<text class="code" x="146" y="322" text-anchor="middle">
+			{t.len}
+		</text>
+
+		<rect class="slot" x="36" y="342" width="220" height="38" rx="8"></rect>
+		<text class="code" x="146" y="366" text-anchor="middle">
+			{t.cap}
+		</text>
+
+		<rect class="panel" x="344" y="16" width="280" height="384" rx="12"></rect>
+		<text class="label" x="364" y="42">
+			{t.heap}
+		</text>
+		<text class="label" x="364" y="233">
+			{t.buffer}
+		</text>
+		<rect class="object" x="364" y="245" width="240" height="56" rx="10"></rect>
+		{
+			chars.map((ch, i) => (
+				<g>
+					<rect class="slot" x={378 + i * 44} y="255" width="36" height="36" rx="6"></rect>
+					<text class="name" x={396 + i * 44} y="279" text-anchor="middle">
+						{ch}
+					</text>
+				</g>
+			))
+		}
+
+		<path class="arrow" d="M256 273 H364" marker-end="url(#sm-head)"></path>
+
+		<defs>
+			<marker id="sm-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

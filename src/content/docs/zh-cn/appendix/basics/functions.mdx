@@ -1,0 +1,80 @@
+---
+title: "函数、语句与表达式（决定返回值的分号）"
+description: 速查 Rust 函数签名的类型标注规则，区分产出值的表达式与返回 () 的语句，理解为什么函数最后一行多加一个分号会引发编译报错。
+sidebar:
+  label: "函数与表达式"
+  order: 2
+---
+
+import { Code } from '@astrojs/starlight/components';
+import fnSemicolon from '../../../../../../examples/appendix/basic-syntax/src/bin/fn-semicolon.rs?raw';
+import blockAndIf from '../../../../../../examples/appendix/basic-syntax/src/bin/block-and-if.rs?raw';
+
+:::note[阅读指引]
+- **定位**：基础速查。遇到主线示例里的写法时再翻，不必按顺序读完。
+- **关联主线**：第 3 章（引用传参）、第 4 章（结构体方法与返回值）
+- **核心解决**：为什么函数最后一行不写 `return`、不加分号就是返回值？为什么多打一个分号 `;` 就会报 `expected i32, found ()`？为什么 `if / else` 可以直接写在 `let x = ...` 的等号右边？
+:::
+
+在第 2 章里，我们已经知道局部变量可以省略类型标注（如 `let n = 7;`），由编译器自动推断。但一旦走出函数体内部、开始定义函数签名，或者在函数末尾返回计算结果时，Rust 有两条与传统语言截然不同的核心规则。
+
+## 一、函数签名与「末尾不加分号」的返回值
+
+先看下面这个最基础的加法函数 `add`：
+
+<small class="code-source">源文件：<code>examples/appendix/basic-syntax/src/bin/fn-semicolon.rs</code></small>
+<Code code={fnSemicolon} lang="rust" />
+
+运行默认源码，输出 `7`。这里包含两条必须掌握的规则：
+
+### 1. 函数签名中的参数与返回值类型不能省略
+
+在函数体内部，编译器允许 `let sum = add(3, 4);` 省略类型标注；但在 `fn add(a: i32, b: i32) -> i32` 这行**函数签名**上，所有参数的类型（`a: i32, b: i32`）以及返回值的类型（`-> i32`）**必须显式写出，绝不允许省略**（除非函数不返回有意义的值，此时省略 `-> ()` 默认代表返回单元类型 `()`）。
+
+这是 Rust 刻意为之的工程设计：只要函数签名把输入和输出的类型实体钉死，调用方只看这一行签名就能完成类型与借用核对，函数体内部的改动不会意外改变对外的接口契约。
+
+### 2. 表达式（Expression）vs 语句（Statement）：那个决定命运的分号
+
+观察 `add` 函数体的第 3 行：它既没有写 `return`，末尾也没有加分号 `;`，只写了孤零零的 `a + b`。
+
+如果我们把 `a + b` 注释掉，取消第 4 行 `a + b;`（仅仅多加了一个分号）的注释，编译器会立刻拒绝编译：
+
+<small class="code-source">编译器诊断摘要：在 add 函数末尾的 a + b 后加上分号</small>
+```text
+error[E0308]: mismatched types
+ --> appendix/basic-syntax/src/bin/fn-semicolon.rs:2:27
+  |
+2 | fn add(a: i32, b: i32) -> i32 {
+  |    ---                    ^^^ expected `i32`, found `()`
+3 |     // a + b
+4 |     a + b;
+  |          - help: remove this semicolon to return this value
+```
+
+为什么仅仅多打了一个分号 `;`，返回值的类型就从 `i32` 变成了空值 `()`？
+
+因为 Rust 是一门**基于表达式（Expression-based）**的语言，它严格区分两样东西：
+
+- **表达式（Expression）**：**会计算并产出一个值，末尾不带分号**。例如 `3 + 4`、`a + b`、一次函数调用 `add(3, 4)`。当一个代码块 `{ ... }` 的最后一行是一个不带分号的表达式时，**这个表达式算出来的值，就直接成为整个代码块（或整个函数）的返回值**。
+- **语句（Statement）**：**执行一个动作，但不产出值（或者说只产出空值 `()`）**。除了 `let x = 1;` 这种变量声明语句之外，**只要你在任何一个表达式末尾加上分号 `;`，你就把这个表达式变成了一条语句**——刚才算出来的 `a + b` 被当场丢弃，整块代码的最终求值结果变成了单元类型 `()`，自然与函数签名要求的 `-> i32` 冲突，触发 `error[E0308]`。
+
+（注：Rust 依然保留了 `return` 关键字，但通常只在需要从函数**中途提前返回**时写 `return val;`；函数的正常结尾一律直接写不带分号的尾部表达式。）
+
+---
+
+## 二、代码块 `{}`、`if / else` 与 `loop` 本身也是表达式
+
+理解了「代码块最后一行不加分号就会产出值」，你就能看懂为什么 Rust 的控制流写法如此紧凑：在 Rust 里，**代码块 `{}`、`if / else` 乃至 `loop` 循环，全都是可以直接算出一个值的表达式**，因此可以直接放在 `let x = ...` 的等号右侧。
+
+<small class="code-source">源文件：<code>examples/appendix/basic-syntax/src/bin/block-and-if.rs</code></small>
+<Code code={blockAndIf} lang="rust" />
+
+运行程序，输出 `pass 8`。
+
+1. **`if / else` 作为表达式（替代三元运算符 `? :`）**：
+   Rust 没有 `cond ? a : b` 这种三元运算符，因为 `if / else` 自己就能直接产出值。在 `let level = if score >= 60 { "pass" } else { "fail" };` 中，两个 `{}` 分支内部的 `"pass"` 和 `"fail"` 末尾都不加分号，作为各自分支的返回值交给变量 `level`（注意：外层最后的 `;` 是用来结束整条 `let level = ...;` 声明语句的）。
+   **类型约束**：当用 `if / else` 产出值时，`if` 分支和 `else` 分支交出的值**必须是完全相同的类型**；且不能省略 `else` 分支（否则条件不成立时就没有值可交了）。
+2. **`loop` 循环通过 `break` 产出值**：
+   Rust 有三种循环：`for`（遍历迭代器）、`while`（条件循环）和 `loop`（无条件无限循环）。其中，`loop` 不仅用于死循环，还支持在触发退出时写成 **`break 表达式;`**（如上面的 `break n * 2;`），把这个值作为整个 `loop { ... }` 表达式的计算结果赋给左侧的 `doubled`。
+
+记住一句话，就能彻底避开分号与返回值的报错：**想把算出来的值往外吐，末尾就别加分号；加了分号，值就被原地吞掉变成 `()` 了。**

@@ -1,0 +1,72 @@
+---
+title: "The hard triangle: what does automatic memory reclamation cost?"
+description: Memory management trades off performance, safety, and expressiveness; Rust aims for automatic reclamation without a runtime garbage collector or reference counting.
+sidebar:
+  label: The hard triangle
+  order: 1
+---
+
+import HardTriangle from '../../../../../../components/course/HardTriangle.astro';
+import ReleaseGrid from '../../../../../../components/course/ReleaseGrid.astro';
+
+Why invent Rust when languages such as C, C++, Java, Python, and Go already exist?
+
+Rust aims to combine **performance close to the hardware with memory safety**. To see the trade-off, consider two familiar approaches to memory management.
+
+In Python, Java, or JavaScript, assigning an object with `b = a` lets both variables refer to the same object without manual cleanup. The runtime manages the memory, with a corresponding runtime cost. In manually managed C or C++ code, programmers control deallocation themselves and must prevent memory errors.
+
+Why didn't earlier languages combine high performance with strong safety? To understand Rust's goal and its trade-offs, we need to look at three competing dimensions of programming language design:
+
+- **Performance**: how little overhead your code pays on the hardware.
+- **Safety**: whether the program prevents memory bugs such as reading freed memory or stepping past valid bounds.
+- **Expressiveness**: both the power of high-level abstractions and how freely you can write code without restrictions.
+
+We call the tension among these three the **hard triangle** of programming languages. It is a spectrum, not a binary choice—lean hard into any two, and you pay more on the third. This section follows the first edge Rust has to conquer: **safety versus performance**, which comes down to who frees memory and when.
+
+## The hard triangle
+
+<HardTriangle />
+
+### Safety and performance: when memory is freed
+
+The split along this edge is simple: when does a block of memory get freed, and who makes that call? Mainstream languages take one of two paths:
+
+- **Leave it to the programmer (manual management in C / C++).** Memory is freed on the exact line where you write `free` or `delete`, with no runtime scanning or counting overhead. You pay for that speed in safety—read a pointer after freeing it, or free the same block twice, and you get a memory bug. C++ adds automatic cleanup through RAII and smart pointers, but the compiler still does not generally check whether other pointers keep reading freed data.
+- **Leave it to the runtime (Java / JavaScript / Python).** A runtime collector finds memory that is no longer in use and reclaims it. Java, JavaScript, and Go use tracing garbage collection (tracing GC); collection timing is nondeterministic, which can introduce pauses or latency fluctuations under heavy concurrency. CPython—a common Python implementation—relies mainly on reference counting, freeing most objects when their count reaches zero; a generational collector handles reference cycles.
+
+Side by side, the two approaches look like this:
+
+| Dimension | Runtime reclamation (Java / JavaScript / Python / Go) | Manual deallocation (C / C++) |
+| --- | --- | --- |
+| **When memory is freed** | Nondeterministic with tracing GC; mostly immediate with CPython reference counting | On the exact line where `free` or `delete` executes |
+| **What it favors** | Safety and unrestricted sharing—share objects freely without planning cleanup | Raw performance |
+| **What it costs** | Performance: CPU and memory spent scanning or counting, GC pauses, latency spikes | Safety: the programmer must manually prevent use-after-free, double frees, and leaks |
+| **Typical production problems** | Reduced throughput, pauses, high memory use | Crashes, data corruption, or memory remaining allocated after it is no longer needed |
+
+### The other two edges
+
+**Performance and expressiveness**: does an abstraction add work at runtime? When Python evaluates `a + b`, the runtime uses the object types to decide which addition routine to run; in C, adding two `int` values can usually be compiled to machine addition. High-level abstractions don't always cost extra at runtime—it depends on how much work the compiler can finish ahead of time.
+
+**Safety and expressiveness**: how much raw power does the programmer get? The more freely you can manipulate raw addresses, the less the compiler can verify. C lets you cast any integer into a pointer and write to it, leaving the compiler no way to know whether that address is valid. Java removes pointer arithmetic altogether and checks array bounds at runtime, throwing an exception on an invalid index.
+
+We won't pursue those two edges here.
+
+---
+
+## Rust's breakthrough: automatic reclamation without GC
+
+The two classic camps force a binary choice: accept GC overhead for safety, or write `free` by hand for speed and shoulder the risk yourself.
+
+Cross "who decides when to free" with "whether a runtime collector is involved," and four quadrants appear. Only the bottom-left quadrant gives you automatic cleanup without a runtime collector—and that is the exact spot Rust is after.
+
+<ReleaseGrid />
+
+To keep both safety and performance without compromise, only the bottom-left quadrant remains: **memory must be reclaimed automatically (not by hand), yet without computing when to free it at runtime (no GC).**
+
+Follow that thought for a second and it sounds like a **paradox**. If the programmer never writes `free`, and there is no garbage collector watching objects at runtime, how can the program know when a piece of memory is no longer needed—or which line should free it?
+
+Because that puzzle looks almost unsolvable at first glance, mainstream language design treated the bottom-left quadrant as a no-go zone for decades, assuming that "automatic memory management" automatically meant "use a garbage collector."
+
+Rust aims to make that approach work. The trade-off in the hard triangle remains: prioritizing safety and performance places constraints on **how freely you can write code**.
+
+How can a language figure out when to free memory without relying on either the programmer or a runtime collector? That question drives every section that follows. Next, we look at the two regions of memory a program uses—and see which one actually causes all the trouble.

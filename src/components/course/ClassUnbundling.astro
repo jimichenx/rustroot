@@ -1,0 +1,120 @@
+---
+/**
+ * 8.4「传统 OOP class 三合一捆绑包 vs Rust 正交拆解」。
+ * 左边：传统 OOP 的 class 把「字段与内存布局」「固有方法」「继承与多态契约」三件事焊死在同一个语法盒子里。
+ * 右边：Rust 把这三件事正交拆解为 struct / enum、impl Type、Trait + <T: Trait> / dyn Trait 三个独立机制，按需组合。
+ * 样式见 src/styles/diagrams.css。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			caption:
+				'Traditional OOP bundles memory layout, inherent methods, and inheritance/polymorphism into a single class construct. Rust unbundles them into three orthogonal mechanisms—struct/enum, impl Type, and Trait—so you only pay for what you use.',
+			title: 'Traditional OOP class 3-in-1 bundle vs Rust orthogonal unbundling',
+			desc: 'Left panel: Traditional OOP class (class Widget extends Base implements Drawable) tightly bundles three responsibilities inside one coupled object box: 1. Fields and memory layout, 2. Inherent methods, and 3. Inheritance and polymorphism contracts (extends / implements); taking one pulls the whole inheritance tree. Right panel: Rust unbundles these into three independent horizontal slots connected by arrows from the left: 1. struct / enum for physical memory layout only (product / sum type, stack-inlined), 2. impl Type for inherent methods only (self / &self / &mut self), and 3. Trait + <T: Trait> / dyn Trait for cross-type contracts and polymorphism (static or dynamic on demand).',
+			leftHead: 'Traditional OOP class · 3-in-1 Bundle',
+			leftCode1: 'class Widget extends Base',
+			leftCode2: '  implements Drawable { … }',
+			oop1Title: '1. Fields & memory layout',
+			oop1Sub: 'Hidden object header + base fields',
+			oop2Title: '2. Inherent methods',
+			oop2Sub: 'Bound to the class hierarchy',
+			oop3Title: '3. Inheritance & polymorphism',
+			oop3Sub: 'extends / implements coupled',
+			leftFoot: 'Taking one pulls the whole inheritance tree',
+			rightHead: 'Rust · Orthogonal Unbundling',
+			rightSub: 'Three independent mechanisms, combined on demand',
+			rust1Code: 'struct / enum',
+			rust1Desc: 'Physical memory layout only (product / sum, stack-inlined)',
+			rust2Code: 'impl Type',
+			rust2Desc: 'Inherent methods only (self / &self / &mut self)',
+			rust3Code: 'Trait + <T: Trait> / dyn Trait',
+			rust3Desc: 'Cross-type contract & polymorphism (static or dynamic)',
+			rightFoot: 'Pick only what you need · zero extra overhead',
+		}
+	: {
+			caption:
+				'传统 OOP 的 class 把「内存布局、固有方法、继承与多态」三件事捆死在同一个语法结构里；Rust 把它们正交拆解成 struct / enum、impl Type、Trait 三个独立机制，要哪样拿哪样。',
+			title: '传统 OOP class 三合一捆绑包与 Rust 正交拆解对比',
+			desc: '左侧面板展示传统 OOP class（class Widget extends Base implements Drawable）的三合一捆绑包：在同一个紧耦合对象框里同时塞进 1. 字段与内存布局、2. 固有方法、3. 继承与多态契约（extends / implements），底部标注「拿走一样就得背走整棵继承树」。右侧面板展示 Rust 的正交拆解与按需组合，左侧三项分别通过箭头对应右侧三个独立槽位：1. struct / enum 只管物理内存布局（积类型 / 和类型，栈上内联），2. impl Type 只管固有方法（self / &self / &mut self），3. Trait + <T: Trait> / dyn Trait 只管跨类型契约与多态（静态或动态按需选）。',
+			leftHead: '传统 OOP class · 三合一捆绑包',
+			leftCode1: 'class Widget extends Base',
+			leftCode2: '  implements Drawable { … }',
+			oop1Title: '1. 字段与内存布局',
+			oop1Sub: '隐藏对象头 + 父类字段层层叠加',
+			oop2Title: '2. 固有方法',
+			oop2Sub: '与类定义绑死在同一条继承链上',
+			oop3Title: '3. 继承与多态契约',
+			oop3Sub: 'extends / implements 耦合在一起',
+			leftFoot: '拿走一样就得背走整棵继承树',
+			rightHead: 'Rust · 正交拆解、按需组合',
+			rightSub: '三件事拆成三个独立机制，互不绑架',
+			rust1Code: 'struct / enum',
+			rust1Desc: '只管物理内存布局（积类型 / 和类型，栈上内联）',
+			rust2Code: 'impl Type',
+			rust2Desc: '只管固有方法（self / &self / &mut self）',
+			rust3Code: 'Trait + <T: Trait> / dyn Trait',
+			rust3Desc: '只管跨类型契约与多态（静态单态化 / 动态虚表按需选）',
+			rightFoot: '要哪样拿哪样，不用的机制零负担',
+		};
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 368" role="img" aria-labelledby="cu-title cu-desc">
+		<title id="cu-title">{t.title}</title>
+		<desc id="cu-desc">{t.desc}</desc>
+
+		<rect class="panel" x="16" y="16" width="268" height="336" rx="12"></rect>
+		<rect class="panel" x="324" y="16" width="300" height="336" rx="12"></rect>
+
+		<text class="label" x="32" y="42">{t.leftHead}</text>
+		<text class="code" x="32" y="64">{t.leftCode1}</text>
+		<text class="code" x="32" y="82">{t.leftCode2}</text>
+
+		<rect class="object" x="32" y="96" width="236" height="216" rx="10"></rect>
+
+		<rect class="panel" x="42" y="106" width="216" height="58" rx="6"></rect>
+		<text class="edge-label" x="150" y="130" text-anchor="middle">{t.oop1Title}</text>
+		<text class="edge-sub" x="150" y="150" text-anchor="middle">{t.oop1Sub}</text>
+
+		<rect class="panel" x="42" y="175" width="216" height="58" rx="6"></rect>
+		<text class="edge-label" x="150" y="199" text-anchor="middle">{t.oop2Title}</text>
+		<text class="edge-sub" x="150" y="219" text-anchor="middle">{t.oop2Sub}</text>
+
+		<rect class="panel" x="42" y="244" width="216" height="58" rx="6"></rect>
+		<text class="edge-label" x="150" y="268" text-anchor="middle">{t.oop3Title}</text>
+		<text class="edge-sub" x="150" y="288" text-anchor="middle">{t.oop3Sub}</text>
+
+		<text class="edge-sub" x="150" y="334" text-anchor="middle">{t.leftFoot}</text>
+
+		<text class="label" x="340" y="42">{t.rightHead}</text>
+		<text class="edge-sub" x="340" y="68">{t.rightSub}</text>
+
+		<rect class="slot" x="340" y="106" width="268" height="58" rx="8"></rect>
+		<text class="code" x="474" y="130" text-anchor="middle">{t.rust1Code}</text>
+		<text class="edge-sub" x="474" y="150" text-anchor="middle">{t.rust1Desc}</text>
+
+		<rect class="slot" x="340" y="175" width="268" height="58" rx="8"></rect>
+		<text class="code" x="474" y="199" text-anchor="middle">{t.rust2Code}</text>
+		<text class="edge-sub" x="474" y="219" text-anchor="middle">{t.rust2Desc}</text>
+
+		<rect class="slot" x="340" y="244" width="268" height="58" rx="8"></rect>
+		<text class="code" x="474" y="268" text-anchor="middle">{t.rust3Code}</text>
+		<text class="edge-sub" x="474" y="288" text-anchor="middle">{t.rust3Desc}</text>
+
+		<text class="edge-sub" x="474" y="334" text-anchor="middle">{t.rightFoot}</text>
+
+		<path class="arrow" d="M 258 135 H 340" marker-end="url(#cu-head)"></path>
+		<path class="arrow" d="M 258 204 H 340" marker-end="url(#cu-head)"></path>
+		<path class="arrow" d="M 258 273 H 340" marker-end="url(#cu-head)"></path>
+
+		<defs>
+			<marker id="cu-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

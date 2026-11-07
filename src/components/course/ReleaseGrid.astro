@@ -1,0 +1,83 @@
+---
+/** 1.1 四象限图：谁决定释放 × 靠不靠运行时回收。样式见 src/styles/diagrams.css。 */
+import { SITE_LOCALE } from '../../config/site';
+
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			title: 'Four quadrants: who frees, and whether a runtime collector is involved',
+			desc: 'A two-by-two quadrant chart. The top row is "the programmer decides when to free"; the bottom row is "automatic reclamation". The left column is "no GC, no runtime collector"; the right column is "GC, runtime reclamation". Top left lists C free and hand-written delete in C++. Top right is marked "—", an impossible combination. Bottom left reads: the approach Rust seeks, automatic reclamation without GC. Bottom right lists tracing garbage collection and reference counting.',
+			noGc: 'No GC',
+			noGcSub: 'no runtime collector',
+			gc: 'GC',
+			gcSub: 'runtime reclamation',
+			manualRow1: 'Programmer',
+			manualRow2: 'decides',
+			autoRow: 'Automatic',
+			manualNoGc: 'C free',
+			manualNoGcSub: 'hand-written delete in C++',
+			manualGc: '—',
+			manualGcSub: 'impossible',
+			rust: 'The approach Rust seeks',
+			rustSub: 'automatic reclamation · no GC',
+			gcNames: 'Tracing garbage collection',
+			gcNamesSub: 'reference counting',
+		}
+	: {
+			title: '谁决定释放、是否依赖运行时回收：四个象限',
+			desc: '两行两列共四个象限。上行是由人决定何时释放，下行是自动回收；左列没有运行时回收器（非 GC），右列靠运行时回收（GC）。左上角是 C 的 free 和 C++ 手写的 delete；右上角不成立；左下角写着「Rust 要走的路：自动回收、非 GC」；右下角是追踪式垃圾回收与引用计数。',
+			noGc: '非 GC',
+			noGcSub: '无运行时回收器',
+			gc: 'GC',
+			gcSub: '运行时回收',
+			manualRow1: '人决定',
+			manualRow2: '何时释放',
+			autoRow: '自动回收',
+			manualNoGc: 'C 的 free',
+			manualNoGcSub: 'C++ 手写的 delete',
+			manualGc: '—',
+			manualGcSub: '不成立',
+			rust: 'Rust 要走的路',
+			rustSub: '自动回收 · 非 GC',
+			gcNames: '追踪式垃圾回收',
+			gcNamesSub: '引用计数',
+		};
+---
+
+<figure class="diagram grid-figure">
+	<svg viewBox="0 0 640 400" role="img" aria-labelledby="grid-title grid-desc">
+		<title id="grid-title">{t.title}</title>
+		<desc id="grid-desc">{t.desc}</desc>
+
+		<!-- 十字分割线：不画外框 -->
+		<line class="grid-rule" x1="354" y1="80" x2="354" y2="380"></line>
+		<line class="grid-rule" x1="108" y1="230" x2="600" y2="230"></line>
+
+		<!-- 列标题：左列非 GC，右列 GC -->
+		<text class="edge-label" x="231" y="34" text-anchor="middle">{t.noGc}</text>
+		<text class="edge-sub" x="231" y="52" text-anchor="middle">{t.noGcSub}</text>
+		<text class="edge-label" x="477" y="34" text-anchor="middle">{t.gc}</text>
+		<text class="edge-sub" x="477" y="52" text-anchor="middle">{t.gcSub}</text>
+
+		<!-- 行标题：横排两行，右对齐贴着象限左边 -->
+		<text class="edge-label" x="96" y="150" text-anchor="end">{t.manualRow1}</text>
+		<text class="edge-label" x="96" y="170" text-anchor="end">{t.manualRow2}</text>
+		<text class="edge-label" x="96" y="310" text-anchor="end">{t.autoRow}</text>
+
+		<!-- 左上：非 GC + 人决定 -->
+		<text class="name" x="231" y="150" text-anchor="middle">{t.manualNoGc}</text>
+		<text class="edge-sub" x="231" y="172" text-anchor="middle">{t.manualNoGcSub}</text>
+
+		<!-- 右上：GC + 人决定，不成立 -->
+		<text class="name" x="477" y="150" text-anchor="middle">{t.manualGc}</text>
+		<text class="edge-sub" x="477" y="172" text-anchor="middle">{t.manualGcSub}</text>
+
+		<!-- 左下：非 GC + 自动回收 -->
+		<text class="node-name" x="231" y="302" text-anchor="middle">{t.rust}</text>
+		<text class="edge-sub" x="231" y="324" text-anchor="middle">{t.rustSub}</text>
+
+		<!-- 右下：GC + 自动回收 -->
+		<text class="name" x="477" y="302" text-anchor="middle">{t.gcNames}</text>
+		<text class="edge-sub" x="477" y="324" text-anchor="middle">{t.gcNamesSub}</text>
+	</svg>
+</figure>

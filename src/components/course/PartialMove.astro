@@ -1,0 +1,115 @@
+---
+/**
+ * 附录《位置表达式与值表达式》单动作配图：部分移动。
+ *
+ * let left = pair.0; 把 .0 的 String 移交给 left，原地留下一个失效空位；
+ * .1 没有被移动，仍然可用。
+ *
+ * 两拍、没有中间状态，因此用居中的播放按钮。值不靠平移搬运——
+ * .0 的值淡出、转移箭头淡入、left 内淡入新值，.0 原位变成虚线空位。
+ * 这样的嵌套布局不会让动块盖住别的槽位。
+ */
+import { SITE_LOCALE } from '../../config/site';
+import FigureControls from './FigureControls.astro';
+
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			caption:
+				'let left = pair.0; moves the String in field .0 out to left and leaves a moved-from hole. Field .1 was not moved and is still usable.',
+			title: 'A partial move takes one field',
+			desc: 'On the left, the binding left. On the right, a pair with two String fields. Moving field .0 out to left empties that field into a dashed hole, while field .1 stays filled and usable. Reading pair.0 afterwards fails; reading pair.1 still works.',
+			code: 'let left = pair.0;',
+			left: 'left',
+			pair: 'pair',
+			field0: '.0',
+			field1: '.1',
+			value: 'String',
+			note0: 'pair.0：值已移出，不能再读',
+			note1: 'pair.1：没有被动过，仍可以用',
+			play: 'play',
+			replay: 'replay',
+		}
+	: {
+			caption:
+				'let left = pair.0; 把 .0 的 String 移交给 left，原地留下一个失效空位；.1 没有被移动，仍然可用。',
+			title: '部分移动只拿走一个字段',
+			desc: '左边是绑定 left，右边是带两个 String 字段的 pair。把 .0 移出给 left 之后，这个字段变成虚线空位，.1 仍然填着、仍然可用。之后读 pair.0 会失败，读 pair.1 仍然可以。',
+			code: 'let left = pair.0;',
+			left: 'left',
+			pair: 'pair',
+			field0: '.0',
+			field1: '.1',
+			value: 'String',
+			note0: 'pair.0：值已移出，不能再读',
+			note1: 'pair.1：没有被动过，仍可以用',
+			play: '播放',
+			replay: '重播',
+		};
+---
+
+<figure class="diagram partial-figure" data-play>
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 380" role="img" aria-labelledby="pm-title pm-desc">
+		<title id="pm-title">{t.title}</title>
+		<desc id="pm-desc">{t.desc}</desc>
+
+		{/* 这一行代码：贴近主体，不孤悬 */}
+		<text class="code" x="36" y="46">{t.code}</text>
+
+		{/* 左边的目标绑定 left：弱外框，值以下是搬入的重点 */}
+		<rect class="panel" x="24" y="150" width="170" height="60" rx="10"></rect>
+		<text class="label" x="109" y="142" text-anchor="middle">{t.left}</text>
+		<g class="step" data-step="1">
+			<rect class="slot" x="48" y="160" width="122" height="40" rx="8"></rect>
+			<text class="name" x="109" y="186" text-anchor="middle">{t.value}</text>
+		</g>
+
+		{/* 转移箭头：.0 的值流向 left（两拍之一淡入） */}
+		<g class="step" data-step="1">
+			<path
+				class="arrow"
+				d="M358 146 C 298 148, 286 178, 176 178"
+				marker-end="url(#pm-head)"
+			></path>
+		</g>
+
+		{/* 右边的结构体 pair：两个字段 */}
+		<rect class="panel" x="300" y="80" width="314" height="214" rx="12"></rect>
+		<text class="code" x="316" y="102">{t.pair}</text>
+
+		{/* 字段 .0：值为现住，移走后原位留下虚线空位 */}
+		<rect class="slot" x="314" y="112" width="286" height="66" rx="8"></rect>
+		<text class="code" x="326" y="134">{t.field0}</text>
+		<g class="partial-source" data-step="1">
+			<rect class="slot" x="360" y="122" width="150" height="44" rx="8"></rect>
+			<text class="name" x="435" y="147" text-anchor="middle">{t.value}</text>
+		</g>
+		<rect class="freed step" data-step="1" x="360" y="122" width="150" height="44" rx="8"></rect>
+
+		{/* 字段 .1：没被动过，第二步描边加粗强调仍可用 */}
+		<rect class="slot" x="314" y="192" width="286" height="66" rx="8"></rect>
+		<text class="code" x="326" y="214">{t.field1}</text>
+		<rect class="slot partial-alive" x="360" y="202" width="150" height="44" rx="8"></rect>
+		<text class="name" x="435" y="227" text-anchor="middle">{t.value}</text>
+
+		{/* 两张说明文字：第二拍淡入 */}
+		<g class="step" data-step="2">
+			<text class="label" x="457" y="330" text-anchor="middle">{t.note0}</text>
+			<text class="label" x="457" y="356" text-anchor="middle">{t.note1}</text>
+		</g>
+
+		<defs>
+			<marker id="pm-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+
+	<FigureControls controls="play" playLabel={t.play} replayLabel={t.replay} />
+</figure>
+
+<script>
+	import { initFigures } from '../../scripts/motion';
+	initFigures();
+</script>

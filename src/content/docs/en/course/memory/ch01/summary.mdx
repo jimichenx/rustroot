@@ -1,0 +1,67 @@
+---
+title: "Ownership and borrowing: aligning with Rust's core terms"
+description: "Match the three ownership rules from the official Book against the model derived in the first five sections, and see how Rust checks ownership and arranges cleanup."
+sidebar:
+  label: Ownership and borrowing
+  order: 6
+---
+
+
+Across the first five sections, without writing a single line of real Rust syntax, we followed physical stack-and-heap constraints step by step to build an automatic memory reclamation model that needs neither manual `free` calls nor a runtime garbage collector.
+
+In this final section of Chapter 1, we match terminology from the official Rust documentation to the mechanisms we derived.
+
+## First, look at the three ownership rules from *The Book*
+
+Open Chapter 4 of the official Rust tutorial (*The Book*), and the very first rules you meet are the famous **Ownership Rules**:
+
+> 1. Each value in Rust has an **owner**.
+> 2. There can only be **one owner at a time**.
+> 3. When the owner goes out of **scope**, the value will be **dropped**.
+
+If you try to memorize those three lines cold, they can feel like arbitrary dogma. Match them against what we derived in [Section 3](/memory/minimal-model/), however, and every line maps to a concrete physical requirement:
+
+- **Rules 1 and 3 (who frees memory, and when)**: in our model, the variable controlling a heap resource has a known scope exit (`}`). Calling that variable the **owner** and automatically dropping its value when it leaves scope eliminates manual `free` calls.
+- **Rule 2 (why only one owner at a time)**: if an assignment `t = s` left both variables responsible for the same heap block, leaving `{}` would free it twice. In our model, the assignment invalidates `s` and transfers responsibility to `t`—a **Move**. For an integer, both variables remain valid—a **Copy**.
+
+These examples explain the model, not the complete Rust rules. In Rust, a type's `Copy` implementation determines whether using a value copies or moves it. A move does not guarantee a physical byte copy, and dropping a value is not always the same as freeing heap memory.
+
+## Next, match "borrowing" and "lifetimes"
+
+With the three ownership rules alone, even a read-only call `print_it(s)` moves and invalidates the caller's variable. To close that gap, [Section 4](/memory/references/) and [Section 5](/memory/lifetimes/) introduced two more mechanisms:
+
+- **References (`&T`) and borrowing**: a **reference** lets code access data without taking ownership; creating and using such access is **borrowing**. In our example, `&String` holds the address of the original variable and does not free its heap resource.
+- **Lifetimes and the borrow checker**: a reference would dangle if the data it points to became invalid before its use. The **borrow checker** checks moved values and the lifetime constraints on references at compile time.
+
+Placed side by side, the mechanisms from our five sections map onto Rust's vocabulary in one compact table:
+
+| Mechanism you derived | Official Rust term | One-sentence takeaway |
+| --- | --- | --- |
+| The single variable responsible for freeing a heap resource on leaving `{}` | **Owner / Ownership** | Whoever owns the value is responsible for freeing it at scope exit |
+| The cleanup action triggered automatically when an owned value leaves scope | **Drop** | Drop cleans up a value and may release its resources |
+| Keeping both variables valid vs. invalidating the old variable on `=` | **Copy / Move** | A type's `Copy` implementation determines which behavior applies |
+| Accessing data through `&T` without taking ownership | **Reference / Borrowing** | The reference can access data without taking ownership |
+| Checking whether reference uses remain valid | **Lifetime / Borrow Checker** | Lifetime constraints prevent references from outliving their data |
+
+## How the model arranges cleanup
+
+The terms "ownership, move, borrowing, lifetimes" describe compile-time rules rather than a runtime garbage collector.
+
+For the heap-backed string in our model, **these rules let the compiler arrange cleanup and check that references are not used after the data becomes invalid.** Rust drops owned values at their drop points; dropping a `String` releases its buffer, but `drop` is not itself synonymous with `free`.
+
+Look at how the pieces line up:
+1. **Ownership and drop** determine which value is responsible for cleanup and when that value is dropped.
+2. **Move semantics** transfer ownership, preventing both variables in our example from freeing the same heap allocation.
+3. **Borrowing and lifetimes** prevent a reference from being used after the data it points to becomes invalid.
+
+The compiler checks ownership and borrowing at compile time and arranges the required cleanup. Lifetimes do not require runtime tracking, but the cleanup itself runs at runtime. This basic model uses neither garbage collection nor reference counting; it does not rule out memory leaks or other mechanisms in real Rust programs.
+
+---
+
+## Next step: open the compiler and read real Rust code
+
+With the baseline model in place, real-world programs will naturally raise further questions—such as **how to mutate data through a reference without interference** (Part 2 introduces mutable references `&mut T`) and **how multiple components can share ownership at runtime** (Part 3 introduces reference counting `Rc`).
+
+Before stepping into those topics, Chapter 2 opens the compiler and puts this baseline model to work in everyday Rust code: writing `let` and `=` to see firsthand how the compiler applies these rules across declarations, reassignment, and shadowing.
+
+[Next chapter: Variables and assignment →](/memory/variables/)

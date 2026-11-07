@@ -1,0 +1,191 @@
+---
+title: "没有 class 和 extends，如何组织代码与选型多态？"
+description: 拆开传统面向对象 class 的三合一包袱，用结构体组合与 Trait 契约替代继承树，并确立工程架构与代码审查中的多态选型准则——闭合集合用 enum（ADT），开放集合用泛型或 dyn Trait。
+sidebar:
+  label: 多态架构选型与 OOP 对照
+  order: 4
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import ClassUnbundling from '../../../../../../components/course/ClassUnbundling.astro';
+import closedVsOpen from '../../../../../../../examples/types/traits/src/bin/closed-vs-open.rs?raw';
+
+走完前几章，你已经掌握了 Rust 表达数据与行为的全部核心部件：
+- 第 5 章的 **`struct`（积类型）** 与 **`impl Type`（固有方法）**；
+- 第 6 章的 **`enum`（和类型 / ADT）** 与 **`match`（穷尽性模式匹配）**；
+- 第 7 章的 **`Trait`（编译期行为契约）** 与 **`<T: Trait>`（静态分发）**；
+- 本章前两节的 **`&dyn Trait` / `Box<dyn Trait>`（16 字节胖指针动态分发）**。
+
+当一位习惯了 Java、C++、C# 或 Python 的工程师带着这些工具进入真实项目时，往往会问出两个架构层面的终极问题：
+1. **「Rust 没有 `class` 也没有 `extends` 继承，我平时习惯用父类复用代码、用子类表达多态，现在代码该怎么组织？」**
+2. **「既然 `enum`、泛型 `<T: Trait>` 和 `dyn Trait` 都能表达多态分支，在真实工程和代码审查（Code Review）中，我到底该选哪一个？」**
+
+作为第 8 章的收官课，本节一次性把这两个架构设计问题彻底算清。
+
+---
+
+## 拆开传统 `class` 的三合一捆绑包
+
+在传统的面向对象（OOP）语言中，`class` 看起来是一个概念，但实际上它是一个**把三件完全不同的职责强行焊死在一起的「三合一捆绑包」**：
+
+1. **职责一：定义数据的物理内存布局**（里面有哪些字段）；
+2. **职责二：挂载该类型自身的固有方法**（可以用 `.` 调用哪些函数）；
+3. **职责三：绑定类型继承树与多态契约**（`extends Base implements Drawable`）。
+
+这种「三合一捆绑」在项目初期很省事，但随着工程演进，它的弊端就会暴露出来：有时你只是想复用父类里的两个字段或一个辅助函数，却被迫用 `extends` 把整棵父类的继承树、虚表开销和耦合关系全部背了过来。
+
+Rust 的做法不是砍掉面向对象的能力，而是**把这个三合一捆绑包彻底拆开，交还给三个正交、互不绑架的独立机制**：
+
+<ClassUnbundling />
+
+对照上图，看清 Rust 是如何按需组合这三项职责的（更详尽的跨语言语法对照可随时翻阅[附录 C.2：没有 `class` 的对象感](/appendix/comparisons/oop/)）：
+
+- **要定义物理内存布局 → 只用 `struct` 或 `enum`**：
+  纯纯粹粹管理栈/堆字节怎么摆，不掺杂任何虚表或继承关系。
+- **要复用字段与内部逻辑 → 用「结构体组合（Composition）」替代 `extends` 继承**：
+  如果 `AdminUser` 和 `NormalUser` 都需要一套基础的账号信息（如 `id` 和 `email`），不要去找什么父类继承，直接定义一个 `struct AccountCore { id: u64, email: String }`，然后把它作为普通字段装进 `AdminUser` 里：
+  <small class="code-source">推演用伪代码：用结构体字段组合（Has-A）替代类继承（Is-A）</small>
+  ```rust
+  struct AccountCore {
+      id: u64,
+      email: String,
+  }
+
+  struct AdminUser {
+      core: AccountCore, // 直接组合内嵌，内存连续、关系一目了然
+      role_level: u8,
+  }
+  ```
+- **要对外承诺跨类型的多态契约 → 按需挂上 `Trait`（静态 `<T: Trait>` 或动态 `dyn Trait`）**：
+  不需要多态的类型，永远不为 `vtable` 付出哪怕 1 字节的代价；需要多态时，随时用 `impl Trait for Type` 外挂上去。
+
+---
+
+## 工程多态选型铁律：闭合集合（`enum`）vs 开放集合（`Trait`）
+
+拆开了 `class` 的包袱后，我们直面第二个核心问题：
+假设你的业务里出现了「多种不同的形态，都需要执行某项共同操作」——比如商城系统里的**几种支付方式**（现金、银行卡、电子钱包），或者告警系统里的**多种通知渠道**（邮件、Webhook、以及允许第三方插件未来自己扩展的新渠道）。
+
+许多刚从 OOP 转过来的开发者（以及在没有明确架构约束下生成代码的 AI），只要一看到「多种形态共享一个操作」，就会条件反射地模仿 Java 接口继承树——先定义一个 `trait`，再把所有分支统统包进 `Box<dyn Trait>` 里。
+
+**在 Rust 工程与代码审查（Code Review）中，把固定的业务分支写成 `Box<dyn Trait>` 往往是典型的过度设计（反模式）。**
+
+到底该选第 6 章的 **`enum`（和类型）**，还是该选第 7、8 章的 **`Trait`（`<T: Trait>` / `dyn Trait`）**？
+唯一的裁决标尺，是问自己一句话：**「这组类型的集合，对外部扩展是闭合的（Closed），还是开放的（Open）？」**
+
+### 选型一：变体集合已知且闭合 → 优先用 `enum`（和类型）
+
+以商城系统的支付方式 `PaymentMethod` 为例：你的业务当前就支持现金（`Cash`）、银行卡（`Card`）、电子钱包（`Wallet`）这三种，所有的变体都在你自己的模块里定义得清清楚楚，不需要允许外部第三方库随意塞进第 4 种未知的支付方式。
+
+这种**「变体种类已知且固定」**的场景，叫做**闭合集合（Closed Set）**，应毫不犹豫地选用 **`enum`**：
+
+<small class="code-source">推演用伪代码：闭合集合使用 <code>enum</code> + <code>match</code></small>
+```rust
+enum PaymentMethod {
+    Cash,
+    Card { last4: u16 },
+    Wallet { provider: &'static str },
+}
+
+impl PaymentMethod {
+    fn pay(&self, amount_cents: u64) -> String {
+        match self {
+            PaymentMethod::Cash => format!("paid {amount_cents}c in cash"),
+            PaymentMethod::Card { last4 } => format!("charged {amount_cents}c to card *{last4}"),
+            PaymentMethod::Wallet { provider } => format!("paid {amount_cents}c via {provider}"),
+        }
+    }
+}
+```
+
+用 `enum` 处理闭合集合有三大不可替代的优势：
+1. **极致物理性能（栈内联 + 零 `vtable`）**：整个 `PaymentMethod` 直接内联在栈上（仅占 24 字节），放进 `Vec<PaymentMethod>` 时在内存中紧密连续排列，没有任何单独的堆分配（`Box`），也没有任何 `vtable` 间接寻址跳转；
+2. **编译期穷尽性保护**：未来如果业务升级、在 `enum` 里新增了第 4 种变体 `Crypto`，全项目所有漏写该分支的 `match` 都会在编译期立刻报 `E0004` 提醒你补齐；
+3. **新增业务操作极其轻松**：如果你想给 `PaymentMethod` 再加一个 `refund(&self)`（退款）或 `audit_log(&self)` 方法，只需再写一个 `match` 函数即可，不需要去修改三个分散的结构体。
+
+### 选型二：需要允许外部或未来自由扩展新类型 → 用 `Trait`（泛型或 `dyn Trait`）
+
+反过来，看告警通知渠道 `Notifier` 的场景：你正在编写一个基础告警框架，除了内置的 `EmailNotifier` 和 `WebhookNotifier` 外，你希望**使用你这个框架的其他业务团队，可以在不修改你框架源码的前提下，自己定义一个新的 `SlackNotifier` 结构体并接入进来**。
+
+这种**「类型集合向外部敞开」**的场景，叫做**开放集合（Open Set）**。此时 `enum` 就无能为力了（因为外部调用方改不了你源码里的 `enum` 定义），必须选用 **`Trait`**：
+
+<small class="code-source">推演用伪代码：开放集合使用 <code>Trait</code></small>
+```rust
+trait Notifier {
+    fn send(&self, msg: &str) -> String;
+}
+
+// 1. 若调用点每次只传一种编译期已知渠道 -> 选静态分发 <T: Notifier>
+fn alert_single<T: Notifier>(channel: &T, msg: &str) {
+    println!("{}", channel.send(msg));
+}
+
+// 2. 若需要把多种不同渠道混装进一个切片或集合 -> 选动态分发 &dyn Notifier
+fn broadcast(channels: &[&dyn Notifier], msg: &str) {
+    for ch in channels {
+        println!("{}", ch.send(msg));
+    }
+}
+```
+
+### 全景裁决对照表（Code Review 速查标尺）
+
+把这三种多态方案放在同一张表里，以后在设计架构或审查代码时，只需按图索骥：
+
+| 选型方案 | 适用前提 | 新增一个「操作/函数」难吗？ | 新增一种「数据类型/变体」难吗？ | 内存与运行期成本 |
+| --- | --- | --- | --- | --- |
+| **1. 闭合和类型 `enum`** | **变体种类已知且固定**（如协议状态、AST 节点、固定业务分类） | **极容易**：只需多写一个 `match` 函数，不碰原有类型定义 | **会惊动全局**：修改 `enum` 后，编译器会强制所有 `match` 补齐新分支 | **最低**：栈上连续内联，零堆分配，零 `vtable` 跳转，可内联 |
+| **2. 静态泛型 `<T: Trait>`** | **开放集合 + 同质调用**（编译期能确定每次调用的具体类型） | **较重**：在 Trait 中新增无默认实现的方法，会迫使所有实现者补写代码 | **极容易**：外部模块只需写 `impl Trait for NewType` 即可无缝接入 | **运行时零额外开销**：8 字节瘦指针，直接调用可内联；代价是二进制体积随类型数增加 |
+| **3. 动态分发 `&dyn Trait` / `Box<dyn Trait>`** | **开放集合 + 异构集合或运行时分支**（如插件列表 `Vec<Box<dyn Plugin>>`） | **较重**：同上，且新方法不能违反 `dyn` 兼容性三条物理限制 | **极容易**：外部新类型实现 Trait 后，可直接塞进同一个异构 `Vec` | **按需承担运行时成本**：16 字节胖指针，每次调用查 `vtable` 间接跳转，无法内联 |
+
+运行下面这份完整源码，对照闭合集合 `PaymentMethod`（`enum`）与开放集合 `Notifier`（`&dyn Notifier`）在代码组织与内存尺寸上的表现：
+
+<small class="code-source">源文件：<code>examples/types/traits/src/bin/closed-vs-open.rs</code></small>
+<Code code={closedVsOpen} lang="rust" collapse={20} />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+size of PaymentMethod = 24 bytes (stack-inlined)
+paid 1500c in cash
+charged 1500c to card *4242
+paid 1500c via Alipay
+Email to ops@example.com: deploy finished
+POST https://hooks.internal/alert: deploy finished
+```
+
+---
+
+## 本章小结与下一章预告
+
+回顾整个第 8 章，我们完成了从「编译期静态世界」向「运行时动态世界」的跨越，并拿到了多态架构选型的完整标尺：
+1. **静态与动态的全局开关（8.1）**：当遇到异构集合或运行时分支返回不同具体类型时，编译期静态单态化（含 `impl Trait`）会因无法确定唯一具体类型而报 `E0308`；此时需显式切换到动态类型构造器。
+2. **`&dyn Trait` 与 16 字节胖指针（8.2）**：`dyn` 将契约构造成动态大小类型 `dyn Trait`（DST），外层套上 `&` 或 `Box` 后形成 16 字节胖指针 `(data_ptr, vtable_ptr)`，将缺失的方法地址信息存放在只读静态段的 `vtable` 中。
+3. **静态分发 vs 动态分发与 `dyn` 兼容性（8.3）**：静态分发直接跳转且支持内联，动态分发保留单份机器码但在运行期查 `vtable` 间接跳转；凡是按值返回 `Self`、含泛型方法 `<U>` 或无 `self` 接收者的方法，因在物理上无法确定调用方栈槽位或无法构建固定 `vtable`，均不可用于 `dyn Trait`（报 `E0038`）。
+4. **无 `class` 的代码组织与选型铁律（8.4）**：Rust 将内存布局（`struct`/`enum`）、固有方法（`impl`）与抽象契约（`Trait`）彻底解耦；在工程选型中，**闭合集合用 `enum`，开放集合优先用 `<T: Trait>`，确需异构集合或运行时擦除时用 `dyn Trait`**。
+
+至此，我们已经掌握了第 5 章的所有权接收者三件套（`self` / `&self` / `&mut self`）、第 6 章的 `Option<T>`，以及第 7～8 章的泛型与 Trait（含关联类型）。
+
+在下一章（第 9 章，也是第三篇的收官章）中，之前埋下的所有线索将迎来一次酣畅淋漓的**工程大合流**——我们将亲手剥开日常出镜率最高的 **`for` 循环（迭代器 `Iterator`）** 与 **闭包（`FnOnce` / `FnMut` / `Fn`）** 的语法糖外壳，看清它们是如何用前面学过的结构体、所有权三件套与 Trait 严丝合缝地拼装出来的！
+
+### 动手核对与小练习
+
+1. **Code Review 反模式拦截**：在审查一段 AI 生成的订单状态流转代码时，你看到 AI 定义了一个 `trait OrderState`，并为 `Pending`、`Paid`、`Shipped`、`Cancelled` 四个固定的订单状态结构体实现了该 Trait，最后在 `Order` 结构体里存了一个 `state: Box<dyn OrderState>`。请问这段代码存在什么架构问题？应该如何重构？
+2. **多态三选一实战**：请为以下三个真实的系统设计需求，分别从 **`enum`**、**泛型 `<T: Trait>`**、**`Vec<Box<dyn Trait>>`** 中挑出最合适的一个，并说明理由：
+   - **需求 A**：编写一个 JSON 解析器，表示一个 JSON 值（它只可能是 Null、布尔、数字、字符串、数组、对象这 6 种固定形态之一）。
+   - **需求 B**：编写一个高性能数学库中的通用矩阵乘法函数，要求支持 `f32`、`f64`、`i32` 等元素的矩阵，且在密集循环中决不能有函数指针间接跳转开销。
+   - **需求 C**：编写一个 GUI 窗口容器，允许用户在运行时往同一个窗口列表里动态添加按钮 `Button`、文本框 `TextBox` 以及第三方插件自定义的图表组件 `CustomChart`，并统一调用 `.render()` 绘制。
+
+<details>
+<summary>点击核对参考答案</summary>
+
+1. **Code Review 反模式拦截**：
+   - **问题诊断**：订单的四个状态（待支付、已支付、已发货、已取消）属于典型的**闭合集合（Closed Set）**，在当前业务模块内完全固定，不需要外部第三方库去扩展未知的第 5 种状态。AI 受传统 OOP 状态模式（State Pattern）惯性影响，滥用了 `Box<dyn OrderState>`，导致每次状态切换都要发生堆内存分配（`Box::new`），每次方法调用都要走 16 字节胖指针与 `vtable` 间接寻址，且丧失了 `match` 的编译期穷尽性检查。
+   - **重构方案**：删掉 `trait OrderState` 和 `Box`，直接改用栈上内联的 **`enum OrderState { Pending, Paid, Shipped, Cancelled }`**。
+2. **多态三选一实战**：
+   - **需求 A 选 `enum`（如 `enum JsonValue`）**：JSON 规范的 6 种数据类型是永恒固定的闭合集合，用 `enum` 配合 `match` 既紧凑又能享受编译期穷尽性检查（这正是 `serde_json::Value` 的真实实现）。
+   - **需求 B 选泛型 `<T: Trait>`（静态分发）**：矩阵乘法对密集循环的内联优化与 SIMD 向量化要求极高，且每次调用的矩阵元素类型在编译期已知，用静态单态化可达到手写专用代码的性能。
+   - **需求 C 选 `Vec<Box<dyn Widget>>`（动态分发）**：既要允许外部第三方插件扩展新组件（开放集合），又要把不同大小的具体组件装进同一个窗口列表（异构集合），16 字节虚表胖指针正是为此而生。
+
+</details>

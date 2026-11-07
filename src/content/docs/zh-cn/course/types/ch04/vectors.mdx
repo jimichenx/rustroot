@@ -1,0 +1,203 @@
+---
+title: "动态数组：Vec<T> 与堆上连续内存"
+description: 补齐连续内存家族的第三极：剖析 Vec<T> 的 24 字节控制头与动态扩容代价，推导禁止扩容悬垂（E0502）与禁止下标移出（E0507）的两条防线，并建立连续序列的工程选型判据。
+sidebar:
+  label: 动态数组 Vec<T>
+  order: 4
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import VecCapacityGrowth from '../../../../../../components/course/VecCapacityGrowth.astro';
+import vecLayoutAndGrow from '../../../../../../../examples/types/slices/src/bin/vec-layout-and-grow.rs?raw';
+import vecSafetyRules from '../../../../../../../examples/types/slices/src/bin/vec-safety-rules.rs?raw';
+
+前两节我们认识了连续内存家族里的两位成员：
+- **定长数组 `[T; N]`**：数据直接铺在栈上，拥有所有权，但长度 `N` 在编译期就焊死了，运行时既不能根据外部输入决定大小，也不能追加一个新元素；
+- **切片引用 `&[T]`**：用 16 字节胖指针 `(ptr, len)` 解决了接收任意长度连续内存的问题，但它只是一个**借用视图**——它自己不持有数据，也无法凭空存在。
+
+那么在真实工程里，如果我们既需要**自己拥有所有权**，又需要**在运行时动态决定长度、随时追加或删除元素**（对应 Java 的 `ArrayList<T>`、Python 的 `list`、C++ 的 `std::vector<T>`），该用什么？
+
+答案就是标准库里使用频率最高的集合类型构造器——**动态数组 `Vec<T>`**。
+
+---
+
+## 创建 `Vec<T>` 的三种语法（别和数组搞混）
+
+在刚从 Python 或 JavaScript 转到 Rust 时，最容易犯的一个习惯性错觉，就是看到方括号 `[10, 20, 30]` 以为它是动态列表。
+
+在进入底层内存布局之前，先把 `Vec<T>` 的三种创建写法与定长数组区分清楚：
+
+1. **用 `vec!` 宏直接初始化（带感叹号 `!`）**：
+   - 逐个列出元素：`let v = vec![10, 20, 30];`
+   - 重复初始化：`let zeros = vec![0; 4];`（在堆上连续铺开 4 个 `0`）
+   - **切记区分**：不带 `vec!` 的 `[10, 20, 30]` 是住在栈上的**定长数组 `[i32; 3]`**；加上 `vec!` 的 `vec![10, 20, 30]` 才是在堆上分配内存的**动态数组 `Vec<i32>`**。
+2. **用 `Vec::new()` 创建空动态数组**：
+   - 写法：`let mut v: Vec<i32> = Vec::new();`
+   - **类型推断提示**：`Vec<T>` 是一个接收类型参数 `T` 的构造器。如果创建空数组后紧接着写了 `v.push(10)`，编译器能顺着 `10` 自动推断出它是 `Vec<i32>`；但如果后面还没有写入元素，就必须显式写上类型标注 `: Vec<i32>`，否则编译器不知道要填什么 `T`。
+3. **用 `Vec::with_capacity(n)` 预留堆容量**：
+   - 写法：`let mut v = Vec::with_capacity(10);`（预先在堆上圈出能放 10 个元素的空间，此时有效长度 `len` 仍为 `0`）。
+
+---
+
+## 连续内存家族的第三极：24 字节控制头 `(ptr, len, cap)`
+
+元素的个数在编译期定不下来，还要支持运行时动态增长，因此 `Vec<T>` 使用可按需扩展的连续缓冲区存放元素。下面以局部变量 `Vec<i32>` 为例：它的元素缓冲区需要分配时放在**堆（Heap）**上。
+
+在这个局部变量模型中，`Vec<T>` 的控制信息在栈上。标准库保证它包含指针、长度和容量三个部分；在本例的 64 位环境下共占 **24 个字节**。下表按用途列出它们，不代表实际字段顺序：
+
+| 栈上字段 | 大小（64 位） | 物理职责 |
+| --- | --- | --- |
+| **`ptr`** | 8 字节 | 指向连续元素缓冲区的起始地址 |
+| **`len`** | 8 字节（`usize`） | **当前有效长度**：堆缓冲区里目前已经初始化、正在使用的元素个数 |
+| **`cap`** | 8 字节（`usize`） | **总容量（Capacity）**：当前这块堆缓冲区在不重新分配的前提下，最多能容纳的元素个数 |
+
+`Vec` 值负责释放它拥有的缓冲区，释放责任不是由地址本身决定的。空 `Vec` 或元素大小为零的 `Vec<T>` 不一定有堆分配；控制信息也可以存放在其他位置，不限于栈上的局部变量。
+
+### 为什么有了 `len` 还要单独记一个 `cap`？
+
+如果每次调用 `push` 都要增加容量，就可能反复分配内存和搬迁元素。`Vec<T>` 记录容量，让已经分配的空间能被后续追加操作使用。
+
+- 当 **`len < cap`** 时，`push` 把新元素写进第 `len` 个槽位，再将 `len` 加 `1`，不需要重新分配缓冲区。
+- 当 **`len == cap`** 时，缓冲区已满，再调用 `push` 就需要扩容。分配器可能在原地址扩大缓冲区，也可能分配新缓冲区并搬迁已有元素。容量具体增长多少不由 `Vec` 的接口保证。
+
+下图展示第二种情况：假设初始容量恰好为 `2`，扩容后容量为 `4`，元素被搬到新地址。
+
+<VecCapacityGrowth />
+
+运行下面这段代码，亲眼观察 `len`、`cap` 与堆地址 `ptr` 在扩容前后的变化：
+
+<small class="code-source">源文件：<code>examples/types/slices/src/bin/vec-layout-and-grow.rs</code></small>
+<Code code={vecLayoutAndGrow} lang="rust" />
+
+一次运行的输出如下。`with_capacity(2)` 保证容量至少为 `2`；实验先填满实际容量，再追加 `30`。容量和地址可能因环境而异：
+
+<small class="code-source">运行输出</small>
+```text
+empty: len = 0, cap = 2, stack size = 24 bytes
+full:  len = 2, cap = 2, heap ptr = 0x95f037700
+grown: len = 3, cap = 4, heap ptr = 0x95f037700
+```
+
+这次运行中，追加 `30` 后容量从 `2` 增加到 `4`，地址没有改变。也就是说，这次扩容没有把缓冲区搬到另一个地址；其他运行可能得到不同的结果。
+
+<Aside type="tip" title="已知元素数量时预留容量">
+如果提前知道需要容纳的元素数量，可以用 `Vec::with_capacity(n)` 请求至少 `n` 个元素的容量。在长度不超过实际容量的追加过程中，不需要扩容。预留过多也会占用更多内存，因此应根据实际需要选择。
+</Aside>
+
+---
+
+## `Vec<T>` 的两条编译期安全防线
+
+看清了 `Vec<T>` 在堆上的物理排布与扩容搬迁机制，你在日常写代码时最常撞上的两条编译器报错，就不再是需要死记硬背的教条，而是物理事实的必然推论。
+
+运行下面这段代码：
+
+<small class="code-source">源文件：<code>examples/types/slices/src/bin/vec-safety-rules.rs</code></small>
+<Code code={vecSafetyRules} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+first score: 10
+safe get(1): Some(20), safe get(99): None
+popped: Some("Bob"), remaining: ["Alice"]
+```
+
+### 防线一：为什么拿着 `&scores[0]` 时，不准调用 `scores.push(40)`？
+
+取消上面代码第 6 行 `// scores.push(40);` 的注释，编译器会立刻报出我们在 `4.1` 见过的 **`error[E0502]`（读写借用冲突）**：
+
+<small class="code-source">编译器诊断摘要：取消 vec-safety-rules.rs 第 5 行注释后</small>
+```text
+error[E0502]: cannot borrow `scores` as mutable because it is also borrowed as immutable
+ --> src/bin/vec-safety-rules.rs:6:5
+  |
+5 |     let first_ref = &scores[0];
+  |                      ------ immutable borrow occurs here
+6 |     scores.push(40);
+  |     ^^^^^^^^^^^^^^^ mutable borrow occurs here
+7 |     println!("first score: {first_ref}");
+  |                            ----------- immutable borrow later used here
+```
+
+把刚才的扩容实验代进来：
+- `first_ref` 是一个指向 `scores` 当前堆内存第 0 号槽位的只读引用；
+- 紧接着调用 `scores.push(40)`（它需要可变借用 `&mut scores`）。如果这次追加触发扩容，元素可能被搬到新缓冲区，旧缓冲区可能随之释放；
+- 如果还允许后续使用指向旧缓冲区的 `first_ref`，这个引用就可能悬垂。
+
+编译器不管你这次 `push` 在运行时到底会不会真的撞上扩容，只要类型签名上 `push(&mut self, ...)` 需要独占可变借用，借用检查器就会在编译期把「持有元素引用期间向 `Vec` 追加数据」的操作直接拦下。
+
+### 防线二：为什么不能写 `let stolen = names[0];` 移出单个元素？
+
+取消第 11 行 `// let stolen = names[0];` 的注释，编译器会报出 **`error[E0507]`**：
+
+<small class="code-source">编译器诊断摘要：取消 vec-safety-rules.rs 第 11 行注释后</small>
+```text
+error[E0507]: cannot move out of index of `Vec<String>`
+  --> src/bin/vec-safety-rules.rs:11:18
+   |
+11 |     let stolen = names[0];
+   |                  ^^^^^^^^ move occurs because value has type `String`, which does not implement the `Copy` trait
+   |
+help: consider borrowing here
+   |
+11 |     let stolen = &names[0];
+   |                  +
+```
+
+这和我们在 `4.2` 数组里遇到的 `E0508` 完全是一个道理：
+- `Vec<T>` 对外承诺：堆上从 `0` 到 `len - 1` 的每一个槽位，在任何时刻都必须是**有效初始化的 `T`**（这样当 `names` 离开作用域时，才能挨个安全释放 `0..len` 里的每一个 `String`）。
+- 如果允许你用 `let stolen = names[0];` 直接把第 0 号槽位里的 `String` 所有权移走，那么第 0 号槽位就会变成一个未初始化的「空洞」，破坏了 `Vec<T>` 连续有效区间的约束。
+
+**那在工程里，怎样合法地访问或移出 `Vec<T>` 里的元素？**
+1. **只读借用（不拿走所有权）**：
+   - 用 **`&names[i]`**：直接按下标借用，但如果 `i >= len` 会在运行时当场触发 `panic` 崩溃；
+   - 用 **`names.get(i)`**（生产环境处理外部索引首选）：安全返回 `Option<&T>`，越界时返回 `None` 而不崩溃。
+2. **真正移出元素所有权（同时缩减 `len` 填平空洞）**：
+   - **`names.pop()`**：移出并返回最后一个元素 `Option<T>`，同时将 `len` 减 1（耗时 `O(1)`）；
+   - **`names.remove(i)`**：移出第 `i` 个元素 `T`，并把后面所有元素往前平移一格填补空洞（耗时 `O(N)`）；
+   - **`names.swap_remove(i)`**：如果不要求保持剩余元素的顺序，它会把最后一个元素换到第 `i` 格来填补空洞，耗时是极致的 **`O(1)`**。
+
+---
+
+## 连续内存「铁三角」：工程选型与签名裁决
+
+学到这里，Rust 处理通用连续内存的三个核心类型——**`[T; N]`**、**`Vec<T>`** 与 **`&[T]`**——已经全部到齐。
+
+在得益于**解引用强制转换（Deref Coercion）**的加持下，不管是栈上的 `[T; N]` 还是堆上的 `Vec<T>`，只要在前面加上 `&`（或 `&mut`），都能零成本地转化为通用的切片视图 `&[T]`（或 `&mut [T]`）。同时，上一节在 `[T]` 文档里见到的 `.sort()`、`.binary_search()`、`.chunks()`、`.contains()` 等所有切片方法，`Vec<T>` 也全都直接继承复用。
+
+在实际项目中定义数据结构、编写函数签名，或审查 AI 生成的代码时，直接按下面这张表做裁决：
+
+| 对比维度 / 工程场景 | 定长数组 `[T; N]` | 动态数组 `Vec<T>` | 切片引用 `&[T]` / `&mut [T]` |
+| --- | --- | --- | --- |
+| **元素存放在哪里** | 元素内联在数组值中 | 需要分配时放在堆缓冲区中；`Vec` 值持有控制信息 | 不拥有数据，借用栈、堆或静态区里的连续内存 |
+| **值的大小** | `N × size_of::<T>()` | 本例的 64 位环境下为 **24 字节**，包含指针、长度和容量 | 本例的 64 位环境下为 **16 字节**，包含指针和长度 |
+| **长度何时确定** | **编译期**写死在类型里，不可变 | **运行时**动态增删，可自动扩容 | **运行时**切取决定，视图本身不可扩容 |
+| **适用选型场景** | 元素个数在编译期绝对固定且较小（如 RGB 颜色 `[u8; 3]`、固定矩阵、小缓冲块） | 需要动态增删、运行时才知个数、或需放在结构体字段里长期持有所有权 | **所有只读或原地修改元素的函数参数**（永远写 `fn f(data: &[T])`，绝不写 `&Vec<T>`） |
+
+---
+
+## 小结
+
+1. **`Vec<T>` 是动态数组**：它记录指针、长度和容量，按需拥有连续缓冲区。当 `len == cap` 时继续 `push` 需要扩容，缓冲区可能原地扩大，也可能搬到新地址；已知所需数量时，可以用 `Vec::with_capacity(n)` 预留容量；
+2. **两条编译期防线均源于物理内存安全**：禁止在持有元素引用 `&v[i]` 期间调用 `v.push()`（`E0502`，防止扩容释放旧堆导致引用悬垂）；禁止用 `let x = v[i];` 直接移出非 `Copy` 元素（`E0507`，防止连续有效区间出现空洞，需改用 `pop`、`remove` 或 `swap_remove`）；
+3. **连续内存铁三角分工明确**：固定小数据上栈用 `[T; N]`，动态持有上堆用 `Vec<T>`，函数传参通行用胖指针 `&[T]`。
+
+### 动手核对
+
+假设你在做代码审查（Code Review），看到同事（或 AI）写出了下面两个函数签名：
+1. `fn calculate_average(numbers: &Vec<f64>) -> f64`
+2. 在函数内部，直接写了 `let first = numbers[0];` 来获取第一个数字（而 `numbers` 是外部传进来的，可能为空）。
+
+请指出这两处写法各自的问题，并给出修改方案。
+
+核对答案：
+1. **函数参数签名过窄**：参数写 `&Vec<f64>` 不仅在访问元素时多了一层栈到堆的间接寻址，还会把栈数组 `[f64; N]` 和子切片挡在门外。应改为 **`fn calculate_average(numbers: &[f64]) -> f64`**。
+2. **存在线上崩溃（`panic`）隐患**：当传入的 `numbers` 为空切片（`len == 0`）时，`numbers[0]` 会当场触发越界 `panic`。应先检查 `numbers.is_empty()`，或改用 **`numbers.first()` / `numbers.get(0)`** 安全处理空序列情况。
+
+---
+
+现在，连续内存三成员——`[T; N]`、`&[T]` 与 `Vec<T>`——已经全部就位。下一节我们在 `[u8]`、`&[u8]` 和 `Vec<u8>` 上加一条「合法 UTF-8 编码」约束，就能看清 Rust 字符串家族（`str`、`&str` 与 `String`）的设计。
+
+[继续：字符串 →](/types/strings/)

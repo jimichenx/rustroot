@@ -1,0 +1,250 @@
+---
+title: "结构体（struct）：所有权单元与部分移动"
+description: 掌握结构体的三种形态、简写语法与扁平内联内存布局，理解自定义类型为什么默认走移动语义，并拆解字段级的部分移动（Partial Move）规则。
+sidebar:
+  label: 结构体与部分移动
+  order: 2
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import structBasics from '../../../../../../../examples/types/structs/src/bin/struct-basics.rs?raw';
+import pointMove from '../../../../../../../examples/types/structs/src/bin/point-move.rs?raw';
+import pointCopy from '../../../../../../../examples/types/structs/src/bin/point-copy.rs?raw';
+import partialMove from '../../../../../../../examples/types/structs/src/bin/partial-move.rs?raw';
+import StructPartialMove from '../../../../../../components/course/StructPartialMove.astro';
+
+上一节我们看到，元组 `(i32, bool)` 可以把几个值临时打包在一起。但元组有两个短板：一是字段没有名字，写 `user.0`、`user.1` 很快就没人记得代表什么；二是任何两个 `(i32, i32)` 在编译器眼里都是同一个类型，无法区分「二维坐标」和「宽高尺寸」。
+
+要在工程中对业务数据建模，我们需要用 **`struct`（结构体）**来定义全新的**类型**。
+
+---
+
+## 结构体的三种形态
+
+每写下一个 `struct` 定义，你就向编译器注册了一个独立的**编译期类型实体**。Rust 的结构体共有三种语法形态：
+
+### 1. 具名字段结构体（最常用）
+
+给每个字段明确起名并标注类型：
+
+```rust
+struct User {
+    name: String,
+    age: u64,
+    active: bool,
+}
+```
+
+创建实例时，必须用 `User { 字段名: 值, ... }` 显式初始化**每一个字段**。字段的书写顺序可以任意调换，但绝不允许漏掉任何一个字段——Rust 里不存在「未初始化的默认 `null` 字段」。
+
+### 2. 元组结构体（Tuple Struct）
+
+只给结构体起类型名，里面的字段不写名字：
+
+```rust
+struct Color(u8, u8, u8);
+struct Point(u8, u8, u8);
+```
+
+它的取值方式和普通元组一样（用 `red.0`、`red.1`），但它是一个**全新的类型**。哪怕 `Color` 和 `Point` 里面装的都是三个 `u8`，编译器也会把它们当成两个完全不相干的类型，防止你在传参时把「颜色」误传给「坐标」。
+
+### 3. 单元结构体（Unit-Like Struct）
+
+连圆括号和字段都不写，只有一个类型名加分号：
+
+```rust
+struct AlwaysEqual;
+```
+
+它和上一节学的单元类型 `()` 一样，在运行时占 **0 个字节（零大小类型 ZST）**，后续常用于在不占内存的前提下挂载特定的行为契约（Trait）。
+
+---
+
+## 两个常用初始化简写
+
+在创建具名字段结构体时，Rust 提供了两个省去重复代码的语法糖：
+
+### 1. 同名字段简写
+
+当你的变量名（或函数参数名）刚好和结构体字段同名时，不需要重复写 `name: name`，直接写一次名字即可：
+
+```rust
+fn build_user(name: String, age: u64) -> User {
+    User {
+        name,        // 等价于 name: name
+        age,         // 等价于 age: age
+        active: true,
+    }
+}
+```
+
+### 2. 结构体更新语法 `..`
+
+当你想基于已有的实例 `u1` 创建一个新实例 `u2`，只改动其中少数几个字段时，可以在最后写上 `..u1`：
+
+```rust
+let u2 = User {
+    name: String::from("Bob"),
+    ..u1 // 其余未列出的字段（age、active）直接从 u1 拿过来
+};
+```
+
+要注意的是，`..u1` 在底层其实就是对剩余字段逐一执行 `=` 赋值。
+
+在上面的写法中，从 `u1` 拿过来的只有实现了 `Copy` 的 `age`（`u64`）和 `active`（`bool`），所以 `u1` 依然完好可用；但如果 `..u1` 把 `u1` 里未实现 `Copy` 的 `String` 字段搬给了 `u2`，那么 `u1` 对应的字段就会发生**移动（Move）**而失效。
+
+---
+
+## 物理表示：扁平内联，没有对象头
+
+运行下面这段完整代码，看看这三种结构体在内存里分别占多少字节：
+
+<small class="code-source">源文件：<code>examples/types/structs/src/bin/struct-basics.rs</code></small>
+<Code code={structBasics} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+u2: Bob (age 28, active true)
+rgb = (255, 0, 0)
+sizes: User = 40B, Color = 3B, AlwaysEqual = 0B
+```
+
+看最后一行输出：`User` 占 **`40B`**（`String` 的 24 字节控制头 + `u64` 的 8 字节 + `bool` 的 1 字节 + 7 字节内存对齐填充），`Color` 占 **`3B`**，`AlwaysEqual` 占 **`0B`**。
+
+这与 Java 或 Python 的对象有着根本区别：
+- 在 Java 中，`User` 对象本身在堆上有对象头（12～16 字节），里面的 `String name` 又是一个指向另一块堆内存的引用；
+- 在 Rust 中，`struct` 是纯粹的**扁平内联（Flat Inline）**：`User` 的 40 个字节直接紧挨着排在当前栈帧上，没有任何隐藏的对象头。
+
+<Aside type="note" title="可变性归绑定管，结构体不支持给单个字段标 mut">
+在定义结构体时，不能写 `struct User { mut age: u64 }`。字段能不能改，完全由声明变量时的 `let` 还是 `let mut` 决定：
+- `let user = User { ... };`：整个实例的所有字段全部只读；
+- `let mut user = User { ... };`：整个实例的所有字段均可修改（如 `user.age = 29;`）。
+</Aside>
+
+---
+
+## 为什么自定义类型默认走移动（Move）？
+
+现在看一个容易让人意外的现象。我们定义一个只包含两个 `i32` 整数的 `Point`：
+
+<small class="code-source">源文件：<code>examples/types/structs/src/bin/point-move.rs</code></small>
+<Code code={pointMove} lang="rust" />
+
+`Point` 里面装的只是两个 `i32`（共 8 字节，全在栈上，没有半点堆内存）。可一旦取消最后一行 `// println!("{}", a.x);` 的注释，编译器居然报出了 **`error[E0382]`（移动后使用）**。
+
+为什么同样是两个 `i32`，元组 `(i32, i32)` 和数组 `[i32; 2]` 自动实现了 `Copy`，而我们自己定义的 `struct Point` 却默认走**移动（Move）**？
+
+因为对自定义类型而言，**默认不实现 `Copy` 是最安全的接口承诺**。
+
+试想，如果编译器因为 `Point` 目前只有两个 `i32` 就自动替它开启 `Copy`，那将来某天你在升级代码时往 `Point` 里加了一个 `String` 标签字段（导致它不再满足按位复制条件），全项目所有写过 `let b = a;` 的地方就会在一夜之间全部编译失败。
+
+因此 Rust 规定：自定义类型**默认一律走移动语义**。只有当你确认这个结构体很小、所有字段都支持 `Copy`，且愿意对外承诺它具备按位复制能力时，才通过属性标注 **`#[derive(Clone, Copy)]`** 显式开启：
+
+<small class="code-source">源文件：<code>examples/types/structs/src/bin/point-copy.rs</code></small>
+<Code code={pointCopy} lang="rust" />
+
+加上这行标注后，`let b = a;` 就会按位复制栈上的 8 个字节，`a` 和 `b` 都能继续使用。
+
+---
+
+## 部分移动（Partial Move）
+
+如果一个结构体里既有 `String` 字段，又有 `u32` 字段，我们**不移动整个结构体，只把里面的 `String` 字段单独赋给另一个变量**，会发生什么？
+
+在第 4 章我们见过，数组 `[String; 2]` 和动态数组 `Vec<String>` 都严禁写 `let s = names[0];` 移出单个元素（因为下标 `i` 可能是运行时算出来的变量，编译器无法在编译期追踪第几个格子空了）。
+
+但**结构体的字段名（如 `user.name`）在编译期是 100% 固定的**。运行下面这段代码看看编译器的处理方式：
+
+<small class="code-source">源文件：<code>examples/types/structs/src/bin/partial-move.rs</code></small>
+<Code code={partialMove} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+moved name: Ferris, remaining age: 7
+```
+
+注意第 16～17 行发生了两件事：
+1. `let name = user.name;` 把字段 `user.name`（`String`）的所有权**单独移交**给了新变量 `name`；
+2. 紧接着下一行，我们依然可以合法地读取未受影响的 **`user.age`**（输出 `7`）。
+
+但如果取消最后两行中任意一行的注释，编译器就会报 `error[E0382]`：
+
+<small class="code-source">编译器诊断摘要：取消 partial-move.rs 最后两行注释后</small>
+```text
+error[E0382]: borrow of moved value: `user.name`
+  --> types/structs/src/bin/partial-move.rs:19:44
+   |
+16 |     let name = user.name; // the String moves out to `name`
+   |                --------- value moved here
+...
+19 |     println!("cannot read moved field: {}", user.name);
+   |                                             ^^^^^^^^^ value borrowed here after move
+
+error[E0382]: borrow of partially moved value: `user`
+  --> types/structs/src/bin/partial-move.rs:20:45
+   |
+16 |     let name = user.name; // the String moves out to `name`
+   |                --------- value partially moved here
+...
+20 |     println!("cannot use whole struct: {:?}", user);
+   |                                               ^^^^ value borrowed here after partial move
+```
+
+<StructPartialMove />
+
+这就是结构体与元组的**部分移动（Partial Move）**机制。当一个字段被移走后，编译器的状态追踪会精确到字段级别：
+
+| 访问目标 | 是否允许 | 原因 |
+| --- | --- | --- |
+| **已被移走的字段（`user.name`）** | **禁止** | 所有权已移交给 `name`，原字段槽位已失效。 |
+| **结构体整体（`user`）** | **禁止** | 内部已经缺失了 `name` 字段，不能再把 `user` 当作完整的 `User` 整体传参或打印。 |
+| **其余未移动的字段（`user.age`）** | **允许** | `.age` 字段完好无损，仍可单独读写；当 `user` 离开作用域时，编译器也只会清理那些**尚未被移走的剩余字段**。 |
+
+---
+
+## 小结
+
+1. **三种形态与扁平布局**：`struct` 分为具名字段结构体、元组结构体和占 0 字节的单元结构体；字段直接扁平内联在内存中，没有对象头，可变性由 `let mut` 绑定统一控制；
+2. **默认移动，显式 `Copy`**：自定义结构体默认一律走移动语义，需显式加上 `#[derive(Clone, Copy)]` 才会按位复制；
+3. **字段级部分移动**：移出结构体中的单个非 `Copy` 字段后，该字段与结构体整体失效，但其余未移动的字段仍可独立访问。
+
+### 动手核对与小练习
+
+1. **对比机制**：为什么数组 `let names: [String; 2]` 写 `let s = names[0];` 会直接编译报错（`E0508`），而结构体写 `let s = user.name;` 却允许发生**部分移动**？
+2. **独立建模与诊断**：假设你要定义一个表示「窗口尺寸」的结构体 `Size`（包含 `width: u32` 和 `height: u32` 两个字段），并希望在代码里执行 `let s2 = s1;` 后，`s1` 和 `s2` 都能继续使用；同时还要定义一个表示「网络请求」的结构体 `Request`（包含 `url: String` 和 `timeout_ms: u32`）。
+   - 请写出 `Size` 和 `Request` 的 `struct` 定义（考虑哪个应该加 `#[derive(Clone, Copy)]`）；
+   - 如果有人写了 `let req: Request = ...; let target = req.url; println!("{:?}", req);`，编译器会报什么错？如果把最后一行改成 `println!("{}", req.timeout_ms);` 呢？
+
+<details>
+<summary>点击核对参考答案</summary>
+
+1. **数组下标 vs 结构体字段**：
+   数组下标 `arr[i]` 允许使用**运行时变量 `i`**，编译器在编译期无法静态确定哪一个槽位被移空了，离开作用域时无法生成确定的释放代码，因此一律禁止按索引移出；而结构体字段 `.name`（以及元组下标 `.0`）在语法上只能是**编译期固定的名字**，编译器能精确记录每个字段的存活状态，在作用域结束时只清理未移出的字段。
+2. **建模与部分移动诊断**：
+   - 结构体定义：
+     ```rust
+     #[derive(Clone, Copy)]
+     struct Size {
+         width: u32,
+         height: u32,
+     }
+
+     struct Request {
+         url: String,
+         timeout_ms: u32,
+     }
+     ```
+     `Size` 只包含两个 `u32`（共 8 字节，无堆资源），加上 `#[derive(Clone, Copy)]` 后即可在 `let s2 = s1;` 时按位复制；而 `Request` 含有 `String` 字段，不能实现 `Copy`。
+   - 执行 `let target = req.url;` 后，`req.url` 发生**部分移动**。此时再写 `println!("{:?}", req);` 试图使用结构体整体，编译器会报 **`error[E0382]: borrow of partially moved value: req`**；如果改为只打印未移动的 `u32` 字段 `println!("{}", req.timeout_ms);`，则完全合法，可以通过编译。
+
+</details>
+
+---
+
+我们已经能用 `struct` 把数据字段打包成自定义类型了。下一节我们看怎样通过 `impl` 给类型挂上方法，并拆解**方法接收者三件套（`self` / `&self` / `&mut self`）**。
+
+[继续：方法与接收者三件套 →](/types/methods/)

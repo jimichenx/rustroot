@@ -1,0 +1,197 @@
+---
+title: for 的展开
+description: for 向语言只借了一条语法糖——into_iter 一次、next 每轮一次，其余住在两张 trait 表里；三种写法是所有权三件套，三个迭代器是三台大小不同的机器。
+sidebar:
+  label: for 的展开
+  order: 3
+---
+
+import { Code } from '@astrojs/starlight/components';
+
+import expansion from '../../../../../../examples/appendix/for-loop-expansion/src/bin/expansion.rs?raw';
+import movedExpr from '../../../../../../examples/appendix/for-loop-expansion/src/bin/moved-expr.rs?raw';
+import threeModes from '../../../../../../examples/appendix/for-loop-expansion/src/bin/three-modes.rs?raw';
+import blanket from '../../../../../../examples/appendix/for-loop-expansion/src/bin/blanket.rs?raw';
+import sizes from '../../../../../../examples/appendix/for-loop-expansion/src/bin/sizes.rs?raw';
+import intoIterDrop from '../../../../../../examples/appendix/for-loop-expansion/src/bin/into-iter-drop.rs?raw';
+import e0502 from '../../../../../../examples/appendix/for-loop-expansion/src/bin/e0502.rs?raw';
+
+:::note[关联章节]
+关联章节：7.4 闭包与迭代器、4.3 切片、5.3 方法的三种接收者、4.1 读写排他。阅读时机：读完 7.4 之后随时可读；先读过 4.3 和 5.3，胖指针和接收者三档的对照会更好懂。是否必读：否。示例都在 `examples/appendix/for-loop-expansion`，文中的错误码为实测输出。
+:::
+
+## 你带着什么问题来
+
+`for` 的语法一眼就会，围着它的说法却很多：迭代器（iterator）、适配器链、惰性求值，`v`、`&v`、`&mut v` 三种写法，还有「循环里不能 `push`」的禁令。这些说法各自成立，合在一起像是要先学一大片东西才敢写循环。
+
+这篇把两层拆开：语言为 `for` 只准备了一条语法糖（syntactic sugar），其余全部住在标准库的两张 trait 表里。一条糖决定 `for` 长什么样，两张表决定它能吃什么、交出来的东西归谁。
+
+## 一条糖：into_iter 一次，next 每轮
+
+语言层的全部事实，是这个展开形状（`expr` 和 `body` 是占位符，不是实验源码）：
+
+```rust
+for x in expr { body }
+
+// 语义上等于：
+let mut it = IntoIterator::into_iter(expr); // 转换，一次
+loop {
+    match it.next() { // 取值，每轮一次
+        Some(x) => body,
+        None => break,
+    }
+}
+```
+
+展开里只出现两个名字：`into_iter`，循环开始前调用一次；`next`，每轮调用一次。手写成等价版本，和 `for` 的输出逐行一致：
+
+<Code code={expansion} lang="rust" />
+
+这个形状里还藏着一条容易被忽略的事实：`IntoIterator::into_iter(expr)` 是一次普通的按值传参——**`expr` 是被移动进去的**。移动发生在循环开始之前，一次结清，不是「每轮拿走一个」。这直接回答一个常见问题：
+
+> 为什么 `for x in v` 走完之后，`v` 不能再用了？
+
+因为 `v` 在第一轮之前就已经移进 `into_iter` 了。循环只是把迭代器手里的东西逐个交出来：
+
+<Code code={movedExpr} lang="rust" />
+
+至于 `expr` 位置上写的是 `v`、`&v` 还是 `&mut v`，决定后面的一切——「三种写法」一节展开。
+
+## 两张表：Iterator 与 IntoIterator
+
+糖之外的机制，全部住在两张 trait 表里。
+
+### IntoIterator：入口
+
+`IntoIterator` 回答一个问题：这个类型怎么变成迭代器。标准库里的定义（引用的签名，不是实验源码）：
+
+```rust
+trait IntoIterator {
+    type Item;
+    type IntoIter: Iterator<Item = Self::Item>;
+    fn into_iter(self) -> Self::IntoIter;
+}
+```
+
+`for` 在开始前，对 `in` 后面的表达式调 `into_iter`——这就是那条糖里唯一的一次转换。入口只有这一个检查：实现了 `IntoIterator` 的类型进得来，没实现的进不来。
+
+标准库还提供了一条覆盖所有迭代器的实现（blanket impl）：每个迭代器自己也实现了 `IntoIterator`，把自己原样交出去。所以 `for` 既能吃集合，也能直接吃现成的迭代器——范围 `0..5`、适配器链（adapter chain）`v.iter().map(f)`，都是从这条覆盖实现进来的。整数两边都不沾，被拦在门外：
+
+<Code code={blanket} lang="rust" />
+
+取消最后一行的注释，编译器报 ``error[E0277]: `{integer}` is not an iterator``，并附一条注解：
+
+```text
+= note: required for `{integer}` to implement `IntoIterator`
+```
+
+注解的方向和那条覆盖实现一致：想当 `IntoIterator`，先得是 `Iterator`。整数没有专门的实现，这条路也走不通，于是进不了 `for`。
+
+### Iterator：发动机
+
+`IntoIter` 关联类型带着 `Iterator` 约束——插座规定了自己吐出来的必须能当插头用。`Iterator` 协议的全部义务是一个方法：
+
+```rust
+fn next(&mut self) -> Option<Self::Item>
+```
+
+Java 的迭代器协议是两个方法：`hasNext()` 问「还有吗」，`next()` 拿「下一个」。两个调用之间有缝：可以不问就拿，运行时抛 `NoSuchElementException` 兜底。`Option` 把两个答案合并成一次调用，「有没有下一个」和「下一个是什么」不可能分家——这是 6.1 的和类型在 API 上最直接的一次兑现。
+
+`Iterator` 表上还有五十多个方法：`map`、`filter`、`sum`、`enumerate`……全部是默认实现，全部只建立在 `next` 之上。自己实现 `Iterator` 时只写 `next` 一个方法，其余全部自动到账。
+
+## 三种写法：所有权三件套再出场
+
+同一份 `v`，三种写法。`x` 拿到的类型在代码里用 `let _:` 逐一钉死：
+
+<Code code={threeModes} lang="rust" />
+
+| 写法 | `x` 拿到 | `v` 的下场 | 走哪个 `IntoIterator` 实现 | 迭代器 |
+| :--- | :--- | :--- | :--- | :--- |
+| `for x in v` | `T` | 被吃掉（所有权移交） | `Vec<T>` | `IntoIter<T>` |
+| `for x in &v` | `&T` | 原封（共享借） | `&Vec<T>` | `Iter<'a, T>` |
+| `for x in &mut v` | `&mut T` | 原封（循环期间独占借） | `&mut Vec<T>` | `IterMut<'a, T>` |
+
+拥有、共享借、独占借——和 5.3 的接收者三档 `self`、`&self`、`&mut self` 是同一组人。接收者三档回答「值交给方法时怎么交」，三种循环写法回答「容器交给迭代器时怎么交」。同一张表，因为所有权本来就只有这三种交法。
+
+这张表能成立，靠的是一条语言规则：**`&Vec<T>` 和 `&mut Vec<T>` 本身就是独立的类型**，可以各自实现各自的 trait。三种写法共用一个循环语法，底下各走各的实现。
+
+Java 的 for-each 只有一种模式，因为 Java 里一切皆引用，「交出所有权」这个选项不存在。Rust 把三种交法摆到明面上：代价是必须选，好处是选错的后果写在错误码里——交了 `v` 又想再用，报 `error[E0382]`。
+
+### iter() 三兄弟为什么还要存在
+
+`v.iter()`、`v.iter_mut()`、`v.into_iter()` 和三种写法在 `for` 里完全等价：`for` 替你调 `into_iter`，而引用版本的实现内部就是调 `iter()` / `iter_mut()`。
+
+它们存在的理由是：**只有 `for` 会替你调 `into_iter`**。换到别的上下文——`v.iter().zip(w.iter())`、`v.iter().map(f).collect()`——没有谁替你调，三个方法就是手动档。它们是集合类型的命名约定，不是 trait 的要求：不在 `for` 里时，想拿到迭代器，就得自己点名。
+
+## 三台机器：迭代器长什么样
+
+三种写法拿到的三个迭代器，是三个不同的类型。大小实测（`size_of`，64 位平台）：
+
+<Code code={sizes} lang="rust" />
+
+输出：
+
+```text
+Iter<i32>     16
+IterMut<i32>  16
+IntoIter<i32> 32
+&[i32]        16
+Vec<i32>      24
+```
+
+### Iter：胖指针装上了腿
+
+5.1 讲过，`&[i32]` 是两个机器字：(ptr, len)。`Iter` 也是两个机器字，只是换成了 (ptr, end)——`end` 钉在末尾不动，`ptr` 每轮 `next` 往前挪一格，挪到 `ptr == end`，`next` 返回 `None`。
+
+16 = 16 不是巧合。切片是「两个机器字的视图」，迭代器是这个视图自己走起来——同一个模型。`IterMut` 布局相同，只是指针换成了可变的。
+
+### IntoIter：接管分配的那一个
+
+`Vec` 是三个机器字 (buf, cap, len)；`IntoIter` 是四个 (buf, cap, ptr, end)——`len` 换成两个游标，所以实测 32。
+
+多出的那个字，是它接管了堆分配的凭证：`v` 的那块堆现在归迭代器所有。后果是**它有 `Drop`**——循环没走完就 `break` 时，还在迭代器手里的元素由它逐个释放，堆也由它还回去。`Iter` 没有 `Drop`：它什么都不拥有，走完拉倒。
+
+这件事可以看它跑：
+
+<Code code={intoIterDrop} lang="rust" />
+
+输出：
+
+```text
+dropped c
+dropped d
+loop done
+dropped a
+dropped b
+```
+
+c 和 d 从没离开迭代器，在 `break` 那一刻被它的 `Drop` 释放；a 和 b 已经交出到 `taken`，活到 `taken` 被释放。谁拥有、谁释放，这条规则原样作用在迭代器身上。
+
+## 借用要活到整个循环结束
+
+1.4 的读写排他，在 `for` 里原样生效——只是粒度被拉长了：从「一次调用」，拉到「整个循环」。
+
+<Code code={e0502} lang="rust" />
+
+循环里的 `push` 被拒：``error[E0502]: cannot borrow `v` as mutable because it is also borrowed as immutable``。机制：`Iter<'a, T>` 手里攥着对 `v` 的共享借用，`'a` 覆盖循环全程；`push` 要 `&mut v`，排他原样生效。同一行 `push` 挪到循环之后——没人再借 `v` 了——通过。
+
+「借多久」写进了类型里，这是和 Java 的分界。Java 的同款代码要等运行时抛 `ConcurrentModificationException`：迭代器里藏一个改动计数器，集合每次结构改动加一，迭代器每次 `next` 对账，对不上就抛。Java 的引用不携带「借多久」的信息，编译器无从检查，只能运行时数账抓现行。Rust 把「借多久」写进 `Iter<'a, T>` 的类型——`'a` 就是整个循环——编译期结案。
+
+## 循环家族里，只有 for 接在 trait 网上
+
+`loop` 和 `while` 是纯控制流，不碰任何 trait；`loop` 是家族里唯一能 `break` 带值的。`while let` 是 `match` 只试一个分支的糖：每轮对一个表达式试一次模式，失败就走人——它不接 trait，`while let Some(x) = it.next()` 里的 `next` 是你自己手动调的。`break`、`continue` 和标签全家族通用。
+
+只有 `for` 接在两张 trait 表上。这也是它的分工线：纯控制流的问题交给 `while` 和 `loop`，「把元素逐个交出来」的问题才轮到 `for`——而「怎么交」由所有权三件套决定，回到前面那张表。
+
+## 收束
+
+`for` 只向语言借了一条糖：`into_iter` 一次，`next` 每轮一次。其余住在 `Iterator` 和 `IntoIterator` 两张 trait 表里。
+
+三种写法是所有权三件套的再出场：`v` 移交、`&v` 共享借、`&mut v` 独占借。挑写法就是在挑交法：要留着容器就借，要连容器一起交出去就写 `v`。挑错的后果写在错误码里——交了 `v` 又想再用，报 `E0382`；借了 `v` 又想在循环里改，报 `E0502`。
+
+## 限制与实现细节
+
+- 本文的展开是语义形状。参考手册里的精确展开更长：`for` 的位置是一个完整的模式（`for (i, x) in v.iter().enumerate()` 里的 `(i, x)`），`break` 可以带值、带标签，这些都要在真实展开里处理。语义不变：仍然是一次 `into_iter`、每轮一次 `next`。
+- 适配器链是惰性（lazy）的：`v.iter().map(f).filter(p)` 返回的是组装好的新迭代器，不做任何计算，要等 `for`、`collect`、`sum` 这样的消费者来驱动。经过 7.2 的单态化和内联，一条链生成的机器码通常和手写循环一致——那是编译器在语义之上的优化，不改变本文的任何结论。
+- 三个尺寸是当前编译器在 64 位平台上的实测值，不是语言合同。换平台、换版本，数字可能变；「两个机器字的视图」和「四个机器字的接管者」这个结构，比具体数字稳定。
+- 本文以 `Vec` 为例。其他类型各有自己的 `IntoIterator` 实现——数组的版本故事、`String` 按什么单位迭代，是各自的题目。

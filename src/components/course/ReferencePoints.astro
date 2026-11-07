@@ -1,0 +1,119 @@
+---
+/**
+ * 1.4「引用指向哪里」。
+ * &s 是一个机器字，里面放的是变量 s 的栈地址，箭头停在栈上的 String。
+ * ptr 再从 String 指向堆上的字符。引用不到堆。
+ * 样式见 src/styles/diagrams.css。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			caption:
+				'&s holds the stack address of variable s. The arrow stops at that String on the stack; ptr then points at the characters on the heap.',
+			title: 'The reference points at variable s on the stack',
+			desc: 'On the stack, the reference &s is one machine word containing the stack address of variable s. An arrow runs down from that word to s, a String of three words: ptr, len, and cap. A second arrow runs from ptr to five characters on the heap. The reference arrow stays on the stack.',
+			stack: 'stack frame',
+			heap: 'heap',
+			buffer: 'character buffer',
+			addr: 'address of s',
+			pointsAt: 'points at s',
+			len: 'len · 5',
+			cap: 'cap · 5',
+		}
+	: {
+			caption:
+				'&s 里放的是变量 s 的栈地址，箭头停在栈上的 String；ptr 再指向堆上的字符。',
+			title: '引用指向栈上的变量 s',
+			desc: '栈帧里，引用 &s 占一个机器字，里面是变量 s 的栈地址，箭头向下指向 s。s 是 String，占三个机器字：ptr、长度 5、容量 5。ptr 向右画出箭头，指向堆上的五个字符。引用的箭头停在栈上。',
+			stack: '栈帧',
+			heap: '堆',
+			buffer: '字符缓冲区',
+			addr: 's 的栈地址',
+			pointsAt: '指向 s',
+			len: 'len · 5',
+			cap: 'cap · 5',
+		};
+
+const chars = ['h', 'e', 'l', 'l', 'o'];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 376" role="img" aria-labelledby="rp-title rp-desc">
+		<title id="rp-title">{t.title}</title>
+		<desc id="rp-desc">{t.desc}</desc>
+
+		<rect class="panel" x="16" y="16" width="308" height="344" rx="12"></rect>
+		<text class="label" x="36" y="42">
+			{t.stack}
+		</text>
+
+		<text class="name" x="52" y="70">
+			{'&s'}
+		</text>
+		<text class="code" x="82" y="70">
+			{'&String'}
+		</text>
+		<rect class="slot" x="52" y="82" width="200" height="44" rx="8"></rect>
+		<text class="name" x="152" y="109" text-anchor="middle">
+			{t.addr}
+		</text>
+
+		<path class="arrow" d="M152 126 V158" marker-end="url(#rp-head)"></path>
+		<text class="edge-label" x="164" y="148">
+			{t.pointsAt}
+		</text>
+
+		<rect class="panel" x="36" y="158" width="268" height="186" rx="10"></rect>
+		<text class="name" x="52" y="182">
+			s
+		</text>
+		<text class="code" x="70" y="182">
+			String
+		</text>
+
+		<rect class="slot" x="52" y="194" width="200" height="40" rx="8"></rect>
+		<text class="code" x="152" y="219" text-anchor="middle">
+			ptr
+		</text>
+
+		<rect class="slot" x="52" y="242" width="200" height="40" rx="8"></rect>
+		<text class="code" x="152" y="267" text-anchor="middle">
+			{t.len}
+		</text>
+
+		<rect class="slot" x="52" y="290" width="200" height="40" rx="8"></rect>
+		<text class="code" x="152" y="315" text-anchor="middle">
+			{t.cap}
+		</text>
+
+		<rect class="panel" x="360" y="16" width="264" height="344" rx="12"></rect>
+		<text class="label" x="380" y="42">
+			{t.heap}
+		</text>
+		<text class="label" x="380" y="178">
+			{t.buffer}
+		</text>
+		<rect class="object" x="380" y="190" width="224" height="48" rx="10"></rect>
+		{
+			chars.map((ch, i) => (
+				<g>
+					<rect class="slot" x={392 + i * 42} y="198" width="34" height="32" rx="6"></rect>
+					<text class="name" x={409 + i * 42} y="219" text-anchor="middle">
+						{ch}
+					</text>
+				</g>
+			))
+		}
+
+		<path class="arrow" d="M252 214 H380" marker-end="url(#rp-head)"></path>
+
+		<defs>
+			<marker id="rp-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

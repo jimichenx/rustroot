@@ -1,0 +1,149 @@
+---
+/**
+ * 3.4「为什么不能用 names[0] 移走单个元素」。
+ *
+ * 上半：若 let first = names[0] 把 Alice 移出，数组里会留下失效空位，
+ * names[1] 的 Bob 仍有效。下标可以是运行时的 names[i]，类型实体
+ * [String; 2] 无法在离开作用域时断定该释放哪一格，因此 E0508 拒绝。
+ * 下半：let first_ref = &names[0] 只借用地址，两格都还在，整段数组一起释放。
+ * 样式见 src/styles/diagrams.css。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			caption:
+				'Moving names[0] out to first would leave a hole in [String; 2] while names[1] stays live; at scope exit the type cannot tell which runtime index was moved, so E0508 rejects the move, whereas &names[0] borrows the slot and the whole array can be dropped together.',
+			title: 'Moving out by index would leave an untracked hole',
+			desc: 'The upper stack frame shows names: [String; 2]. If let first = names[0] moved Alice out, names[0] would be a dashed hole and names[1] (Bob) would stay live. At the closing brace, an index such as names[i] can be chosen at runtime, so the type [String; 2] cannot tell which element was moved out and which still needs to be dropped; E0508 rejects that move. The lower frame shows the allowed alternative let first_ref: &String = &names[0]: an arrow borrows names[0] by address, both slots stay intact, and the whole array is dropped at scope exit.',
+			stack: 'stack frame',
+			rejected: 'index move · rejected',
+			moveStmt: 'let first = names[0];',
+			error: 'error[E0508]: cannot move out of type [String; 2], a non-copy array',
+			namesType: 'names: [String; 2]',
+			first: 'first',
+			alice: 'Alice',
+			idx0: 'names[0]',
+			hole: 'moved-from',
+			idx1: 'names[1]',
+			bob: 'Bob',
+			move: 'move out',
+			blocked: 'rejected',
+			scopeMove: 'drop follows the whole type [String; 2]',
+			reason1: 'names[i] can be a runtime index',
+			reason2: 'the type cannot tell which slot moved out, or which still needs a drop',
+			borrowHead: 'borrow instead',
+			borrowOk: 'both slots stay valid',
+			borrowStmt: 'let first_ref: &String = &names[0];',
+			refName: 'first_ref',
+			refTy: '&String',
+			addr: 'address',
+			scopeBorrow: 'both slots stay intact, so the array is dropped together',
+		}
+	: {
+			caption:
+				'按下标把 names[0] 的 Alice 移给 first，会在 [String; 2] 里留下失效空位，而 names[1] 的 Bob 仍然有效；离开作用域时类型实体无法分辨运行时下标移空了哪一格，因此 E0508 拒绝这次移出，改为 &names[0] 借用则两格都还在，整段数组可以一起释放。',
+			title: '按下标移出会在数组内部留下无法追踪的空位',
+			desc: '上方栈帧里是 names: [String; 2]。若 let first = names[0] 把 Alice 移走，names[0] 会变成虚线空位，names[1]（Bob）仍然有效。到右花括号离开作用域时，下标可以是运行时的 names[i]，类型实体 [String; 2] 无法确定哪一格已移空、哪一格还要释放，因此 E0508 拒绝这次移出。下方是允许的写法 let first_ref: &String = &names[0]：箭头按地址借用 names[0]，两格都还在，离开作用域时整段数组一起释放。',
+			stack: '栈帧',
+			rejected: '下标移出 · 被拒绝',
+			moveStmt: 'let first = names[0];',
+			error: 'error[E0508]: cannot move out of type [String; 2], a non-copy array',
+			namesType: 'names: [String; 2]',
+			first: 'first',
+			alice: 'Alice',
+			idx0: 'names[0]',
+			hole: '失效空位',
+			idx1: 'names[1]',
+			bob: 'Bob',
+			move: '移出',
+			blocked: '被拒绝',
+			scopeMove: '离开作用域时，要按类型实体释放整个数组',
+			reason1: '下标 names[i] 可以是运行时变量',
+			reason2: '类型实体 [String; 2] 无法确定哪一格已移空、哪一格还要释放',
+			borrowHead: '改为借用',
+			borrowOk: '两格保持有效',
+			borrowStmt: 'let first_ref: &String = &names[0];',
+			refName: 'first_ref',
+			refTy: '&String',
+			addr: '借用地址',
+			scopeBorrow: '两格都还在，离开作用域时整段数组一起释放',
+		};
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 660" role="img" aria-labelledby="aim-title aim-desc">
+		<title id="aim-title">{t.title}</title>
+		<desc id="aim-desc">{t.desc}</desc>
+
+		{/* 上半：按下标移出会在数组内部留下无法追踪的空位，E0508 拒绝 */}
+		<rect class="panel" x="16" y="16" width="608" height="356" rx="12"></rect>
+		<text class="label" x="36" y="42">{t.stack}</text>
+		<text class="label" x="604" y="42" text-anchor="end">{t.rejected}</text>
+
+		<text class="code" x="36" y="70">{t.moveStmt}</text>
+		<text class="code" x="36" y="94">{t.error}</text>
+
+		<text class="code" x="452" y="126" text-anchor="middle">{t.namesType}</text>
+		<rect class="panel" x="292" y="144" width="320" height="108" rx="12"></rect>
+
+		<rect class="slot" x="36" y="156" width="164" height="84" rx="8"></rect>
+		<text class="code" x="118" y="190" text-anchor="middle">{t.first}</text>
+		<text class="name" x="118" y="218" text-anchor="middle">{t.alice}</text>
+
+		<rect class="freed" x="304" y="156" width="142" height="84" rx="8"></rect>
+		<text class="code" x="375" y="190" text-anchor="middle">{t.idx0}</text>
+		<text class="label" x="375" y="218" text-anchor="middle">{t.hole}</text>
+
+		<rect class="slot" x="458" y="156" width="142" height="84" rx="8"></rect>
+		<text class="code" x="529" y="190" text-anchor="middle">{t.idx1}</text>
+		<text class="name" x="529" y="218" text-anchor="middle">{t.bob}</text>
+
+		<path class="arrow danger" d="M292 198 H200" marker-end="url(#aim-danger)"></path>
+		<text class="edge-label" x="246" y="184" text-anchor="middle">{t.move}</text>
+		<text class="edge-sub" x="246" y="216" text-anchor="middle">{t.blocked}</text>
+
+		<text class="code" x="36" y="286">{'}'}</text>
+		<text class="edge-label" x="58" y="286">{t.scopeMove}</text>
+		<text class="label" x="36" y="314">{t.reason1}</text>
+		<text class="label" x="36" y="340">{t.reason2}</text>
+
+		{/* 下半：借用地址，两格都还在，离开作用域时整段一起释放 */}
+		<rect class="panel" x="16" y="388" width="608" height="256" rx="12"></rect>
+		<text class="label" x="36" y="414">{t.borrowHead}</text>
+		<text class="label" x="604" y="414" text-anchor="end">{t.borrowOk}</text>
+
+		<text class="code" x="36" y="442">{t.borrowStmt}</text>
+		<text class="code" x="452" y="470" text-anchor="middle">{t.namesType}</text>
+		<rect class="panel" x="292" y="488" width="320" height="108" rx="12"></rect>
+
+		<rect class="slot" x="36" y="500" width="172" height="84" rx="8"></rect>
+		<text class="code" x="122" y="534" text-anchor="middle">{t.refName}</text>
+		<text class="name" x="122" y="562" text-anchor="middle">{t.refTy}</text>
+
+		<rect class="slot" x="304" y="500" width="142" height="84" rx="8"></rect>
+		<text class="code" x="375" y="534" text-anchor="middle">{t.idx0}</text>
+		<text class="name" x="375" y="562" text-anchor="middle">{t.alice}</text>
+
+		<rect class="slot" x="458" y="500" width="142" height="84" rx="8"></rect>
+		<text class="code" x="529" y="534" text-anchor="middle">{t.idx1}</text>
+		<text class="name" x="529" y="562" text-anchor="middle">{t.bob}</text>
+
+		<path class="arrow" d="M208 542 H292" marker-end="url(#aim-head)"></path>
+		<text class="edge-label" x="250" y="528" text-anchor="middle">{t.addr}</text>
+
+		<text class="code" x="36" y="628">{'}'}</text>
+		<text class="edge-label" x="58" y="628">{t.scopeBorrow}</text>
+
+		<defs>
+			<marker id="aim-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+			<marker id="aim-danger" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line-muted)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

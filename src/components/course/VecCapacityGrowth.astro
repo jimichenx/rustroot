@@ -1,0 +1,188 @@
+---
+/**
+ * 4.4「动态数组：Vec<T> 与堆上连续内存」。
+ * 三步展示 len 与 cap 的演进关系：
+ * 1. 已有一个元素（len: 1, cap: 2，第二个槽位未初始化）
+ * 2. push(20) 使用空余容量（len: 2, cap: 2，缓冲区已满）
+ * 3. push(30) 触发扩容（len: 3, cap: 4，示例中搬到新地址）
+ * 样式见 src/styles/diagrams.css。
+ */
+import { CURRENT } from '../../config/site';
+import FigureControls from './FigureControls.astro';
+
+const isEn = CURRENT.code === 'en';
+
+const t = isEn
+	? {
+			caption:
+				'Local variable nums owns the heap buffer. The capacity growth and address change shown here represent one possible reallocation outcome.',
+			title: 'Length, capacity, and reallocation of Vec',
+			desc: 'Three consecutive states. In step 1, nums has len 1 and cap 2; the buffer holds 10 and one uninitialized slot. After push(20), both len and cap are 2. On push(30), capacity is full; in this example the buffer grows to cap 4 at a new address, holding 10, 20, 30, and one uninitialized slot. Actual growth factors may vary and reallocation may also happen in place. The order of ptr, len, and cap is illustrative.',
+			local: 'local variable nums',
+			heapSame: 'heap buffer (original address)',
+			heapNew: 'heap buffer (new address)',
+			addrSame: '0x1000',
+			addrNew: '0x2000',
+			stepperLabel: 'Vec growth steps',
+			stepperSteps: [
+				'One element in buffer',
+				'Push element, buffer now full',
+				'Capacity exceeded, reallocate to new address',
+			],
+			steps: [
+				{
+					action: 'One element present',
+					len: 1,
+					cap: 2,
+					values: ['10', ''],
+					note: 'Second slot is uninitialized (reserved capacity)',
+				},
+				{
+					action: 'push(20): uses spare capacity',
+					len: 2,
+					cap: 2,
+					values: ['10', '20'],
+					note: 'len == cap: buffer is now full (no allocation needed)',
+				},
+				{
+					action: 'push(30): capacity full, reallocates',
+					len: 3,
+					cap: 4,
+					values: ['10', '20', '30', ''],
+					note: 'Example: moved to a new address; may also grow in place',
+				},
+			],
+		}
+	: {
+			caption:
+				'局部变量 nums 持有堆缓冲区。图中容量和地址变化只是一种可能的扩容结果。',
+			title: 'Vec 的长度、容量与扩容',
+			desc: '三个连续状态。第一个状态的 nums 长度为 1、容量为 2，缓冲区包含 10 和一个未初始化槽位。追加 20 后长度和容量均为 2。再次追加 30 时容量不足，本例扩容到 4 并搬到新地址，缓冲区包含 10、20、30 和一个未初始化槽位。实际容量不一定为 4，扩容也可能原地完成。图中 ptr、len、cap 的顺序只是示意，不代表实际字段布局。',
+			local: '局部变量 nums',
+			heapSame: '堆缓冲区（原地址）',
+			heapNew: '堆缓冲区（新地址）',
+			addrSame: '0x1000',
+			addrNew: '0x2000',
+			stepperLabel: 'Vec 扩容步骤',
+			stepperSteps: [
+				'已有一个元素',
+				'追加元素，缓冲区已满',
+				'容量不足，示例中扩容到新地址',
+			],
+			steps: [
+				{
+					action: '已有一个元素',
+					len: 1,
+					cap: 2,
+					values: ['10', ''],
+					note: '第二个槽位尚未初始化（预留容量）',
+				},
+				{
+					action: 'push(20)：使用空余容量',
+					len: 2,
+					cap: 2,
+					values: ['10', '20'],
+					note: 'len 等于 cap，缓冲区已满（零堆分配）',
+				},
+				{
+					action: 'push(30)：容量不足，扩容',
+					len: 3,
+					cap: 4,
+					values: ['10', '20', '30', ''],
+					note: '示例：搬到新地址；也可能原地扩容',
+				},
+			],
+		};
+---
+
+<figure class="diagram vec-capacity-figure" data-stepper>
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 620 492" role="img" aria-labelledby="vcg-title vcg-desc">
+		<title id="vcg-title">{t.title}</title>
+		<desc id="vcg-desc">{t.desc}</desc>
+
+		{
+			t.steps.map((step, i) => {
+				const y = 12 + i * 158;
+				const isNewAddr = i === 2;
+				return (
+					<g class="step" data-step={i + 1}>
+						<text class="edge-label" x="20" y={y + 18}>
+							{i + 1}. {step.action}
+						</text>
+
+						{/* 左面板：局部变量 nums */}
+						<rect class="panel" x="16" y={y + 28} width="244" height="116" rx="10"></rect>
+						<text class="label" x="30" y={y + 50}>{t.local}</text>
+
+						<rect class="slot" x="30" y={y + 64} width="62" height="34" rx="5"></rect>
+						<rect class="slot" x="98" y={y + 64} width="68" height="34" rx="5"></rect>
+						<rect class="slot" x="172" y={y + 64} width="74" height="34" rx="5"></rect>
+						<text class="code" x="61" y={y + 86} text-anchor="middle">ptr</text>
+						<text class="code" x="132" y={y + 86} text-anchor="middle">
+							len: {step.len}
+						</text>
+						<text class="code" x="209" y={y + 86} text-anchor="middle">
+							cap: {step.cap}
+						</text>
+
+						{/* 右面板：堆缓冲区 */}
+						<rect class="panel" x="304" y={y + 28} width="300" height="116" rx="10"></rect>
+						<text class="label" x="320" y={y + 50}>
+							{isNewAddr ? t.heapNew : t.heapSame}
+						</text>
+						<text class="code" x="588" y={y + 50} text-anchor="end">
+							{isNewAddr ? t.addrNew : t.addrSame}
+						</text>
+
+						{
+							step.values.map((value, cell) => (
+								<g>
+									<rect
+										class={value ? 'slot' : 'freed'}
+										x={320 + cell * 58}
+										y={y + 64}
+										width="50"
+										height="34"
+										rx="5"
+									></rect>
+									{value && (
+										<text
+											class="code"
+											x={345 + cell * 58}
+											y={y + 86}
+											text-anchor="middle"
+										>
+											{value}
+										</text>
+									)}
+								</g>
+							))
+						}
+
+						{/* 面板内底部说明文字 */}
+						<text class="edge-sub" x="320" y={y + 124}>{step.note}</text>
+
+						{/* ptr 指向堆缓冲区首槽位的连线 */}
+						<path
+							class="arrow"
+							d={`M 61 ${y + 98} V ${y + 112} H 282 V ${y + 81} H 316`}
+							marker-end="url(#vcg-head)"
+						></path>
+					</g>
+				);
+			})
+		}
+		<defs>
+			<marker id="vcg-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+	<FigureControls controls="stepper" label={t.stepperLabel} steps={t.stepperSteps} />
+</figure>
+
+<script>
+	import { initFigures } from '../../scripts/motion';
+	initFigures();
+</script>

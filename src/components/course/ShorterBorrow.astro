@@ -1,0 +1,207 @@
+---
+/**
+ * 1.5 的两张示意图。
+ * dangle：内层的原变量 x 先离开，堆数据随之释放，外层的引用 r 还指着已失效的 x。
+ * span：引用 r 的有效区间必须落在原变量 x 的存活区间里面。
+ * 样式见 src/styles/diagrams.css。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	part: 'dangle' | 'span';
+}
+
+const { part } = Astro.props;
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			dangleCaption:
+				'While the inner block is alive, r points at x on the stack, and x points at the heap data. When the inner block ends, x is gone, the heap data is freed, and r still points at the invalidated stack slot.',
+			dangleTitle: 'A reference outlives the variable it points to',
+			dangleDesc:
+				'Two states. While the inner block is alive, the outer reference r points at the inner variable x on the stack, and x points at the block of data on the heap. After the inner block ends, x is gone, the heap data is freed, and a dashed arrow still runs from r to the gone inner variable.',
+			spanCaption:
+				'The reference’s valid span must sit inside variable x’s span. When it runs past the end, it dangles.',
+			spanTitle: 'The reference’s span must sit inside the original variable’s span',
+			spanDesc:
+				'Two panels. In the legal panel, the reference bar is shorter than variable x’s bar and sits inside it. In the illegal panel, the reference bar runs past the end of variable x’s bar and is drawn dashed.',
+			during: 'inner block alive',
+			after: 'inner block ended',
+			stack: 'stack',
+			heap: 'heap',
+			outer: 'outer',
+			inner: 'inner',
+			addr: 'ptr → heap',
+			ref: 'address of x',
+			data: 'data ("hello")',
+			frameGone: 'x has left scope',
+			inside: 'valid (inside)',
+			past: 'dangling (past the end)',
+			owner: 'variable x',
+			refSpan: 'reference r',
+			time: 'code lines →',
+		}
+	: {
+			dangleCaption:
+				'内层还在时，r 指着栈上的 x，x 再指着堆数据；内层结束，x 退场并释放堆数据，r 手里的地址顿时悬空。',
+			dangleTitle: '引用比它指向的变量活得更久',
+			dangleDesc:
+				'两种状态。内层还在时，外层的引用 r 指向内层的栈变量 x，x 指向堆上的数据。内层结束后，内层变量 x 已离开作用域，堆数据随之释放，r 仍有一条虚线箭头指向已经消失的 x。',
+			spanCaption: '引用 r 的有效区间必须落在原变量 x 的存活区间之内；一旦超出，引用就悬垂。',
+			spanTitle: '引用的有效区间必须落在原变量的区间里面',
+			spanDesc:
+				'两块面板。合法的一块里，引用 r 的横条比原变量 x 短，并且完全落在 x 的横条之内。超出的一块里，引用 r 的横条伸过了 x 的终点，画成虚线。',
+			during: '内层还在',
+			after: '内层结束',
+			stack: '栈',
+			heap: '堆',
+			outer: '外层',
+			inner: '内层',
+			addr: 'ptr（指向堆）',
+			ref: 'x 的栈地址',
+			data: '堆数据 "hello"',
+			frameGone: 'x 已离开作用域',
+			inside: '合法（落在里面）',
+			past: '悬垂（超出终点）',
+			owner: '原变量 x',
+			refSpan: '引用 r',
+			time: '代码推进 →',
+		};
+---
+
+{
+	part === 'dangle' && (
+		<figure class="diagram">
+			<figcaption>{t.dangleCaption}</figcaption>
+			<svg viewBox="0 0 640 480" role="img" aria-labelledby="sb-dangle-title sb-dangle-desc">
+				<title id="sb-dangle-title">{t.dangleTitle}</title>
+				<desc id="sb-dangle-desc">{t.dangleDesc}</desc>
+
+				<text class="label" x="20" y="28">
+					{t.during}
+				</text>
+				<rect class="panel" x="16" y="40" width="280" height="230" rx="12"></rect>
+				<text class="label" x="36" y="64">
+					{t.stack}
+				</text>
+				<text class="name" x="36" y="96">
+					r
+				</text>
+				<text class="label" x="56" y="96">
+					{t.outer}
+				</text>
+				<rect class="slot" x="36" y="104" width="220" height="40" rx="8"></rect>
+				<text class="name" x="146" y="130" text-anchor="middle">
+					{t.ref}
+				</text>
+				<text class="name" x="36" y="182">
+					x
+				</text>
+				<text class="label" x="56" y="182">
+					{t.inner}
+				</text>
+				<rect class="slot" x="36" y="190" width="220" height="40" rx="8"></rect>
+				<text class="name" x="146" y="216" text-anchor="middle">
+					{t.addr}
+				</text>
+
+				<path class="arrow" d="M146 144 V188" marker-end="url(#sb-dangle-head)"></path>
+
+				<rect class="panel" x="344" y="40" width="280" height="230" rx="12"></rect>
+				<text class="label" x="364" y="64">
+					{t.heap}
+				</text>
+				<rect class="object" x="384" y="176" width="200" height="68" rx="10"></rect>
+				<text class="name" x="484" y="216" text-anchor="middle">
+					{t.data}
+				</text>
+				<path class="arrow" d="M256 210 H384" marker-end="url(#sb-dangle-head)"></path>
+
+				<text class="label" x="20" y="298">
+					{t.after}
+				</text>
+				<rect class="panel" x="16" y="310" width="280" height="154" rx="12"></rect>
+				<text class="label" x="36" y="334">
+					{t.stack}
+				</text>
+				<text class="name" x="36" y="358">
+					r
+				</text>
+				<text class="label" x="56" y="358">
+					{t.outer}
+				</text>
+				<rect class="slot" x="36" y="366" width="220" height="36" rx="8"></rect>
+				<text class="name" x="146" y="390" text-anchor="middle">
+					{t.ref}
+				</text>
+				<rect class="freed" x="36" y="420" width="220" height="32" rx="8"></rect>
+				<text class="label" x="146" y="441" text-anchor="middle">
+					{t.frameGone}
+				</text>
+				<path class="arrow danger" d="M146 402 V418" marker-end="url(#sb-dangle-danger)"></path>
+
+				<rect class="panel" x="344" y="310" width="280" height="154" rx="12"></rect>
+				<text class="label" x="364" y="334">
+					{t.heap}
+				</text>
+				<rect class="freed" x="384" y="396" width="200" height="56" rx="10"></rect>
+				<text class="label" x="484" y="430" text-anchor="middle">
+					{t.data}
+				</text>
+
+				<defs>
+					<marker id="sb-dangle-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+						<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+					</marker>
+					<marker id="sb-dangle-danger" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+						<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line-muted)"></path>
+					</marker>
+				</defs>
+			</svg>
+		</figure>
+	)
+}
+
+{
+	part === 'span' && (
+		<figure class="diagram">
+			<figcaption>{t.spanCaption}</figcaption>
+			<svg viewBox="0 0 640 230" role="img" aria-labelledby="sb-span-title sb-span-desc">
+				<title id="sb-span-title">{t.spanTitle}</title>
+				<desc id="sb-span-desc">{t.spanDesc}</desc>
+
+				<rect class="panel" x="16" y="16" width="296" height="198" rx="12"></rect>
+				<text class="label" x="36" y="44">
+					{t.inside}
+				</text>
+				<text class="label" x="292" y="44" text-anchor="end">
+					{t.time}
+				</text>
+				<text class="name" x="36" y="80">
+					{t.owner}
+				</text>
+				<rect class="object" x="36" y="90" width="256" height="28" rx="8"></rect>
+				<text class="name" x="36" y="146">
+					{t.refSpan}
+				</text>
+				<rect class="slot" x="88" y="156" width="140" height="28" rx="8"></rect>
+
+				<rect class="panel" x="328" y="16" width="296" height="198" rx="12"></rect>
+				<text class="label" x="348" y="44">
+					{t.past}
+				</text>
+				<text class="label" x="604" y="44" text-anchor="end">
+					{t.time}
+				</text>
+				<text class="name" x="348" y="80">
+					{t.owner}
+				</text>
+				<rect class="object" x="348" y="90" width="150" height="28" rx="8"></rect>
+				<text class="name" x="348" y="146">
+					{t.refSpan}
+				</text>
+				<rect class="freed" x="392" y="156" width="208" height="28" rx="8"></rect>
+			</svg>
+		</figure>
+	)
+}

@@ -1,0 +1,230 @@
+---
+title: "静态分发 vs 动态分发：查表寻址、内联成本与 dyn 兼容性边界"
+description: 拆解静态分发（编译期单态化直接跳转与内联）与动态分发（运行时经由 vtable 间接寻址调用）的底层执行过程与成本对照，并从 vtable 的物理结构直接推导出 dyn 兼容性（原 Object Safety）的三条铁律。
+sidebar:
+  label: 静态分发 vs 动态分发
+  order: 3
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import dispatchAndCompatibility from '../../../../../../../examples/types/traits/src/bin/dispatch-and-compatibility.rs?raw';
+
+在上一节中，我们看清了 `&dyn Summary` 的**数据形态**：它在栈上是一个占 16 字节的胖指针 `(data_ptr, vtable_ptr)`，把编译期擦除的具体类型信息转移到了只读静态段的 `vtable`（虚表）中。
+
+现在，我们把目光从「数据长什么样」转向**「函数调用是怎么执行的」**。
+
+当我们分别用第 7 章的泛型 `<T: Summary>` 和上一节的 `&dyn Summary` 编写下面这两个仅相差几个字符的函数时：
+
+<small class="code-source">推演用伪代码：静态分发与动态分发的两个函数签名</small>
+```rust
+// 方式一：泛型约束（静态分发 Static Dispatch）
+fn notify_static<T: Summary>(item: &T) -> String {
+    item.summarize()
+}
+
+// 方式二：dyn Trait 胖指针（动态分发 Dynamic Dispatch）
+fn notify_dynamic(item: &dyn Summary) -> String {
+    item.summarize()
+}
+```
+
+这两行一模一样的 `item.summarize()`，在编译生成的机器码和 CPU 的运行期执行过程上，究竟发生了什么截然不同的事？为什么 Rust 默认鼓励写第一种，而在特定场景下才切换到第二种？
+
+本节我们就把**静态分发（Static Dispatch）**与**动态分发（Dynamic Dispatch）**的底层调用过程彻底拆开，并顺着 `vtable` 的物理限制，推导出为什么有些 Trait 被编译器禁止写成 `&dyn Trait`。
+
+---
+
+## 什么是「分发（Dispatch）」？静态与动态的底层执行对比
+
+在计算机科学中，当代码写下一行多态方法调用 `item.summarize()` 时，因为有多个类型（`Article`、`Metric`）都实现了名叫 `summarize` 的方法，**确定「这一次调用到底该跳转到哪一段具体函数机器码地址」的过程，就叫做分发（Dispatch）**。
+
+按照「确定跳转地址的时机是在编译期还是运行期」，正好对应上面那两种写法：
+
+### 1. 静态分发（Static Dispatch —— `<T: Summary>` 或 `&impl Summary`）
+
+当你在代码里调用 `notify_static(&post)` 和 `notify_static(&cpu)` 时：
+
+```
+编译期（单态化展开）：
+  notify_static(&post) ──→ 生成专属函数 notify_static_Article(item: &Article)
+                             └─ 内部直接写死指令：call <Article::summarize 的固定地址>
+  notify_static(&cpu)  ──→ 生成专属函数 notify_static_Metric(item: &Metric)
+                             └─ 内部直接写死指令：call <Metric::summarize 的固定地址>
+```
+
+- **寻址时机在编译期**：编译器在单态化阶段已经为每种类型生成了独立的函数副本。在 `notify_static_Article` 内部，调用哪一个地址在编译期就已经是百分之百确定的常量，运行时传入的参数只是一个 **8 字节的瘦指针 `&Article`**。
+- **决定性的性能红利——编译期内联（Inlining）**：
+  正因为编译器在编译期确切知道 `item.summarize()` 调用的就是 `Article::summarize` 那几行代码，优化器甚至可以直接把被调用函数的代码体**原地展开（Inline）**到调用处——连函数跳转指令（`call`）和栈帧切换都直接省掉！在密集循环中，这还能进一步解锁 CPU 的自动向量化（SIMD）与寄存器优化。
+
+### 2. 动态分发（Dynamic Dispatch —— `&dyn Summary` 或 `Box<dyn Summary>`）
+
+反过来，当你调用 `notify_dynamic(&post)` 和 `notify_dynamic(&cpu)` 时，编译器**不会**做单态化复制。整个二进制可执行文件里，从头到尾**只有唯一一份 `notify_dynamic` 的机器码**。
+
+既然只有一份通用机器码，而传进来的既可能是 `Article` 也可能是 `Metric`，这唯一一份 `notify_dynamic` 在运行时是怎么找到正确函数的？
+靠的就是我们在上一节拆解的 **16 字节胖指针 `(data_ptr, vtable_ptr)`** 的两步间接寻址：
+
+```
+运行期（CPU 执行唯一的 notify_dynamic 机器码）：
+  收到 16 字节胖指针 item = (data_ptr, vtable_ptr)
+         │
+         ├─ 第 1 步（查表）：顺着 vtable_ptr 读取只读静态段里的虚表，取出 summarize 槽位里的函数地址 fn_addr
+         └─ 第 2 步（间接调用）：将 data_ptr 作为第一个参数 (&self)，执行间接跳转 call *fn_addr
+```
+
+对比静态分发，动态分发在运行期付出了两项物理成本：
+1. **每次调用多一次指针解引用（查 `vtable`）与间接函数跳转**；
+2. **彻底无法在编译期做函数内联（Inlining）**：因为在编译 `notify_dynamic` 的那一刻，编译器根本不知道运行期传进来的 `vtable_ptr` 会指向谁，自然不可能把未知的目标函数体提前内联展开进来。
+
+### 3. 静态分发 vs 动态分发全景对照表
+
+| 对比维度 | 静态分发：`<T: Trait>` / `impl Trait` | 动态分发：`&dyn Trait` / `Box<dyn Trait>` |
+| --- | --- | --- |
+| **引用/指针大小** | **8 字节瘦指针**（只存 `data_ptr`） | **16 字节胖指针**（存 `data_ptr + vtable_ptr`） |
+| **确定目标函数时机** | **编译期**（通过单态化直接写死函数地址） | **运行期**（顺着 `vtable_ptr` 去只读段查表） |
+| **编译器内联优化** | **支持内联（Inline）**，可消除函数调用开销 | **无法内联**，每次必走间接跳转指令 |
+| **二进制机器码份数** | 用 $N$ 种类型调用就生成 $N$ 份机器码（可能引起代码体积膨胀） | 无论有多少种实现类型，**永远只生成 1 份通用机器码** |
+| **异构集合与动态分支** | **不支持**（`Vec<T>` 只能装同一种类型） | **支持**（`Vec<&dyn Trait>` 可混装任意实现类型） |
+
+---
+
+## 从 `vtable` 的物理结构推导：为什么有的 Trait 不能写成 `dyn Trait`？
+
+掌握了动态分发在运行时「查 `vtable` → 传 `data_ptr`」的物理过程后，我们就能不靠死记硬背，直接推导出 Rust 中一个著名的编译期边界：**`dyn` 兼容性（`dyn` compatibility，在旧版编译器与早期文献中称为对象安全 Object Safety）**。
+
+很多初学者在尝试把标准库的 `Clone`、或者自己写的某些带泛型方法的 Trait 写成 `&dyn Clone` 时，会突然撞上编译器报错 **`error[E0038]: the trait ... is not dyn compatible`**。
+
+为什么有的 Trait 可以写成 `&dyn Summary`，有的 Trait 却死活不让加 `dyn`？
+
+请忘掉枯燥的语法条文，直接问自己一个物理问题：**要让一段通用机器码在运行时仅凭 16 字节的 `(data_ptr, vtable_ptr)` 就能安全调用某个方法，编译器在构建 `vtable` 和生成调用代码时，必须满足哪三个物理前提？**
+
+一旦某个 Trait 内部的方法打破了以下三条物理前提中的任何一条，这张 `vtable` 在物理上就根本造不出来（或没法调用）：
+
+### 物理限制 1：方法按值返回了 `Self`（例如 `Clone::clone(&self) -> Self`）
+
+为什么不能写 `let x: &dyn Clone`？看看 `Clone` 的方法签名就明白了：
+
+<small class="code-source">推演用伪代码：按值返回 <code>Self</code> 的方法</small>
+```rust
+trait MyClone {
+    fn clone_self(&self) -> Self;
+}
+```
+
+设想一下：如果你手里只有一个擦除了具体类型的 `item: &dyn MyClone`，当你写下 `let copy = item.clone_self();` 时，编译器要在当前函数的栈帧上为返回值 `copy` 分配内存槽位。
+**可是 `Self` 已经被擦除了！** 运行时 `item` 指向的可能是 24 字节的 `Article`，也可能是 1024 字节的大结构体——**编译器在编译调用方代码时，连返回值 `Self` 占几个字节都不知道，怎么可能在栈帧上给 `copy` 留出槽位？！**
+
+因此，凡是方法签名里直接按值返回 `Self`（或按值接收 `other: Self` 参数）的 Trait，无法确定栈槽位大小，不能写成 `dyn Trait`。
+
+### 物理限制 2：方法自身带有泛型参数 `<U>`（例如 `fn tag<U>(&self, extra: U)`）
+
+如果在 Trait 的方法上又加了一个泛型参数 `<U>`，会发生什么？
+
+<small class="code-source">推演用伪代码：带有泛型参数 <code>&lt;U&gt;</code> 的方法</small>
+```rust
+trait Logger {
+    fn log_generic<U>(&self, payload: U);
+}
+```
+
+回想第 7 章 7.1 节：**泛型方法 `log_generic<U>` 不是一个函数，而是要在编译期根据调用方传入的 `U`（可能是 `i32`、`f64`、`String` 乃至任意未知类型）单态化生成无数份不同的机器码函数！**
+而我们在 8.2 节看到，只读静态段里的 **`vtable` 是一张在编译期就固定好槽位数量的静态表**。编译器在为 `Article` 制作 `Logger` 的 `vtable` 时，根本无法预知全程序未来会拿多少种不同的类型 `U` 去调用 `log_generic<U>`——**一张固定槽位的静态 `vtable`，怎么可能塞得下无穷多个未知的单态化函数指针？！**
+
+因此，包含泛型方法 `<U>` 的 Trait，无法生成固定槽位的 `vtable`，不能写成 `dyn Trait`。
+
+### 物理限制 3：方法没有 `&self` / `&mut self` 接收者（例如关联函数 `fn new() -> u32`）
+
+如果一个 Trait 里定义了不带 `self` 接收者的关联函数：
+
+<small class="code-source">推演用伪代码：不带 <code>self</code> 接收者的关联函数</small>
+```rust
+trait Configurable {
+    fn default_Version() -> u32; // 没有 &self 参数！
+}
+```
+
+动态分发之所以能找到 `vtable`，唯一入口就是你手里拿着一个 16 字节的胖指针实例 `item: &dyn Configurable`，从它的第 2 个机器字 `vtable_ptr` 顺藤摸瓜找到虚表。
+如果一个关联函数连 `&self` 参数都不接收，你在调用它时手里根本没有任何 `&dyn Configurable` 实例——**连胖指针都没有，CPU 在运行时去哪里找 `vtable`？！**
+
+| 打破 `dyn` 兼容性的写法 | 为什么在物理上无法完成动态分发？ | 代表案例 |
+| --- | --- | --- |
+| **1. 方法按值返回或接收 `Self`**<br/>`fn clone(&self) -> Self` | 擦除具体类型后，调用方在编译期不知道 `Self` 占几个字节，**无法在栈帧上为返回值或参数预留槽位** | 标准库的 `Clone`、`PartialEq`（默认比较 `Self`） |
+| **2. 方法带有泛型参数 `<U>`**<br/>`fn tag<U>(&self, x: U)` | 泛型方法会按不同的 `U` 单态化出无数个函数地址，**无法装进编译期固定槽位数量的静态 `vtable` 中** | ` serde::Serializer` 中的泛型序列化方法 |
+| **3. 方法没有 `self` 接收者**<br/>`fn make() -> u32` | 调用时手里没有任何胖指针实例，**缺失 `vtable_ptr` 入口，无法在运行时查找虚表** | `Default::default()`、`From::from()` |
+
+运行下面这份完整源码（取消末尾第 53 行的注释即可亲眼核对编译器对上述三条物理限制逐条给出的 `error[E0038]` 诊断说明）：
+
+<small class="code-source">源文件：<code>examples/types/traits/src/bin/dispatch-and-compatibility.rs</code></small>
+<Code code={dispatchAndCompatibility} lang="rust" />
+
+取消第 53 行 `// let _bad: &dyn NotDynCompatible;` 注释后的编译器报错：
+
+<small class="code-source">编译器诊断摘要：取消 dispatch-and-compatibility.rs 第 53 行注释后</small>
+```text
+error[E0038]: the trait `NotDynCompatible` is not dyn compatible
+  --> src/bin/dispatch-and-compatibility.rs:53:16
+   |
+42 |     fn make_default() -> u32;
+   |        ------------ ...because associated function `make_default` has no `self` parameter
+43 |     fn clone_self(&self) -> Self;
+   |                             ^^^^ ...because method `clone_self` references the `Self` type in its return type
+44 |     fn tag<U>(&self, extra: U) -> u32;
+   |        --- ...because method `tag` has generic type parameters
+...
+53 |     let _bad: &dyn NotDynCompatible;
+   |                ^^^^^^^^^^^^^^^^^^^^ `NotDynCompatible` is not dyn compatible
+```
+
+你看，编译器报错里的三个 `because...`，与我们从「栈帧大小 + 静态 `vtable` 固定槽位 + 胖指针入口」推导出的三条物理限制分毫不差！
+
+---
+
+## 小结与展望
+
+1. **静态分发 vs 动态分发**：静态分发（`<T: Trait>`）在编译期通过单态化生成多份专属机器码，传 8 字节瘦指针，直接跳转且支持编译期内联优化；动态分发（`&dyn Trait`）在二进制中只保留单份通用函数，传 16 字节胖指针，在运行期通过查 `vtable` 间接跳转，支持异构集合但无法内联。
+2. **`dyn` 兼容性的三条物理铁律**：要能构造出合法的 `&dyn Trait` 并在运行期调用，Trait 中的方法必须满足：① 有 `&self` / `&mut self` 接收者（提供 `vtable_ptr` 入口）；② 不按值返回或接收未知大小的 `Self`（保证调用方栈帧大小可知）；③ 不含泛型类型参数 `<U>`（保证 `vtable` 槽位数量固定）。违反任意一条即报 `E0038`。
+
+到这里，你的武器库里已经齐备了三种强大的多态与分支工具：
+- 第 6 章的**枚举 `enum`（闭合和类型）**；
+- 第 7 章的**泛型 `<T: Trait>`（静态分发）**；
+- 本章的**`&dyn Trait` / `Box<dyn Trait>`（动态分发）**。
+
+在下一节（也是本章的收官课）中，我们将直面所有从 Java / C++ / Python / Go 转向 Rust 的工程师最关心的架构实战问题：**在没有 `class` 和 `extends` 继承树的 Rust 里，面对真实的业务需求，我们到底该怎么组织代码？什么时候该选 `enum`，什么时候该选泛型 `<T: Trait>`，什么时候才该选 `dyn Trait`？**
+
+[继续：没有 `class` 和 `extends`，如何组织代码与选型多态？ →](/abstraction/polymorphism-choice/)
+
+### 动手核对与小练习
+
+1. **`dyn` 兼容性快速诊断**：请阅读下面三个 Trait 的定义，不跑编译器，直接用本节的 `vtable` 物理原则判断：哪一个可以写成 `&dyn ...`，哪两个会触发 `error[E0038]`？为什么？
+   ```rust
+   trait Drawable {
+       fn draw(&self);
+       fn bounding_box(&self) -> (u32, u32);
+   }
+
+   trait Duplicable {
+       fn duplicate(&self) -> Self;
+   }
+
+   trait Converter {
+       fn convert<T>(&self, input: T) -> String;
+   }
+   ```
+2. **修复 `dyn` 兼容性冲突**：在上面的 `Duplicable` 中，因为 `-> Self` 按值返回了编译期大小未知的 `Self`，导致无法写成 `&dyn Duplicable`。如果业务确实要求通过动态胖指针复制出一份新的 `Box<dyn Duplicable>`，应该把 `fn duplicate(&self)` 的返回类型改成什么，就能让返回值的字节大小在编译期固定为 16 字节、从而顺利通过 `dyn` 兼容性检查？
+
+<details>
+<summary>点击核对参考答案</summary>
+
+1. **`dyn` 兼容性诊断**：
+   - **`Drawable` 可以写成 `&dyn Drawable`**：它的两个方法都接收 `&self`，返回值 `()` 和 `(u32, u32)` 的字节大小在编译期完全固定，且不含泛型参数，编译器可以为它生成一张包含两个方法槽位的固定 `vtable`。
+   - **`Duplicable` 会报 `E0038`**：因为 `duplicate(&self) -> Self` 按值返回了大小未知的 `Self`，调用方无法在栈帧上分配返回值槽位。
+   - **`Converter` 会报 `E0038`**：因为 `convert<T>` 带有泛型参数 `<T>`，无法放进固定槽位数量的静态 `vtable` 中。
+2. **修复 `Duplicable`**：
+   只需把返回类型从未知大小的裸 `Self` 改为固定占 **16 字节**的堆胖指针 **`Box<dyn Duplicable>`**：
+   ```rust
+   trait Duplicable {
+       fn duplicate(&self) -> Box<dyn Duplicable>;
+   }
+   ```
+   这样调用方栈帧上接收的永远是固定 16 字节的 `Box<dyn Duplicable>`，不再依赖底层具体类型的大小，即可顺利写成 `&dyn Duplicable` 或 `Box<dyn Duplicable>`。
+
+</details>

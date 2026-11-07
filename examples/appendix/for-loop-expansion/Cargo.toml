@@ -1,0 +1,7 @@
+[package]
+name = "for-loop-expansion"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "Appendix · Expansion of the for loop"

@@ -1,0 +1,250 @@
+---
+/** 1.1 困难三角示意图。三个顶点是性能、安全、表达力，三条边各是一组拉扯。样式见 src/styles/diagrams.css。 */
+import { SITE_LOCALE } from '../../config/site';
+
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			caption: '',
+			title: 'The hard triangle of performance, safety, and expressiveness',
+			desc: 'A triangle whose three vertices are performance, safety, and expressiveness. The left edge joins safety and performance, labeled "who frees, and when"; the right edge joins performance and expressiveness, labeled "the cost of abstraction"; the bottom edge joins safety and expressiveness, labeled "how much power the programmer gets". The center reads "hard to max all three".',
+			center: 'hard to max all three',
+			perf: 'Performance',
+			safety: 'Safety',
+			expr: 'Expressiveness',
+			edgeSP: 'safety ↔ performance',
+			edgeSPsub: 'who frees, and when',
+			edgePE: 'performance ↔ expressiveness',
+			edgePEsub: 'the cost of abstraction',
+			edgeSE: 'safety ↔ expressiveness',
+			edgeSEsub: 'how much power the programmer gets',
+		}
+	: {
+			caption: '',
+			title: '性能、安全、表达力构成的困难三角',
+			desc: '三角形三个顶点分别是性能、安全、表达力。左边连接安全与性能，标注「谁在什么时候释放」；右边连接性能与表达力，标注「抽象的代价」；底边连接安全与表达力，标注「给写代码的人多大权力」。三角形中心写着「难以同时拿满」。',
+			center: '难以同时拿满',
+			perf: '性能',
+			safety: '安全',
+			expr: '表达力',
+			edgeSP: '安全 ↔ 性能',
+			edgeSPsub: '谁在什么时候释放',
+			edgePE: '性能 ↔ 表达力',
+			edgePEsub: '抽象的代价',
+			edgeSE: '安全 ↔ 表达力',
+			edgeSEsub: '给写代码的人多大权力',
+		};
+---
+
+<figure class="diagram triangle-figure" data-triangle>
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 470" role="img" aria-labelledby="tri-title tri-desc">
+		<title id="tri-title">{t.title}</title>
+		<desc id="tri-desc">{t.desc}</desc>
+
+		<path class="edge" d="M320 95 L125 375"></path>
+		<path class="edge" d="M320 95 L515 375"></path>
+		<path class="edge" d="M125 375 L515 375"></path>
+
+		<text class="center" x="320" y="292" text-anchor="middle">{t.center}</text>
+
+		<text class="edge-label" x="150" y="216" text-anchor="middle">{t.edgeSP}</text>
+		<text class="edge-sub" x="150" y="236" text-anchor="middle">{t.edgeSPsub}</text>
+
+		<text class="edge-label" x="492" y="216" text-anchor="middle">{t.edgePE}</text>
+		<text class="edge-sub" x="492" y="236" text-anchor="middle">{t.edgePEsub}</text>
+
+		<text class="edge-label" x="320" y="412" text-anchor="middle">{t.edgeSE}</text>
+		<text class="edge-sub" x="320" y="432" text-anchor="middle">{t.edgeSEsub}</text>
+
+		<g class="node">
+			<circle cx="320" cy="95" r="52"></circle>
+			<text class="node-name" x="320" y={en ? 101 : 92} text-anchor="middle">{t.perf}</text>
+			{!en && <text class="node-en" x="320" y="113" text-anchor="middle">performance</text>}
+		</g>
+		<g class="node">
+			<circle cx="125" cy="375" r="52"></circle>
+			<text class="node-name" x="125" y={en ? 381 : 372} text-anchor="middle">{t.safety}</text>
+			{!en && <text class="node-en" x="125" y="393" text-anchor="middle">safety</text>}
+		</g>
+		<g class="node">
+			<circle cx="515" cy="375" r="52"></circle>
+			<text class="node-name" x="515" y={en ? 381 : 372} text-anchor="middle">{t.expr}</text>
+			{!en && <text class="node-en" x="515" y="393" text-anchor="middle">expressiveness</text>}
+		</g>
+	</svg>
+</figure>
+
+<script>
+	import { onFirstView, reducedMotion } from '../../scripts/motion';
+
+	/*
+	 * 1.1 困难三角的张力：光标靠近时，最近的一条边像绷紧的绳朝光标弯一下，
+	 * 两端顶点亮起，另外两条边保持原样。进入视口时先自动走一遍，触摸屏也能看到。
+	 * 纯装饰，不改变图里的文字。颜色与过渡见 diagrams.css 的「困难三角的张力」一段。
+	 */
+	document.querySelectorAll('[data-triangle]').forEach((figure) => {
+		const svg = figure.querySelector('svg');
+		if (!svg || !svg.viewBox || !svg.viewBox.baseVal) return;
+		if (reducedMotion()) return;
+
+		const edges = [];
+		svg.querySelectorAll('.edge').forEach((path) => {
+			const m = /M\s*(-?[\d.]+)[ ,]+(-?[\d.]+)\s*L\s*(-?[\d.]+)[ ,]+(-?[\d.]+)/.exec(
+				path.getAttribute('d') || ''
+			);
+			if (!m) return;
+			const x0 = +m[1];
+			const y0 = +m[2];
+			const x1 = +m[3];
+			const y1 = +m[4];
+			const mx = (x0 + x1) / 2;
+			const my = (y0 + y1) / 2;
+			let nx = -(y1 - y0);
+			let ny = x1 - x0;
+			const nl = Math.hypot(nx, ny) || 1;
+			nx /= nl;
+			ny /= nl;
+			edges.push({ path, x0, y0, x1, y1, mx, my, nx, ny, cur: 0, target: 0 });
+		});
+		if (!edges.length) return;
+
+		const nodes = new Map();
+		svg.querySelectorAll('g.node').forEach((g) => {
+			const c = g.querySelector('circle');
+			if (!c) return;
+			nodes.set(`${Math.round(+c.getAttribute('cx'))},${Math.round(+c.getAttribute('cy'))}`, g);
+		});
+		const nodeAt = (x, y) => nodes.get(`${Math.round(x)},${Math.round(y)}`);
+
+		const RADIUS = 170; // 影响半径（用户单位）
+		const MAX_BEND = 26; // 最大弯曲幅度
+		const EASE = 0.14; // 每帧逼近期望值的比例
+
+		let pointer = null;
+		let running = false;
+		let demoTimer = 0;
+		let demoStarted = false;
+
+		const toUser = (event) => {
+			const rect = svg.getBoundingClientRect();
+			const vb = svg.viewBox.baseVal;
+			return {
+				x: ((event.clientX - rect.left) / rect.width) * vb.width + vb.x,
+				y: ((event.clientY - rect.top) / rect.height) * vb.height + vb.y,
+			};
+		};
+
+		const distanceToEdge = (e, px, py) => {
+			const dx = e.x1 - e.x0;
+			const dy = e.y1 - e.y0;
+			const len2 = dx * dx + dy * dy || 1;
+			let t = ((px - e.x0) * dx + (py - e.y0) * dy) / len2;
+			t = Math.max(0, Math.min(1, t));
+			return Math.hypot(px - (e.x0 + t * dx), py - (e.y0 + t * dy));
+		};
+
+		const frame = () => {
+			let settled = true;
+			let nearest = null;
+			let nearestDist = Infinity;
+
+			if (pointer) {
+				for (const e of edges) {
+					const dist = distanceToEdge(e, pointer.x, pointer.y);
+					if (dist < nearestDist) {
+						nearestDist = dist;
+						nearest = e;
+					}
+				}
+			}
+
+			const taut = pointer && nearest && nearestDist < RADIUS ? nearest : null;
+
+			for (const e of edges) {
+				if (e === taut && pointer) {
+					const falloff = Math.max(0, 1 - nearestDist / RADIUS);
+					const side = (pointer.x - e.mx) * e.nx + (pointer.y - e.my) * e.ny >= 0 ? 1 : -1;
+					e.target = side * MAX_BEND * falloff * falloff;
+				} else {
+					e.target = 0;
+				}
+			}
+
+			for (const e of edges) {
+				e.cur += (e.target - e.cur) * EASE;
+				if (Math.abs(e.target - e.cur) > 0.2) settled = false;
+				const cx = e.mx + e.nx * e.cur;
+				const cy = e.my + e.ny * e.cur;
+				e.path.setAttribute('d', `M${e.x0} ${e.y0} Q${cx} ${cy} ${e.x1} ${e.y1}`);
+			}
+
+			const lit = new Set();
+			if (taut) {
+				lit.add(nodeAt(taut.x0, taut.y0));
+				lit.add(nodeAt(taut.x1, taut.y1));
+			}
+			for (const e of edges) e.path.classList.toggle('is-taut', e === taut);
+			for (const g of nodes.values()) g.classList.toggle('is-taut', lit.has(g));
+			figure.classList.toggle('has-tension', !!taut);
+
+			if (!settled) {
+				requestAnimationFrame(frame);
+			} else {
+				running = false;
+			}
+		};
+
+		const start = () => {
+			if (running) return;
+			running = true;
+			requestAnimationFrame(frame);
+		};
+
+		const cancelDemo = () => {
+			if (demoTimer) {
+				clearTimeout(demoTimer);
+				demoTimer = 0;
+			}
+		};
+
+		// 进视口先自动拉一遍三条边：不依赖 hover，触摸屏也能看到效果。
+		const runDemo = () => {
+			if (demoStarted) return;
+			demoStarted = true;
+			const points = edges.map((e) => ({ x: e.mx + e.nx * 36, y: e.my + e.ny * 36 }));
+			let index = 0;
+			const step = () => {
+				if (index >= points.length) {
+					pointer = null;
+					start();
+					return;
+				}
+				pointer = points[index];
+				index += 1;
+				start();
+				demoTimer = window.setTimeout(step, 650);
+			};
+			step();
+		};
+
+		onFirstView(svg, runDemo, 0.5);
+
+		svg.addEventListener('pointerenter', (event) => {
+			demoStarted = true;
+			cancelDemo();
+			pointer = toUser(event);
+			start();
+		});
+		svg.addEventListener('pointermove', (event) => {
+			demoStarted = true;
+			cancelDemo();
+			pointer = toUser(event);
+			start();
+		});
+		svg.addEventListener('pointerleave', () => {
+			pointer = null;
+			start();
+		});
+	});
+</script>

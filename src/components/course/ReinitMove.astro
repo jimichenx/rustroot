@@ -1,0 +1,148 @@
+---
+/**
+ * 2.2「旧值已移走后重新赋值（重初始化）的栈堆布局」。
+ * let t = s; 与 s = String::from("world"); 之后：
+ * 原先的 "hello" 已由 t 接手（未释放），空出来的 s 直接接手 "world" 并恢复有效，
+ * 栈上两个变量与堆上两块字符缓冲区同时存活。
+ * 样式见 src/styles/diagrams.css。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			caption:
+				'After let t = s; and s = String::from("world");: "hello" was already moved to t (not dropped), while the vacated s takes ownership of "world" and becomes valid again.',
+			title:
+				'Stack and heap layout after let t = s; and s = String::from("world");',
+			desc: 'On the stack frame, top variable s (String, marked valid again) holds an active three-word header (ptr, len 5, cap 5) whose ptr arrow points to the five-character buffer "world" on the heap. Below it, variable t (String) also holds an active three-word header (ptr, len 5, cap 5) whose ptr arrow points to the original five-character buffer "hello" on the heap. Both variables and both heap buffers remain alive simultaneously.',
+			stack: 'stack frame',
+			heap: 'heap',
+			validAgain: 'valid again',
+			newBuffer: 'buffer (owned by s)',
+			oldBuffer: 'original buffer (moved to t, still alive)',
+			len: 'len · 5',
+			cap: 'cap · 5',
+		}
+	: {
+			caption:
+				'执行 let t = s; 与 s = String::from("world"); 之后：原 "hello" 早已移交 t（未释放），空置的 s 直接接手 "world" 并恢复有效，两块堆缓冲区同时存活。',
+			title:
+				'执行 let t = s; 与 s = String::from("world"); 之后的栈与堆布局',
+			desc: '栈帧里，上方变量 s（String，标为重新有效）持有有效的三个机器字（ptr、len · 5、cap · 5），箭头从 s 的 ptr 指向堆上上方的字符缓冲区 "world"。下方变量 t（String）同样持有有效的三个机器字（ptr、len · 5、cap · 5），箭头从 t 的 ptr 指向堆上下方的原字符缓冲区 "hello"。两个变量与两块堆缓冲区全部有效，没有任何释放发生。',
+			stack: '栈帧',
+			heap: '堆',
+			validAgain: '重新有效',
+			newBuffer: '字符缓冲区（由 s 负责释放）',
+			oldBuffer: '原字符缓冲区（已移交 t，未释放）',
+			len: 'len · 5',
+			cap: 'cap · 5',
+		};
+
+const newChars = ['w', 'o', 'r', 'l', 'd'];
+const oldChars = ['h', 'e', 'l', 'l', 'o'];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 416" role="img" aria-labelledby="rm-title rm-desc">
+		<title id="rm-title">{t.title}</title>
+		<desc id="rm-desc">{t.desc}</desc>
+
+		<rect class="panel" x="16" y="16" width="280" height="384" rx="12"></rect>
+		<text class="label" x="36" y="42">
+			{t.stack}
+		</text>
+
+		<text class="name" x="36" y="72">
+			s
+		</text>
+		<text class="code" x="54" y="72">
+			String
+		</text>
+		<text class="label" x="114" y="72">
+			{t.validAgain}
+		</text>
+
+		<rect class="slot" x="36" y="84" width="220" height="38" rx="8"></rect>
+		<text class="code" x="146" y="108" text-anchor="middle">
+			ptr
+		</text>
+
+		<rect class="slot" x="36" y="128" width="220" height="38" rx="8"></rect>
+		<text class="code" x="146" y="152" text-anchor="middle">
+			{t.len}
+		</text>
+
+		<rect class="slot" x="36" y="172" width="220" height="38" rx="8"></rect>
+		<text class="code" x="146" y="196" text-anchor="middle">
+			{t.cap}
+		</text>
+
+		<text class="name" x="36" y="242">
+			t
+		</text>
+		<text class="code" x="54" y="242">
+			String
+		</text>
+
+		<rect class="slot" x="36" y="254" width="220" height="38" rx="8"></rect>
+		<text class="code" x="146" y="278" text-anchor="middle">
+			ptr
+		</text>
+
+		<rect class="slot" x="36" y="298" width="220" height="38" rx="8"></rect>
+		<text class="code" x="146" y="322" text-anchor="middle">
+			{t.len}
+		</text>
+
+		<rect class="slot" x="36" y="342" width="220" height="38" rx="8"></rect>
+		<text class="code" x="146" y="366" text-anchor="middle">
+			{t.cap}
+		</text>
+
+		<rect class="panel" x="344" y="16" width="280" height="384" rx="12"></rect>
+		<text class="label" x="364" y="42">
+			{t.heap}
+		</text>
+
+		<text class="label" x="364" y="63">
+			{t.newBuffer}
+		</text>
+		<rect class="object" x="364" y="75" width="240" height="56" rx="10"></rect>
+		{
+			newChars.map((ch, i) => (
+				<g>
+					<rect class="slot" x={378 + i * 44} y="85" width="36" height="36" rx="6"></rect>
+					<text class="name" x={396 + i * 44} y="109" text-anchor="middle">
+						{ch}
+					</text>
+				</g>
+			))
+		}
+
+		<text class="label" x="364" y="233">
+			{t.oldBuffer}
+		</text>
+		<rect class="object" x="364" y="245" width="240" height="56" rx="10"></rect>
+		{
+			oldChars.map((ch, i) => (
+				<g>
+					<rect class="slot" x={378 + i * 44} y="255" width="36" height="36" rx="6"></rect>
+					<text class="name" x={396 + i * 44} y="279" text-anchor="middle">
+						{ch}
+					</text>
+				</g>
+			))
+		}
+
+		<path class="arrow" d="M256 103 H364" marker-end="url(#rm-head)"></path>
+		<path class="arrow" d="M256 273 H364" marker-end="url(#rm-head)"></path>
+
+		<defs>
+			<marker id="rm-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

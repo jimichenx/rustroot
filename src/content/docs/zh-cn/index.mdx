@@ -1,0 +1,49 @@
+---
+title: Rust Root
+description: 面向已有编程经验者的 Rust 开源指南，从具体问题出发，结合推导与代码实验理解 Rust。
+template: splash
+head:
+  - tag: title
+    content: Rust Root · 从原理出发，理解 Rust 的设计
+hero:
+  title: <span class="rr-home-title">Rust Root</span>
+  tagline: >-
+    <p class="rr-home-slogan">从原理出发，理解 Rust 的设计</p>
+    <p>Rust Root 是一份开源 Rust 指南。我们从具体问题出发，结合原理推导与代码实验，理解 Rust 的规则及其适用边界。</p>
+    <p class="rr-home-prerequisite">建议先掌握一门编程语言，不要求有 Rust 基础。</p>
+  actions:
+    - text: 开始阅读
+      link: /memory/hard-triangle/
+      icon: right-arrow
+---
+
+import HomeCourseRoute from '../../../components/HomeCourseRoute.astro';
+
+<div class="rr-home">
+
+<section class="rr-home-section" aria-labelledby="route-title">
+<p class="rr-home-eyebrow">阅读路线</p>
+<h2 id="route-title">从所有权到系统边界</h2>
+<p>主线计划分为五篇。建议从第一篇开始；后续篇章会在已有规则的基础上，继续讨论类型、抽象、共享与系统边界。</p>
+
+<HomeCourseRoute />
+</section>
+
+<section class="rr-home-section rr-home-reading" aria-labelledby="reading-title">
+<p class="rr-home-eyebrow">阅读方式</p>
+<h2 id="reading-title">推导与代码交叉推进</h2>
+<p>先从具体问题理解规则要解决什么，再通过代码实验和编译器反馈检查判断。后续章节会把这些判断用到类型设计、代码组织和工程问题中。</p>
+<p>遇到不熟悉的写法，可以随时查阅附录；基础语法、机制详解和跨语言对照不要求按顺序阅读。</p>
+<div class="rr-home-links">
+<a class="rr-home-text-link" href="/appendix/">查阅附录 →</a>
+<a class="rr-home-text-link" href="/about/philosophy/">了解本指南 →</a>
+</div>
+</section>
+
+<section class="rr-home-section rr-home-about" aria-labelledby="about-title">
+<h2 id="about-title">内容还在持续编写</h2>
+<p>本指南由 <a href="/about/author/">jimichen</a> 编写，源于从面向对象与动态语言转向 Rust 时记录的学习困惑。</p>
+<p>中文按章节发布，英文在内容稳定后翻译。已发布内容仍可能修订；发现问题可以<a href="mailto:hello@rustroot.dev">邮件反馈</a>，并附上页面地址和具体段落。</p>
+</section>
+
+</div>

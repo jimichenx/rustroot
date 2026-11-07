@@ -1,0 +1,162 @@
+---
+/**
+ * 1.3 的示意图。文字跟正文走。
+ * part="share"：t = s 之后两个变量同时指向同一块堆。
+ * part="move"：赋值之后 s 失效，只剩 t 指向这块堆。
+ * 样式见 src/styles/diagrams.css。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	part: 'share' | 'move';
+}
+
+const { part } = Astro.props;
+
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			stack: 'stack',
+			heap: 'heap',
+			data: 'hello',
+			invalid: 'invalid',
+			shareCaption: 'After t = s, both names point at the same block on the heap.',
+			shareTitle: 'Two names point at one block',
+			shareDesc:
+				'On the stack, s and t each occupy a cell holding a pointer. Two arrows run from those cells to the same hello block on the heap.',
+			moveCaption: 'After assignment, t points at the block and s is no longer valid.',
+			moveTitle: 'After assignment, the original name is invalid',
+			moveDesc:
+				'Two rows on the stack. The row for s is marked invalid and has no arrow. The row for t holds a copy of the pointer, and an arrow runs from it to the single block on the heap.',
+		}
+	: {
+			stack: '栈',
+			heap: '堆',
+			data: 'hello',
+			invalid: '失效',
+			shareCaption: 't = s 之后，两个变量同时指向同一块堆。',
+			shareTitle: '两个变量同时指向同一块堆',
+			shareDesc:
+				'栈上 s 和 t 各占一格，格里都是指针。两条箭头指向堆上同一块 hello。',
+			moveCaption: '赋值之后，t 指向这块堆，s 失效。',
+			moveTitle: '赋值之后，原来的变量失效',
+			moveDesc:
+				'栈上两行。s 那一行标成失效，没有箭头。t 那一行是复制来的指针，箭头指向堆上那唯一一块。',
+		};
+---
+
+{
+	part === 'share' && (
+		<figure class="diagram">
+			<figcaption>{t.shareCaption}</figcaption>
+			<svg viewBox="0 0 640 282" role="img" aria-labelledby="ob-share-title ob-share-desc">
+				<title id="ob-share-title">{t.shareTitle}</title>
+				<desc id="ob-share-desc">{t.shareDesc}</desc>
+
+				<rect class="panel" x="16" y="16" width="280" height="250" rx="12"></rect>
+				<text class="label" x="36" y="44">
+					{t.stack}
+				</text>
+
+				<text class="name" x="36" y="78">
+					s
+				</text>
+				<rect class="slot" x="36" y="90" width="220" height="48" rx="8"></rect>
+				<text class="code" x="146" y="120" text-anchor="middle">
+					ptr
+				</text>
+
+				<text class="name" x="36" y="170">
+					t
+				</text>
+				<rect class="slot" x="36" y="182" width="220" height="48" rx="8"></rect>
+				<text class="code" x="146" y="212" text-anchor="middle">
+					ptr
+				</text>
+
+				<rect class="panel" x="344" y="16" width="280" height="250" rx="12"></rect>
+				<text class="label" x="364" y="44">
+					{t.heap}
+				</text>
+				<rect class="object" x="384" y="174" width="200" height="64" rx="10"></rect>
+				<text class="name" x="484" y="212" text-anchor="middle">
+					{t.data}
+				</text>
+
+				<path class="arrow" d="M256 114 H320 V206 H384" marker-end="url(#ob-share-head)"></path>
+				<path class="arrow" d="M256 206 H384" marker-end="url(#ob-share-head)"></path>
+				<defs>
+					<marker
+						id="ob-share-head"
+						markerWidth="8"
+						markerHeight="8"
+						refX="6"
+						refY="4"
+						orient="auto"
+					>
+						<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+					</marker>
+				</defs>
+			</svg>
+		</figure>
+	)
+}
+
+{
+	part === 'move' && (
+		<figure class="diagram">
+			<figcaption>{t.moveCaption}</figcaption>
+			<svg viewBox="0 0 640 282" role="img" aria-labelledby="ob-move-title ob-move-desc">
+				<title id="ob-move-title">{t.moveTitle}</title>
+				<desc id="ob-move-desc">{t.moveDesc}</desc>
+
+				<rect class="panel" x="16" y="16" width="280" height="250" rx="12"></rect>
+				<text class="label" x="36" y="44">
+					{t.stack}
+				</text>
+
+				<text class="name" x="36" y="78">
+					s
+				</text>
+				<text class="label" x="56" y="78">
+					{t.invalid}
+				</text>
+				<rect class="freed" x="36" y="90" width="220" height="48" rx="8"></rect>
+				<text class="label" x="146" y="120" text-anchor="middle">
+					ptr
+				</text>
+
+				<text class="name" x="36" y="170">
+					t
+				</text>
+				<rect class="slot" x="36" y="182" width="220" height="48" rx="8"></rect>
+				<text class="code" x="146" y="212" text-anchor="middle">
+					ptr
+				</text>
+
+				<rect class="panel" x="344" y="16" width="280" height="250" rx="12"></rect>
+				<text class="label" x="364" y="44">
+					{t.heap}
+				</text>
+				<rect class="object" x="384" y="174" width="200" height="64" rx="10"></rect>
+				<text class="name" x="484" y="212" text-anchor="middle">
+					{t.data}
+				</text>
+
+				<path class="arrow" d="M256 206 H384" marker-end="url(#ob-move-head)"></path>
+				<defs>
+					<marker
+						id="ob-move-head"
+						markerWidth="8"
+						markerHeight="8"
+						refX="6"
+						refY="4"
+						orient="auto"
+					>
+						<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+					</marker>
+				</defs>
+			</svg>
+		</figure>
+	)
+}

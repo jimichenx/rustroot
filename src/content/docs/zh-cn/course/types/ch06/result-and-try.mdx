@@ -1,0 +1,253 @@
+---
+title: "错误即数据：Result<T, E> 与 ? 短路传播"
+description: 对比隐式异常跳转与返回值错误建模，掌握标准库和类型 Result<T, E> 如何将成功结果与失败原因写进函数签名，并拆解 ? 运算符在编译期展开为 match 提前返回的短路机制。
+sidebar:
+  label: Result 与 ? 短路传播
+  order: 4
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import parse from '../../../../../../../examples/types/result-and-panic/src/bin/parse.rs?raw';
+import propagateMatch from '../../../../../../../examples/types/result-and-panic/src/bin/propagate-match.rs?raw';
+import propagateQuestion from '../../../../../../../examples/types/result-and-panic/src/bin/propagate-question.rs?raw';
+import mixedErrors from '../../../../../../../examples/types/result-and-panic/src/bin/mixed-errors.rs?raw';
+
+上一节的 `Option<T>` 解决了「查到了 `Some(T)` **或** 查不到 `None`」的问题。因为「查不到」只有一种情况，`None` 不需要携带任何附加数据。
+
+但在真实工程中，还有一大类操作——比如把用户输入的字符串 `"forty-two"` 解析成整数、打开磁盘上的配置文件、或者向远程服务器发起网络请求——当它们失败时，仅仅返回一个光秃秃的 `None` 是不够的。调用方必须知道**「到底是因为什么原因失败的」**（是文件不存在、权限不足，还是格式非法？）。
+
+怎么在语言里表达「成功拿到结果 `T` **或** 失败并给出原因 `E`」？
+
+---
+
+## 为什么 Rust 不用 `try / catch` 异常机制？
+
+在 Java、C#、Python 或 C++ 中，处理这类失败的标准做法是**抛出异常（Exception）**：函数签名照常写返回 `int`，一旦遇到错误就用 `throw new NumberFormatException(...)` 中断正常返回路径，顺着调用栈一层层往上回溯，直到某处有 `try / catch` 接住它。
+
+<small class="code-source">推演用伪代码（Java 风格非受检异常）</small>
+```java
+int n = Integer.parseInt(input); // 签名只写返回 int，看不出它会抛 NumberFormatException
+```
+
+如果用我们在上一节审视 `null` 的同一把尺子来量这套异常机制，你会发现**非受检异常（Unchecked Exception）有着与 `null` 如出一辙的结构性缺陷**：
+
+1. **函数签名再次隐瞒了分支**：单看 `int parseInt(String s)` 的签名，调用方根本看不出这个函数会失败，也不知道它会抛出哪几种异常。
+2. **控制流变成了隐式跳转**：任何一行普通的函数调用都可能突然像踩中暗雷一样直接跳出当前函数，编译器无法在编译期强制要求调用方处理失败分支。
+
+既然「操作成功产出 `T`」和「操作失败产出错误 `E`」本来就是这次调用的**两种互斥可能性（或关系）**，最诚实的做法就是不要走隐式旁路，而是直接用**和类型（`enum`）**把它们堂堂正正地写进函数的返回类型里。
+
+---
+
+## `Result<T, E>`：把成功与失败并列写进函数签名
+
+为此，Rust 在标准库中定义了第二个核心泛型枚举——**`Result<T, E>`**（与 `Option` 一样已由 Prelude 自动导入作用域）：
+
+```rust
+enum Result<T, E> {
+    Ok(T),  // 可能性 1：操作成功，内部包裹着成功结果 T
+    Err(E), // 可能性 2：操作失败，内部包裹着错误原因 E
+}
+```
+
+这里的 `T` 和 `E` 都是类型参数：
+- 當一个函数既需要返回计算结果、又可能失败时，返回类型就写成如 `Result<i32, ParseIntError>`；
+- 当一个函数成功后不需要返回具体数据（相当于第 5 章 5.1 节讲的返回单元类型 `()`）、但执行过程可能失败（例如往文件里写入一段日志）时，返回类型就写成 **`Result<(), std::io::Error>`**——成功时返回 `Ok(())`，失败时返回 `Err(e)`。
+
+我们运行下面这段解析整数的代码，看 `Result<T, E>` 如何工作：
+
+<small class="code-source">源文件：<code>examples/types/result-and-panic/src/bin/parse.rs</code></small>
+<Code code={parse} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+42: 42
+forty-two: invalid digit found in string
+```
+
+看第 6～9 行：字符串的 `.parse::<i32>()` 方法返回的是 `Result<i32, ParseIntError>`。
+- 当传入 `"42"` 时，返回 `Ok(42)`，命中第一条分支取出整数 `42`；
+- 当传入 `"forty-two"` 时，返回 `Err(e)`，命中第二条分支，错误对象 `e` 里清楚地装着失败原因 `invalid digit found in string`。
+
+与 `Option<T>` 完全一样，因为 `Result<i32, ParseIntError>` 是一个独立的编译期类型实体，你不解开 `Ok(n)` 就根本拿不到里面的 `i32`。
+
+<Aside type="caution" title="防丢弃机制：哪怕不需要返回值，也不能静默忽略 Result">
+如果一个函数返回的是不带数据的 `Result<(), io::Error>`（比如 `file.write_all(b"hello");`），调用方根本不需要拿返回值，那他会不会像在 C 语言或早期 Go 语言里那样，干脆不写变量接收、假装无事发生？
+
+在 Rust 中，标准库在 `Result` 定义上标注了 **`#[must_use]`（必须使用）**属性。如果你光写一行 `text.parse::<i32>();` 而不去检查或处理它返回的 `Result`，编译器会立刻打出醒目的编译警告：`warning: unused Result that must be used`（未使用的 `Result`，其中可能包含错误，必须予以处理）。
+</Aside>
+
+---
+
+## 错误向上传播：从手写 `match` 到 `?` 运算符
+
+在真实项目中，当前函数往往只是调用链中间的一环：比如你写了一个 `sum_two(a: &str, b: &str)`，负责把两个字符串解析成整数再相加。如果解析失败，`sum_two` 自己并不知道该给用户弹窗还是重试，它最合理的做法是**把错误原封不动地向上返回给它的调用方**。
+
+如果只用 6.2 节学过的 `match`（或 `let else`），代码会写成这样：
+
+<small class="code-source">源文件：<code>examples/types/result-and-panic/src/bin/propagate-match.rs</code></small>
+<Code code={propagateMatch} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+Ok(3)
+Err(ParseIntError { kind: InvalidDigit })
+```
+
+看第 6～13 行：每调一次 `.parse()`，后面就要跟一个四行的 `match`——如果是 `Ok(n)` 就把 `n` 取出来继续往下走，如果是 `Err(e)` 就当场 `return Err(e)` 提前退出当前函数。
+
+如果一个业务函数里要连续执行五六步可能失败的 I/O 或解析操作，到处写这种一模一样的四行 `match` 属于纯粹的机械重复。
+
+在 Rust 语言自身的演进史上，为了消除这四行机械的 `match`，错误传播共经历了**三代演进**：
+
+1. **第一代（手写 `match`）**：正如上面的 `propagate-match.rs`，每次调用都手写四行 `match`，很快就把主干逻辑淹没了。
+2. **第二代（早期标准库宏 `try!(...)`）**：在 Rust 1.0 时期，标准库引入了一个名为 **`try!`** 的前置宏。你写下 `let x = try!(a.parse::<i32>());`，编译器就会在编译期把它宏展开成上面那四行 `match`。
+   但 `try!` 宏很快暴露出了一个人体工程学硬伤——**它不支持顺畅的链式调用**。由于 Rust 的方法调用点号 `.` 是从左往右写的，而 `try!(...)` 是包在外面的前置宏，一旦你想连续执行两三步可能失败的链式调用，代码就会变成「从里往外套括号」的反人类写法：
+   ```rust
+   // 早期用前置宏 try! 写链式调用，必须层层套括号、倒着读：
+   let text = try!(try!(File::open("config.txt")).read_to_string());
+   ```
+3. **第三代（Rust 1.13 引入后缀 `?` 运算符）**：为了彻底解决链式调用的套娃问题，Rust 决定把前置的 `try!(expr)` 改造成紧跟在表达式末尾的**后缀运算符 `expr?`**（这也是为什么在官方文档中，`?` 至今仍被称为 **Try 运算符**，而旧的 `try!` 宏已被正式废弃）。
+
+把位置从前面挪到后面之后，不仅单行调用极其干净，连续多步的链式调用也能完全顺着从左往右的阅读顺序一气呵成：
+
+<small class="code-source">源文件：<code>examples/types/result-and-panic/src/bin/propagate-question.rs</code></small>
+<Code code={propagateQuestion} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+Ok(3)
+Err(ParseIntError { kind: InvalidDigit })
+city = Some("Shanghai")
+```
+
+对比两份源码里的 `sum_two` 函数：原来八行的两个 `match`，现在缩减成了第 8～9 行干净利落的两句：
+
+```rust
+let x = a.parse::<i32>()?;
+let y = b.parse::<i32>()?;
+Ok(x + y)
+```
+
+### 剥开 `?` 运算符：编译期展开的 `match + return`
+
+初学者看到 `?` 时，千万不要把它误解成「隐式抛异常」。**`?` 没有任何运行时魔法，它在编译期被编译器原原本本地展开成了你在 `propagate-match.rs` 里手写的那个 `match` 表达式**：
+
+```rust
+// 你写的这行代码：
+let x = a.parse::<i32>()?;
+
+// 编译器在编译期为你展开的等价代码：
+let x = match a.parse::<i32>() {
+    Ok(n) => n,                           // 1. 若是 Ok(n)，解包取出 n 赋给 x，继续往下走
+    Err(e) => return Err(From::from(e)),  // 2. 若是 Err(e)，当场从当前函数 return 返回错误
+};
+```
+
+### `?` 同样适用于多层 `Option<T>` 的链式短路
+
+再看 `propagate-question.rs` 的第 21～25 行，这兑现了我们在上一节留下的伏笔：
+
+```rust
+fn user_city(user: &User) -> Option<&str> {
+    let city = user.profile.as_ref()?.city.as_deref()?;
+    Some(city)
+}
+```
+
+当当前函数的返回类型是 `Option<...>` 时，**`?` 运算符完全可以用在 `Option` 值后面**：
+- 遇到 `Some(v)` 时，它解包取出 `v` 继续点出下一层字段；
+- 遇到 `None` 时，它当场展开为 **`return None;`** 提前结束当前函数。
+
+这样一来，原本需要套两层 `match` 或 `if let` 才能穿透的 `user.profile` 和 `city`，用两个 `?` 就写成了一行平铺直叙的链式调用，可读性与 TypeScript/Kotlin 的 `user.profile?.city` 一样流畅。
+
+---
+
+## `?` 运算符的两条编译期约束
+
+因为 `expr?` 在底层会展开成一条针对**当前所在函数**的 `return Err(...)` 或 `return None` 语句，它天然受到当前函数返回类型的严格制约：
+
+### 1. 所在函数的返回类型必须兼容（不能在普通 `fn main()` 里裸用 `?`）
+
+如果你在一个返回类型是 `()` 或 `i32` 的普通函数里写 `a.parse::<i32>()?`，编译器展开出的 `return Err(e)` 就会与函数签名的返回类型冲突，报出 **`error[E0277]`**：
+
+```text
+the `?` operator can only be used in a function that returns `Result` or `Option`
+```
+
+同理，你也不能在返回 `Result` 的函数里直接对 `Option` 用 `?`（或反过来），因为 `return None` 无法交给一个要求返回 `Result` 的函数（此时需要先调 `.ok_or("错误原因")?` 把 `Option` 转换成 `Result`）。
+
+### 2. 错误类型 `E` 必须一致或可转换
+
+如果一个函数里先后调用了两个可能失败的操作，第一个操作失败返回 `ParseIntError`（解析整数错误），第二个操作失败返回 `std::io::Error`（读取文件错误），而函数签名只写了 `-> Result<i32, ParseIntError>`，直接对文件读取用 `?` 会怎样？
+
+<small class="code-source">源文件：<code>examples/types/result-and-panic/src/bin/mixed-errors.rs</code></small>
+<Code code={mixedErrors} lang="rust" />
+
+取消第 7 行注释后，编译器同样会报 **`error[E0277]`**：
+
+<small class="code-source">编译器输出（取消 <code>mixed-errors.rs</code> 第 7 行注释后）</small>
+```text
+error[E0277]: `?` couldn't convert the error to `ParseIntError`
+ --> src/bin/mixed-errors.rs:7:36
+  |
+5 | fn read_number() -> Result<i32, ParseIntError> {
+  |                     -------------------------- expected `ParseIntError` because of this
+6 |     let text = "42";
+7 |     let text = std::fs::read_to_string("number.txt")?;
+  |                -------------------------------------^ the trait `From<std::io::Error>` is not implemented for `ParseIntError`
+```
+
+看报错原因：第 7 行的 `?` 试图把文件读取失败的 `std::io::Error` 通过 `From::from(e)` 转换成函数签名声明的 `ParseIntError`，但标准库并没有定义这两种无关错误之间的转换关系（关于 `From` Trait 与跨错误类型转换的完整机制，我们将在第 7 章 Trait 契约中深入拆解；在现阶段，你也可以用 `.map_err(|e| format!("io error: {e}"))?` 把不同错误统一转成 `Result<T, String>` 或自定义错误枚举）。
+
+---
+
+## 小结
+
+1. **告别隐式异常，错误即返回值**：Rust 不用隐式中断控制流的 `try / catch`，而是用标准库和类型 **`Result<T, E>`**（`Ok(T)` 或 `Err(E)`）把成功结果与失败原因显式写进函数返回签名，并配合 `#[must_use]` 阻止调用方静默忽略错误。
+2. **`?` 运算符是 `match + return` 的编译期语法糖**：`expr?` 在遇到 `Ok(v)` / `Some(v)` 时解包出 `v` 继续向下执行，遇到 `Err(e)` / `None` 时当场从当前函数提前 `return`，彻底消除了向上传播错误时的样板代码。
+3. **`?` 受函数返回签名约束**：`?` 只能出现在返回兼容 `Result` 或 `Option` 的函数中；若混合多种错误类型，需统一返回类型或通过 `.map_err` / `From` 转换。
+
+现在，`Option<T>`、`Result<T, E>` 与 `?` 运算符已经全部就位。但在真实工程与代码审查中，我们马上会面临两个实操问题：**第一，当 `Option` 或 `Result` 藏在结构体引用后面时，怎么优雅地转换或提取？第二，为什么初学 Rust 时常觉得满屏都在拆包，到底什么时候该返回 `Result`，什么时候该直接 `panic!`？** 这就是本章收官小节要给出的工程裁决。
+
+### 动手核对与小练习
+
+1. **手动还原 `?` 语法糖**：请把下面使用 `?` 的函数还原为不使用 `?`、完全手写 `match` 的等价代码：
+   ```rust
+   fn double_parsed(input: &str) -> Result<i32, std::num::ParseIntError> {
+       let n = input.parse::<i32>()?;
+       Ok(n * 2)
+   }
+   ```
+2. **诊断编译错误**：下面这段代码为什么无法通过编译？请指出哪一行会报错，并给出两种不同的修改方案：
+   ```rust
+   fn check_port(raw: &str) -> u16 {
+       let port = raw.parse::<u16>()?;
+       port
+   }
+   ```
+
+<details>
+<summary>点击核对参考答案</summary>
+
+1. **还原 `?` 为手写 `match`**：
+   ```rust
+   fn double_parsed(input: &str) -> Result<i32, std::num::ParseIntError> {
+       let n = match input.parse::<i32>() {
+           Ok(val) => val,
+           Err(e) => return Err(e),
+       };
+       Ok(n * 2)
+   }
+   ```
+2. **诊断与修复**：
+   - **报错位置与原因**：第 2 行 `let port = raw.parse::<u16>()?;` 编译失败（报 `error[E0277]`）。因为 `?` 在遇到解析失败时会展开为 `return Err(e)`，但所在函数 `check_port` 的返回类型声明的是普通整数 `u16` 而非 `Result`。
+   - **修改方案一（把错误向上交给调用方）**：将函数签名改为返回 `Result<u16, std::num::ParseIntError>`，最后一行改为 `Ok(port)`。
+   - **修改方案二（在函数内部消化错误并提供默认端口）**：不用 `?`，改用下一节将详讲的 `.unwrap_or(8080)` 或 `match` 分支，在解析失败时直接回退到默认端口号 `8080`。
+
+</details>

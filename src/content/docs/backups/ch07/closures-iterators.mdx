@@ -1,0 +1,112 @@
+---
+title: "把操作当成值：闭包与迭代器"
+description: 把「对每个元素做什么」写成一个值交出去，这个值会用到外面的名字。一律移动太狠，一律借用会悬垂，于是按函数体的用法挑最轻的一档，要活得更久就写 `move`。接收闭包的一方要知道能调几次，这是 `Fn`、`FnMut`、`FnOnce` 三份契约。迭代器交出元素，也只有第一篇的三种交法。
+sidebar:
+  label: 闭包与迭代器
+  order: 12
+  badge:
+    text: 草稿
+    variant: caution
+draft: true
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+
+import loopPush from '../../../../../../../examples/types/closures-iterators/src/bin/loop-push.rs?raw';
+import capture from '../../../../../../../examples/types/closures-iterators/src/bin/capture.rs?raw';
+import moveClosure from '../../../../../../../examples/types/closures-iterators/src/bin/move-closure.rs?raw';
+import iterThree from '../../../../../../../examples/types/closures-iterators/src/bin/iter-three.rs?raw';
+
+## 我们要解决的问题
+
+1.4 定下了读写排他，理由也在那里：一边拿着元素的引用，一边 `push`，扩容可能让引用指着已经释放的旧块。这个冲突写成循环是这样：
+
+<Code code={loopPush} lang="rust" />
+
+`for x in &v` 在整个循环里借着 `v`。取消注释，在循环里 `push`，报 `error[E0502]`：`v` 已经被只读借用。迭代器失效，在这门语言里是一个编译错误。
+
+循环之外还有另一种写法：把「对每个元素做什么」写成一个值，交给 `map`、`filter` 这些方法。这个值常常要用到外面的名字。它用到的名字，是借用，还是拿走？
+
+## 把操作写成一个值
+
+`|n| n.len()` 是一个可以当值传来传去的函数，叫闭包（Closure）：竖线里是参数，后面是函数体。
+
+闭包和普通函数不同的地方是，它能用到定义它的地方的名字，这叫捕获（Capture）。捕获是一次接值，得有规则。
+
+### 第一版：一律移动
+
+把用到的名字都移进闭包，和 4.1 的赋值一样。
+
+撞墙：一个闭包只是打印 `name`，建好之后 `name` 在外面就失效了，只因为被打印了一次。另一个闭包给 `count` 加一，`count` 移进去之后，外面再也看不到加完的结果。
+
+### 第二版：一律借用
+
+那就只借不拿。
+
+撞墙：函数返回一个闭包，闭包里用到这个函数的参数。函数返回时参数离开作用域，闭包手里的借用就悬空了。这是 1.5 的悬垂。
+
+### 第三版：按用法挑，需要时写 `move`
+
+编译器看函数体怎么用每个名字，挑最轻的一档：
+
+<Code code={capture} lang="rust" />
+
+- `read` 只读 `name`，借 `&name`；
+- `inc` 要改 `count`，借 `&mut count`，所以 `inc` 自己也要是 `mut` 绑定；
+- `take` 把 `name` 当返回值交出去，只能把 `name` 移进闭包。
+
+闭包活着的时候，这些借用也活着，1.4 照样管着：`inc` 最后一次调用之前，不能再借 `count`。
+
+闭包要比定义它的地方活得更久时，写 `move`，用到的名字一律移进闭包：
+
+<Code code={moveClosure} lang="rust" />
+
+`make_greeter` 返回的闭包用到参数 `name`。删掉 `move`，报 `error[E0373]`：闭包可能比当前函数活得长，但它借用了 `name`。写上 `move`，`name` 的所有权跟着闭包走。8.5 把闭包交给另一个线程时，也要这样写。
+
+闭包是编译器生成的一个匿名类型的值，捕获的东西就是它的字段。5.2 的规则照样作用在这些字段上。
+
+## 接收闭包的一方，要知道能调几次
+
+`take` 第一次调用就把 `name` 交出去了，闭包里不再有它。在 `capture.rs` 里取消第二次调用的注释，报 `error[E0382]`：`take` 已经被移动。
+
+一个收闭包的函数，比如 `call_twice`，要知道手里的闭包能不能调两次、调用时要不要可变借用它。这件事要写进签名，用 7.1 的契约写：
+
+| Trait | 调用时，函数体对捕获的值 | 能调几次 | 本课的例子 |
+| :--- | :--- | :--- | :--- |
+| `Fn` | 只读 | 任意多次 | `read`、`make_greeter` 返回的闭包 |
+| `FnMut` | 修改 | 任意多次，调用时要可变借用闭包 | `inc` |
+| `FnOnce` | 消耗掉 | 一次 | `take` |
+
+`call_twice(f: impl Fn() -> String)` 要一个能调两次、只读的闭包。
+
+捕获和这三份契约回答的是两个问题。`move` 决定怎么捕获：值是借进来还是拿进来。这三个 Trait 看调用时函数体怎么用：只读、修改还是消耗。`make_greeter` 的闭包用 `move` 拿进了 `name`，调用时只读它，所以仍然是 `Fn`，能交给 `call_twice`。
+
+## 迭代器交出什么
+
+从容器里一个个取元素，交法也只有第一篇的三种：
+
+<Code code={iterThree} lang="rust" />
+
+- `iter()` 交出每个元素的只读引用，`names` 之后照常能用；
+- `iter_mut()` 交出每个元素的可变引用，可以就地修改；
+- `into_iter()` 拿走 `names`，交出每个元素本身，之后 `names` 失效。取消最后一行的注释，报 `error[E0382]`。
+
+和 5.3 的三种接收者是同一张表。`map(|n| n.len())` 把每个元素变成长度，`filter(|n| n.len() > 5)` 只留满足条件的，`collect()` 把结果收成一个 `Vec`。`for x in &v` 就是 `for x in v.iter()`，`for x in v` 就是 `for x in v.into_iter()`。
+
+两张表的来路有一层差别。5.3 的三个方法写在 `Counter` 一个 `impl` 里，三种接收者是三个签名。这里的三种写法走得更远：标准库给 `Vec<T>`、`&Vec<T>`、`&mut Vec<T>` 三个类型各写了一份 `IntoIterator` 实现，`for` 调的是三个类型各自的实现。这要 4.2 的事实撑着——引用自己是类型，所以也能有自己的实现。那一课预告过这组人的行程：先是三个类型，再进签名，再带上 `'a`；到这里，它们各自带上了行为。类型是实体，这条判断走完一章，在这里兑现。
+
+<Aside type="note" title="补充基础">
+  迭代器链经过 7.2 的单态化和内联，生成的代码通常接近手写的循环。`for` 怎么展开成 `IntoIterator`，收在附录《[for 的展开](/appendix/for-loop-expansion/)》。把闭包存成 `Box<dyn Fn()>` 要另付一次分配和一次运行时查表，留到 9.2。
+</Aside>
+
+## 顿悟时刻
+
+闭包捕获外面的名字，是一次接值。一律移动太狠，一律借用会悬垂，所以按函数体的用法挑最轻的一档；要活得比定义它的地方久，写 `move`。
+
+接收闭包的一方要知道能调几次，写成契约：`Fn`、`FnMut`、`FnOnce`。迭代器交出元素，也只有三种交法：借、可变借、拿走。
+
+## 动手
+
+去官方 Book 第 13 章，读 13.1 节《闭包》和 13.2 节《使用迭代器处理元素序列》。
+
+把 `loop-push.rs` 改成能编译的版本：先用 `iter()` 和 `collect()` 算出要加的元素，循环结束后再 `extend` 回 `v`——先结束读，再开始写。

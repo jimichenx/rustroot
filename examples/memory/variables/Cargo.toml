@@ -1,0 +1,11 @@
+[package]
+name = "variables"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "Variable initialization, reassignment, and shadowing experiments."
+
+[[bin]]
+name = "variables-binding"
+path = "src/bin/binding.rs"

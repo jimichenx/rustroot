@@ -1,0 +1,92 @@
+---
+title: "Rust 命名约定与工程惯例速查"
+description: 汇总 Rust 官方与社区普遍遵守的命名规范、构造函数惯例、as_ / to_ / into_ 转换前缀所有权成本，以及 getter / 迭代器等标准方法命名约定。
+sidebar:
+  label: "命名约定与工程惯例"
+  order: 5
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+在阅读 Rust 标准库或第三方开源项目时，你会发现一个有趣的现象：虽然编译器没有规定构造函数必须叫什么、也没有强制规定转换方法的名字，但几乎所有 Rust 代码都像出自同一个人之手。
+
+这得益于 Rust 官方制定的 [Rust API Guidelines（API 设计指南）](https://rust-lang.github.io/api-guidelines/naming.html)。在 Rust 中，**方法名的前缀往往直接编码了所有权流向与运行时内存开销**——只要扫一眼方法名，甚至不用看函数签名，你就能判断出这次调用会不会分配堆内存、会不会把原变量移走消费掉。
+
+本节汇总了日常开发与审查代码时最高频的五类工程约定。
+
+---
+
+## 一、 大小写命名风格（编译器会发警告）
+
+与许多只把命名风格当作团队规范的语言不同，Rust 编译器内置了 `non_snake_case`、`non_camel_case_types` 等静态检查规则——如果你写错了大小写风格，编译时就会直接收到黄色的 `warning`：
+
+| 语法实体 | 约定风格 | 示例 |
+| --- | --- | --- |
+| **类型（`struct` / `enum`）、Trait** | 大驼峰（`UpperCamelCase`） | `UserAccount`、`HttpError`、`IntoIterator` |
+| **枚举变体（Enum Variants）** | 大驼峰（`UpperCamelCase`） | `Option::Some`、`Result::Err`、`IpAddr::V4` |
+| **函数、方法、局部变量、结构体字段、模块（`mod`）** | 蛇形小写（`snake_case`） | `parse_header`、`user_name`、`max_len` |
+| **常量（`const`）与静态变量（`static`）** | 全大写蛇形（`SCREAMING_SNAKE_CASE`） | `MAX_CONNECTIONS`、`DEFAULT_TIMEOUT_MS` |
+| **泛型类型参数** | 单个大写字母（或简短大驼峰） | `T`、`E`、`K`、`V` |
+| **生命周期参数** | 单引号 + 简短小写字母 | `'a`、`'de`、`'static` |
+
+<Aside type="note" title="缩略词在大驼峰中的写法">
+在 `UpperCamelCase` 中，像 `Uuid`、`Http`、`Url`、`Utf8` 这样的缩略词，约定**只大写首字母，后续字母小写**——例如写 `HttpClient`、`Uuid`、`FromUtf8Error`，而不写 `HTTPClient` 或 `UUID`。
+</Aside>
+
+---
+
+## 二、 构造关联函数：`new`、`with_...` 与 `from_...`
+
+Rust 没有 `new Counter()` 这样的构造函数语法关键字，所有实例归根结底都通过结构体字面量 `Counter { ... }` 创建。为了封装内部字段并向调用方提供统一的创建入口，工程上约定俗成使用以下关联函数名：
+
+| 关联函数名 | 约定用途 | 标准库典型示例 |
+| --- | --- | --- |
+| **`Type::new(...)`** | 最默认的无参（或基础参数）构造器 | `Vec::new()`、`String::new()`、`Box::new(val)` |
+| **`Type::with_...(param)`** | 指定特定配置或预分配容量来构造新实例 | `Vec::with_capacity(10)`、`String::with_capacity(64)` |
+| **`Type::from_...(src)`** | 从特定格式或底层原材料构造新实例 | `String::from_utf8(bytes)`、`u32::from_be_bytes(arr)` |
+| **`Type::try_new(...)`** / **`try_from_...`** | 构造过程可能失败（需校验参数合法性），返回 `Result<Self, Error>` | 工程自定义类型如 `Email::try_new(raw)` |
+
+当你为一个自定义结构体提供了无参的 `new()` 关联函数时，工程上通常还会顺手为它实现标准库的 `Default` Trait（或者直接在结构体上方标注 `#[derive(Default)]`），以便其他泛型容器能够自动构造默认值。
+
+---
+
+## 三、 类型转换三前缀：`as_`、`to_` 与 `into_`
+
+这是 Rust 最核心、也最值得牢记的命名契约。当一个方法要把当前类型变成另一种类型的视图或值时，方法名的前缀直接标明了**接收者类型（`&self` 还是 `self`）**以及**运行时的内存成本**：
+
+| 方法前缀 | 接收者签名 | 所有权流向 | 内存分配成本 | 标准库典型示例 |
+| --- | --- | --- | --- | --- |
+| **`as_...`** | **`&self`**（或 `&mut self`） | **只读借用**（原变量继续可用） | **零成本（Free）**：只构造一个借用视图或胖指针，不复制底层数据 | `String::as_str(&self) -> &str`<br />`String::as_bytes(&self) -> &[u8]`<br />`Vec::as_slice(&self) -> &[T]` |
+| **`to_...`** | **`&self`** | **只读借用**（原变量继续可用） | **有成本（Expensive）**：在保留原值不变的前提下，通常需要在堆上重新分配内存并深拷贝或转换数据 | `str::to_string(&self) -> String`<br />`str::to_lowercase(&self) -> String`<br />`[T]::to_vec(&self) -> Vec<T>` |
+| **`into_...`** | **`self`** | **移交所有权**（原变量**当场失效**） | **零额外分配或直接拆解复用**：把原实例拆开，直接把内部已有的堆缓冲区移交给新类型 | `String::into_bytes(self) -> Vec<u8>`<br />`Vec::into_boxed_slice(self) -> Box<[T]>` |
+
+<Aside type="tip" title="代码审查（Code Review）实战判据">
+对比 `s.as_bytes()` 与 `s.into_bytes()`：
+- 如果你后续还要用 `s`，只是想临时看一眼它的字节切片，调 **`s.as_bytes()`**（接收 `&self`，产出 `&[u8]`，零成本）；
+- 如果你后续不再需要 `s`，且下一步需要一个拥有所有权的 `Vec<u8>`，调 **`s.into_bytes()`**（接收 `self`，直接把 `String` 的 24 字节控制头转交给 `Vec<u8>`，连 1 个字节的堆内存都不必重新分配）；
+- 如果你在循环里看到 AI 生成了大量的 `.to_string()` 或 `.to_vec()`，就要立刻警惕：每一次 `to_` 调用都在背后触发新的堆分配与内存复制。
+</Aside>
+
+---
+
+## 四、 Getter 与布尔判断方法：不加 `get_` 前缀
+
+从 Java 或 C++ 转过来的开发者，习惯给每个字段写 `get_name(&self)`、`get_age(&self)`。但在 Rust 的工程惯例中，**访问字段的方法一律直接以字段名命名，不加 `get_` 前缀**：
+
+- **普通读取方法**：直接写 **`fn name(&self) -> &str`**、**`fn count(&self) -> u32`**（如果同时提供返回可变引用的方法，则成对命名为 **`fn name_mut(&mut self) -> &mut String`**）。
+- **为什么标准库里偶尔会有 `get`？** 只有当访问动作「可能越界或找不到目标、需要返回 `Option`」时，才会取名为 `get`——例如切片的按索引安全查找 `slice.get(0) -> Option<&T>`，以及哈希表的按键查找 `map.get("key") -> Option<&V>`。
+- **布尔状态判断方法**：统一使用 **`is_...`** 或 **`has_...`** 前缀——例如 `v.is_empty()`、`opt.is_some()`、`res.is_ok()`、`char.is_ascii()`。
+
+---
+
+## 五、 集合遍历三方法：`iter`、`iter_mut` 与 `into_iter`
+
+几乎所有标准库集合（如 `Vec<T>`、数组、切片、`HashMap`）都遵循同一套迭代器方法命名约定，同样精准对应接收者三件套：
+
+| 方法名 | 接收者签名 | 每次迭代产出的元素类型 | 原集合在遍历后的状态 |
+| --- | --- | --- | --- |
+| **`.iter()`** | `&self` | 只读引用 **`&T`** | 原集合完好无损，可继续使用 |
+| **`.iter_mut()`** | `&mut self` | 可变引用 **`&mut T`** | 原集合继续有效，元素已被原地修改 |
+| **`.into_iter()`** | `self` | 拥有所有权的值 **`T`** | 原集合被拆解消费，**遍历后失效** |
+
+这三套方法与 `for` 循环语法糖的完整对应关系，将在第三篇第 9 章《迭代器与闭包》中详细拆解。

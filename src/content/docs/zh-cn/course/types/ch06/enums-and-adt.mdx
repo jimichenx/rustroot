@@ -1,0 +1,282 @@
+---
+title: "从常量枚举到代数数据类型（ADT）"
+description: 从「与关系（积类型）」与「或关系（和类型）」出发，对比结构体硬凑、OOP 子类继承与 Rust 枚举，拆解固定长度内存中的「判别式标签 + 共享载荷区」布局。
+sidebar:
+  label: 枚举与代数数据类型（ADT）
+  order: 1
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import flagAndField from '../../../../../../../examples/types/enum-option-match/src/bin/flag-and-field.rs?raw';
+import variantNotType from '../../../../../../../examples/types/enum-option-match/src/bin/variant-not-type.rs?raw';
+import enumAdtLayout from '../../../../../../../examples/types/enum-option-match/src/bin/enum-adt-layout.rs?raw';
+import EnumTagPayload from '../../../../../../components/course/EnumTagPayload.astro';
+
+如果让一位有 C、C++ 或早期 Java 背景的开发者谈谈对 **`enum`（枚举）**的印象，答案往往是：「一组具名整数常量，比如星期一到星期日、红黄绿灯。」
+
+在 Rust 中，`enum` 不是整数常量表。它与第 5 章学习的 `struct` 并肩，共同构成了计算机科学中的**代数数据类型（Algebraic Data Types，简称 ADT）**。你在 Rust 代码里每天都要打交道的空值处理（`Option<T>`）和错误处理（`Result<T, E>`），全都是用 `enum` 定义出来的。
+
+要看清 Rust 为什么要把 `enum` 设计成这样，我们先回到数据建模最底层的一个问题：怎么在语言里表达**「或关系」**？
+
+---
+
+## 数据建模的两种基本关系：「与」和「或」
+
+在第 5 章中，我们用 `struct` 把几个**同时存在**的字段打包在一起。比如一个账号同时拥有用户名**且**拥有注册时间，这表达的是逻辑上的**「与关系（AND）」**。
+
+但在真实业务中，我们经常遇到另一类完全相反的数据形态——**「或关系（OR，多选一）」**：一个类型存在几种互斥的合法可能性，同一时刻只能处于其中一种，而且**每一种可能性携带的数据结构各不相同**。
+
+举个常见的权限模型例子。系统里的用户角色只有三种合法可能性：
+1. **未登录访客（Guest）**：没有任何附加属性；
+2. **普通会员（Member）**：额外持有一个会员积分 `vip_points: u64`；
+3. **管理员（Admin）**：额外持有部门编号 `dept_id: u64` 与安全密钥 `security_key: u64`。
+
+在类型理论中，这种表达「几种可能性多选一」的类型称为**和类型（Sum Type）**。面对这个需求，如果我们不用 Rust 的 `enum`，通常只有两条传统路线可走。我们先看看这两条路线各自会遇到什么问题。
+
+---
+
+## 两条传统路线为什么不够严密？
+
+### 路线一：用 `struct` 加标志位硬凑（把「或」塞进「与」里）
+
+如果手里只有结构体，常见的做法是用一个 `role_tag: u8` 标志位区分角色，再把所有角色可能用到的字段全塞进同一个 `BadRole` 里：
+
+<small class="code-source">源文件：<code>examples/types/enum-option-match/src/bin/flag-and-field.rs</code></small>
+<Code code={flagAndField} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+member points = 500, leaked security_key = 9999
+```
+
+这段代码暴露了用「与关系（`struct`）」硬凑「或关系」的三个缺陷：
+
+1. **被迫填写无意义的假数据**：第 15 行创建一个普通会员（`role_tag: 1`）时，因为结构体要求初始化每一个字段，你不得不给管理员专属的 `dept_id` 和 `security_key` 填上占位假数据（`0` 和 `9999`）。
+2. **编译器拦不住越权误读**：在第 22～27 行，代码已经进入了 `user.role_tag == 1`（普通会员）的分支，但照样可以直接读取管理员的 `user.security_key`，编译器完全放行。
+3. **冗余的内存占用**：四个字段并排放在同一个 `struct` 里，哪怕当前只是一个没有任何附加数据的访客（`role_tag: 0`），也要在内存里背着积分、部门编号和安全密钥三个闲置字段。
+
+### 路线二：OOP 用「父类 + 子类（Subclass）」模拟和类型
+
+有面向对象（OOP）经验的开发者看到上面的 `BadRole` 会指出：在 Java 或 C++ 里，标准做法不是写一个大结构体，而是定义一个基类或接口 `Role`，再派生出 `Guest`、`Member`、`Admin` 三个子类（Subclass），让每个子类只持有自己的字段：
+
+<small class="code-source">推演用伪代码（Java 风格子类建模）</small>
+```java
+abstract class Role {}
+class Guest extends Role {}
+class Member extends Role { long vipPoints; }
+class Admin extends Role { long deptId; long securityKey; }
+```
+
+从顶层设计意图来看，**OOP 的子类继承（Subtyping）确实是在尝试实现和类型**——它同样想表达「一个 `Role` 可以是 `Guest`、`Member` 或 `Admin` 中的一种，且各自携带不同数据」。但用子类继承来充当和类型，在编译期约束和物理内存上只做成了一半：
+
+1. **可能性边界默认是敞开的（不闭合）**：和类型要求「合法可能性是明确列出的有限集合」。但传统的继承树默认向全项目开放，任何人都可以在另一个文件里再写一个 `class Hacker extends Role`。正因为编译器不知道 `Role` 到底有几种子类，当你用 `if (r instanceof ...)` 分支处理时，哪怕漏掉了 `Admin`，编译器也无法报错（直到近年 Java 17+ 引入 `sealed class` 密封类，才在语法上给继承树打上了闭合补丁）。
+2. **把「一种类型的不同可能性」拆碎成了多个独立类型**：在 OOP 中，`Member` 和 `Admin` 是各自独立的类。一旦把它们放进同一个 `List<Role>` 或赋给 `Role` 变量，具体子类的类型信息就在编译期退化成了笼统的父类 `Role`；想读取 `vipPoints` 时，又得依赖运行时的类型检查与向下转型（Downcast）。
+3. **内存被迫走堆分配与指针跳转**：因为基类 `Role` 不知道未来会出现多大的子类，无法在栈上预留固定大小的内联空间。变量 `Role r` 在栈上只能存一个指针，真正的数据必须分配到堆上，并各自背上 12～16 字节的对象头（Object Header）。
+
+<Aside type="tip" title="延伸阅读：不同语言如何实现「和类型」？">
+从 C 语言的 `union`、C++ 的 `std::variant`、Go 的接口断言，到现代 Java / Kotlin 的 `sealed class` 与 TypeScript 的联合类型，各门语言都在用自己的方式逼近「和类型」。如果你想横向对比它们在编译期穷尽检查与内存布局上的取舍，可在读完本节后参阅附录 **[不同语言如何实现「和类型」](/appendix/comparisons/sum-types/)**。
+</Aside>
+
+---
+
+## Rust 的原生和类型：一个类型，多种合法可能性
+
+看清了 `struct` 硬凑和 OOP 子类的局限，再看 Rust 的 `enum`，设计逻辑就非常清晰了：Rust 直接在语言核心里提供了原生的**和类型**。
+
+对于上面的权限需求，我们把 `Role` 存在的三种合法可能性直接列在同一个 `enum` 花括号内。每一种可能性称为一个**变体（Variant）**，并可以按需携带专属数据（称为**载荷 Payload**）：
+
+```rust
+enum Role {
+    Guest,                                    // 1. 类单元变体：不携带任何数据
+    Member(u64),                              // 2. 类元组变体：携带一个 u64（会员积分）
+    Admin { dept_id: u64, security_key: u64 } // 3. 类结构体变体：携带两个具名字段（部门与密钥）
+}
+```
+
+创建枚举值时，使用 **`枚举名::变体名`** 并填入该可能性所需的数据：
+
+```rust
+let r1: Role = Role::Guest;
+let r2: Role = Role::Member(500);
+let r3: Role = Role::Admin { dept_id: 1, security_key: 9999 };
+```
+
+### 关键分野：为什么 `Role` 是类型，而 `Role::Member` 不是类型？
+
+刚从 OOP 转过来的开发者看到 `Role::Member(500)`，常会顺着子类的习惯，以为 `Role` 是父类、`Member` 是子类类型，进而写出 `fn check_member(m: Role::Member)` 这样的函数签名。
+
+我们在代码里试一下：
+
+<small class="code-source">源文件：<code>examples/types/enum-option-match/src/bin/variant-not-type.rs</code></small>
+<Code code={variantNotType} lang="rust" />
+
+如果取消第 12 行的注释，编译器会当场拒绝，报错 `error[E0573]`：
+
+<small class="code-source">编译器输出（对应 <code>examples/types/enum-option-match/src/bin/variant-not-type.rs</code>）</small>
+```text
+error[E0573]: expected type, found variant `Role::Member`
+  --> src/bin/variant-not-type.rs:12:20
+   |
+12 | fn check_member(m: Role::Member) {}
+   |                    ^^^^^^^^^^^^ not a type
+```
+
+报错信息直接点明了 `not a type`（不是一个类型）。这正是 Rust 原生和类型与 OOP 子类的核心区别：
+
+- **只有外层的 `Role` 是独立的编译期类型实体**：无论变量当前处于 `Guest`、`Member(500)` 还是 `Admin { ... }` 哪一种可能性，`r1`、`r2`、`r3` 的类型统统是 **`Role`**。函数参数、返回值和容器（如 `Vec<Role>`）里写的永远是 `Role`，且它的合法可能性在定义处就已经完全闭合。
+- **内部的 `Guest`、`Member`、`Admin` 是「变体构造器（Variant Constructors）」**：它们不是独立的子类类型，而是构造 `Role` 实例的三个入口。调用 `Role::Member(500)` 就像调用一个构造函数，产出的是一个处于 `Member` 状态的 `Role` 值。
+
+正因为三种可能性同属 `Role` 这一种类型，你既可以把 `r1`、`r2`、`r3` 直接放进同一个数组 `[r1, r2, r3]`，又从根源上消除了非法组合——当变量处于 `Role::Member(500)` 时，内存里只有积分 `500`，根本不存在 `dept_id` 和 `security_key`，任何代码都不可能在普通会员身上读出管理员密钥。
+
+<Aside type="note" title="枚举也可以像 struct 一样定义 impl 方法">
+既然 `Role` 是一个正牌的类型，第 5 章学过的 `impl` 块在 `enum` 上完全通用。你可以直接写 `impl Role { fn is_admin(&self) -> bool { ... } }`，为枚举挂载关联函数与 `&self` / `&mut self` / `self` 方法。
+</Aside>
+
+---
+
+## 代数数据类型（ADT）：积类型（`×`）与和类型（`+`）
+
+现在我们可以回答：为什么计算机科学把 `struct` 和 `enum` 合称为**代数数据类型（Algebraic Data Types，ADT）**？
+
+这里的「代数」，指的是当我们计算一个类型**一共存在多少种合法取值可能性**时，`struct` 对应数学上的**乘法（`×`）**，而 `enum` 对应数学上的**加法（`+`）**：
+
+### 1. `struct` 是积类型（Product Type）：可能性相乘
+
+看一个包含两个字段的结构体：
+
+```rust
+enum Direction { North, South, East, West } // 4 种可能
+
+struct MoveCmd {
+    dir: Direction, // 4 种可能
+    fast: bool,     // 2 种可能（true / false）
+}
+```
+
+因为 `dir` 和 `fast` **同时存在（与关系）**，每一个 `Direction` 都可以和两种 `bool` 组合，所以 `MoveCmd` 的合法取值总数是 **`4 × 2 = 8` 种**。
+
+这就是 `struct`（以及元组）被称为**积类型（Product Type）**的原因。每往结构体里多加一个字段，可能出现的状态组合数就会相乘；如果几个字段在业务逻辑上本来互斥，相乘多出来的那些组合，就是前面 `BadRole` 里出现的非法脏状态。
+
+### 2. `enum` 是和类型（Sum Type）：可能性相加
+
+再看把这两个类型放进 `enum` 的不同分支里：
+
+```rust
+enum Action {
+    Turn(Direction), // 4 种可能
+    Sprint(bool),    // 2 种可能
+    Idle,            // 1 种可能（无附加数据）
+}
+```
+
+因为同一时刻 `Action` **只能处于其中一种可能性（或关系）**，它的合法取值总数等于各变体可能性之和，即 **`4 + 2 + 1 = 7` 种**。
+
+这就是 `enum` 被称为**和类型（Sum Type）**的原因。
+
+| 维度 | 积类型（Product Type）：`struct` | 和类型（Sum Type）：`enum` |
+| --- | --- | --- |
+| **逻辑关系** | **与关系（AND）**：同时持有字段 `A` **且** 字段 `B` | **或关系（OR）**：处于可能性 `A` **或** 可能性 `B` |
+| **合法取值总数** | 各字段可能性**相乘**（`|A| × |B|`） | 各变体可能性**相加**（`|A| + |B|`） |
+| **工程建模职责** | 把共同构成一个实体的多项属性捆绑在一起 | 收拢互斥的业务角色、状态机阶段或成败结果 |
+
+---
+
+## 物理表示：固定长度内存中的「标签 + 共享载荷区」
+
+理解了逻辑上的「或关系」，我们再从内存角度看：编译器是怎样把几种长短不一的可能性，装进同一个类型 `Role` 里的？
+
+结合前几章建立的物理规则，我们可以直接推导出 `enum` 的内存长相：
+
+1. **类型大小必须固定**：栈上局部变量的类型必须在编译期具有固定且唯一已知的字节长度（`Sized`）；
+2. **随时可能切换分支**：`Guest`（0 字节数据）、`Member(u64)`（8 字节数据）和 `Admin { dept_id: u64, security_key: u64 }`（16 字节数据）都属于 `Role` 类型，而且一个 `let mut r: Role` 变量在运行途中随时可能从 `Role::Guest` 被重新赋值为 `Role::Admin { ... }`。
+
+要在不借助堆内存指针的前提下满足这两点，唯一的物理方案就是：**给 `Role` 分配一块编译期固定长度的内存；在内存开头用 1 个或多个 bit（按字节与对齐规则分配）表示当前属于哪一种可能性，其余的内存长度按最大的那种可能性留足，让每一种可能性自己去管理如何使用这块空间。**
+
+运行下面这段代码，核对无载荷枚举 `Direction`、结构体 `BadRole` 与枚举 `Role` 的真实字节大小：
+
+<small class="code-source">源文件：<code>examples/types/enum-option-match/src/bin/enum-adt-layout.rs</code></small>
+<Code code={enumAdtLayout} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+Direction: 1B, BadRole (struct): 32B, Role (enum): 24B
+r1 = 24B, r2 = 24B, r3 = 24B
+```
+
+对照下图，我们可以看清 `BadRole` 与 `Role` 在内存里的布局差异（这种结构在底层称为**带标签联合体 Tagged Union**）：
+
+<EnumTagPayload />
+
+一块 `Role` 的 24 字节内存由两部分拼成：
+
+1. **判别式标签（Discriminant / Tag）**：内存最前面用来标记「当前是哪一种可能性」的编号（`0` 代表 `Guest`、`1` 代表 `Member`、`2` 代表 `Admin`）。虽然 3 种可能性理论上用 2 个 bit 就能区分，但 CPU 按字节寻址，所以无载荷的 `Direction` 占 `1B`；而在 `Role` 中，因为后面的 `u64` 载荷要求按 8 字节边界对齐，这 1 字节的标签加上 7 字节对齐填充（Padding），一共占用了前 **`8B`**。
+2. **由各可能性自行管理的共享载荷区（Shared Payload）**：剩下的 **`16B`** 空间（按最大变体 `Admin` 的两个 `u64` 定制）由所有变体分时复用：
+   - 当标签为 `0`（`r1 = Role::Guest`）时，这 16 字节载荷区全部闲置；
+   - 当标签为 `1`（`r2 = Role::Member(500)`）时，`Member` 使用前 8 字节存放 `500: u64`，后 8 字节闲置；
+   - 当标签为 `2`（`r3 = Role::Admin { ... }`）时，`Admin` 把 16 字节全部用满，前 8 字节放 `dept_id: 1`，后 8 字节放 `security_key: 9999`。
+
+不管是 `r1`、`r2` 还是 `r3`，它们在栈上都是固定长度的 **`24B`** 内联值——既不像 `BadRole` 那样把所有互斥字段并排累加到 `32B`，也不像 OOP 子类那样必须去堆上分配对象再通过指针跳转访问。
+
+<Aside type="caution" title="工程判据：警惕「巨型变体」撑大整个枚举">
+因为枚举的共享载荷区必须迁就**最大的那一种可能性**，如果一个枚举有 9 个变体都只占 8 字节，唯独第 10 个罕见变体里塞了一个 1024 字节的大数组，那么每一个枚举实例在栈上都会变成 1000 多字节。在工程代码审查中遇到这种头重脚轻的定义时，通常会把那个超大变体的数据用第四篇将学习的 `Box<T>` 放到堆上，让该变体在枚举内缩回一个 8 字节指针。
+</Aside>
+
+---
+
+## 小结
+
+1. **顶层概念是「和类型（Sum Type）」**：`struct` 是**积类型（`×`）**，表达多个字段同时存在的「与关系」；`enum` 是**和类型（`+`）**，表达一个类型存在几种互斥合法可能性的「或关系」。
+2. **超越 OOP 子类的闭合建模**：OOP 用「父类 + 子类」模拟和类型时，会把不同可能性拆成多个堆上分配的独立子类，且默认边界敞开；而 Rust 的 `enum` 只有外层枚举名是独立的**编译期类型实体**，内部变体只是构造入口，在定义处就锁死了全部合法可能性。
+3. **固定长度内存（`Tag + 共享载荷区`）**：在物理内存中，枚举是一块按最大变体定长的固定内存——开头用判别式标签（Tag）标识当前处于哪一种可能性，其余的共享载荷区交由当前可能性自己管理使用，全程在栈上直接内联。
+
+既然枚举的共享载荷区在不同可能性下装着完全不同的数据，Rust 为什么不允许你像访问结构体那样直接写 `r2.0` 或 `r3.security_key`？我们又该如何安全地读取里面的载荷？这就是下一节**模式匹配（`match`）与穷尽性检查**要解决的问题。
+
+### 动手核对与小练习
+
+1. **计算代数取值数与内存大小**：假设定义了如下结构体 `Pair` 和枚举 `Choice`（在 64 位平台上，`u64` 占 8 字节且按 8 字节对齐，`bool` 占 1 字节）：
+   ```rust
+   struct Pair {
+       flag: bool,
+       num: u8,
+   }
+
+   enum Choice {
+       Empty,
+       Flag(bool),
+       Number(u64),
+   }
+   ```
+   - 从代数数据类型（ADT）角度看，`Pair`（积类型）和 `Choice`（和类型，暂将 `Number` 分支换算为 `u8` 思考）各自的合法取值总数是怎么算的？
+   - 在内存中，`size_of::<Choice>()` 是多少字节？这几个字节分别是怎么分配给 Tag 和共享载荷区的？
+2. **数据建模改造**：某网络模块用结构体定义了如下连接状态：
+   ```rust
+   struct Connection {
+       state: u8,          // 0: 未连接, 1: 连接中, 2: 已连接
+       retry_count: u32,   // 仅在「连接中」时有效
+       peer_ip: String,    // 仅在「已连接」时有效
+   }
+   ```
+   请指出这个 `struct` 设计的缺陷，并用一个 `enum ConnState` 将它改造成和类型。
+
+<details>
+<summary>点击核对参考答案</summary>
+
+1. **取值数与内存大小**：
+   - **取值数**：`bool` 有 2 种取值，`u8` 有 256 种取值。积类型 `Pair` 同时持有两者（与关系），共有 `2 × 256 = 512` 种可能；而和类型若包含 `Empty`（1 种）、`Flag(bool)`（2 种）和 `Num(u8)`（256 种），则是三者相加（或关系）：`1 + 2 + 256 = 259` 种可能。
+   - **内存大小**：`size_of::<Choice>()` 是 **`16` 字节**。其中后 8 字节是按最大变体 `Number(u64)` 定制的共享载荷区；前 8 字节存放判别式标签（1 字节 Tag 加上为满足 `u64` 的 8 字节对齐要求而填充的 7 字节 Padding），总大小为 `8 + 8 = 16` 字节。
+2. **改造为和类型 `enum`**：
+   - 原 `struct` 的缺陷：处于「未连接」状态时，依然必须构造一个无意义的空 `String` 赋给 `peer_ip`；且任何代码都能在 `state == 0` 时误读 `retry_count` 或 `peer_ip`。
+   - 用 `enum` 改造后，每种可能性只管理真正属于自己的数据：
+     ```rust
+     enum ConnState {
+         Disconnected,
+         Connecting { retry_count: u32 },
+         Connected { peer_ip: String },
+     }
+     ```
+
+</details>

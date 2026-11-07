@@ -1,0 +1,129 @@
+---
+/**
+ * 附录《位置表达式与值表达式》分步配图：位置链。
+ *
+ * 双轨呈现 people[0].name 怎么落到一个位置：上面一行是表达式的三段芯片，
+ * 下面是它导航的嵌套结构。每一步点亮一段芯片、画一条腿箭头走进结构一层；
+ * 第 3 步落到 name 字段（赋值与 &mut 作用的位置）。
+ * 第 4 步换成 people[2]：索引越界，链断在这一环，整个表达式取不到位置。
+ */
+import { SITE_LOCALE } from '../../config/site';
+import FigureControls from './FigureControls.astro';
+
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			caption:
+				'From people, one step of indexing and one step of field access land on people[0].name; switch the index to an out-of-bounds [2] and the chain breaks — the whole expression gets no place.',
+			title: 'How people[0].name lands on a place',
+			desc: 'Two tracks: the expression people[0].name in three segments above, the nested structure it navigates below. Each step lights one segment and walks one leg deeper; the third lands on the name field — the place that assignment and &mut act on. A fourth step switches the index to [2]: out of bounds, the chain breaks at that link, and the whole expression gets no place.',
+			zoneExpr: 'expression · one step per segment',
+			zoneStruct: 'structure',
+			labelArray: 'array · binding',
+			pill: 'the place',
+			oops: 'out of bounds · no element [2]',
+			stepper: 'Steps',
+			steps: [
+				'start at people',
+				'index [0]',
+				'field .name (the place)',
+				'switch to people[2]: chain broken',
+			],
+		}
+	: {
+			caption:
+				'从 people 出发，一步索引、一步字段，落到 people[0].name；把索引换成越界的 [2]，链断在这一环，整个表达式取不到位置。',
+			title: 'people[0].name 怎么落到一个位置',
+			desc: '双轨：上面是表达式 people[0].name 的三段，下面是它导航的嵌套结构。每一步点亮一段、走进结构一层；第三步落到 name 字段——赋值与 &mut 作用的位置。第四步把索引换成 [2]：越界，链断在这一环，整个表达式取不到位置。',
+			zoneExpr: '表达式 · 每段各走一步',
+			zoneStruct: '结构',
+			labelArray: '数组 · 绑定',
+			pill: '落点',
+			oops: '越界 · 没有第 3 个元素',
+			stepper: '步骤',
+			steps: ['从 people 出发', '索引 [0]', '字段 .name（落点）', '换成 people[2]：断链'],
+		};
+---
+
+<figure class="diagram chain-figure" data-stepper>
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 500" role="img" aria-labelledby="pc-title pc-desc">
+		<title id="pc-title">{t.title}</title>
+		<desc id="pc-desc">{t.desc}</desc>
+
+		{/* 两轨的弱标注 */}
+		<text class="label" x="40" y="42">{t.zoneExpr}</text>
+		<text class="label" x="616" y="118" text-anchor="end">{t.zoneStruct}</text>
+
+		{/* 上轨：表达式拆成三段芯片，段间虚线相连 */}
+		<path class="chain-conn chain-conn-1" data-step="2" d="M140 74 H160"></path>
+		<path class="chain-conn chain-conn-2" data-step="3" d="M216 74 H236"></path>
+		<g class="chain-chip" data-step="1">
+			<rect x="40" y="56" width="100" height="36" rx="8"></rect>
+			<text class="code" x="90" y="79" text-anchor="middle">people</text>
+		</g>
+		<g class="chain-chip chain-zero" data-step="2">
+			<rect x="164" y="56" width="52" height="36" rx="8"></rect>
+			<text class="code" x="190" y="79" text-anchor="middle">[0]</text>
+		</g>
+		<g class="chain-chip chain-name" data-step="3">
+			<rect x="240" y="56" width="84" height="36" rx="8"></rect>
+			<text class="code" x="282" y="79" text-anchor="middle">.name</text>
+		</g>
+
+		{/* 下轨：数组里两个元素，各带一个 name 字段；[1] 只作对照 */}
+		<rect class="panel chain-panel" data-step="1" x="336" y="126" width="272" height="290" rx="12"></rect>
+		<text class="label" x="352" y="148">{t.labelArray}</text>
+		<rect class="panel chain-panel chain-panel-0" data-step="2" x="352" y="160" width="240" height="112" rx="10"></rect>
+		<text class="label" x="366" y="180">[0]</text>
+		<g class="chain-dest">
+			<rect class="chain-slot" x="368" y="188" width="208" height="60" rx="8"></rect>
+			<g class="chain-pin">
+				<circle cx="390" cy="218" r="6.5"></circle>
+				<circle cx="390" cy="218" r="2.5"></circle>
+			</g>
+			<text class="name" x="492" y="223" text-anchor="middle">Alice</text>
+			<g class="chain-pill">
+				<rect x="436" y="167" width="80" height="19" rx="9.5"></rect>
+				<text x="476" y="181" text-anchor="middle">{t.pill}</text>
+			</g>
+		</g>
+		<rect class="panel" x="352" y="288" width="240" height="104" rx="10"></rect>
+		<text class="label" x="366" y="308">[1]</text>
+		<rect class="chain-slot" x="368" y="318" width="208" height="56" rx="8"></rect>
+		<text class="name" x="472" y="351" text-anchor="middle">Bob</text>
+
+		{/* 三条腿：每一步从一段芯片走进结构一层 */}
+		<path class="arrow chain-leg" data-step="1" d="M90 92 V270 Q90 278 98 278 H334" marker-end="url(#pc-head)"></path>
+		<path class="arrow chain-leg" data-step="2" d="M190 92 V244 Q190 252 198 252 H350" marker-end="url(#pc-head)"></path>
+		<path class="arrow chain-leg" data-step="3" d="M282 92 V186 Q282 194 290 194 H366" marker-end="url(#pc-head)"></path>
+
+		{/* 第 4 步：换成 people[2]，链断在索引这一环 */}
+		<g class="chain-oops" data-step="4">
+			<g class="chain-chip">
+				<rect x="164" y="56" width="52" height="36" rx="8"></rect>
+				<text class="code" x="190" y="79" text-anchor="middle">[2]</text>
+			</g>
+			<path class="arrow danger" d="M190 92 V440 Q190 448 198 448 H460" marker-end="url(#pc-head-muted)"></path>
+			<circle class="freed" cx="472" cy="448" r="10"></circle>
+			<path class="chain-x" d="M466 442 L478 454 M478 442 L466 454"></path>
+			<text class="label" x="472" y="474" text-anchor="middle">{t.oops}</text>
+		</g>
+
+		<defs>
+			<marker id="pc-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+			<marker id="pc-head-muted" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line-muted)"></path>
+			</marker>
+		</defs>
+	</svg>
+
+	<FigureControls controls="stepper" label={t.stepper} steps={t.steps} />
+</figure>
+
+<script>
+	import { initFigures } from '../../scripts/motion';
+	initFigures();
+</script>

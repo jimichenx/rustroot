@@ -1,0 +1,167 @@
+---
+title: 怎么打印变量？
+description: 用 println! 输出变量和调试信息，按需设置精度、宽度与进制。
+sidebar:
+  label: 格式化打印
+  order: 6
+---
+
+import { Code } from '@astrojs/starlight/components';
+import printingValues from '../../../../../../examples/appendix/basic-syntax/src/bin/printing-values.rs?raw';
+import printingDebug from '../../../../../../examples/appendix/basic-syntax/src/bin/printing-debug.rs?raw';
+import printingFormats from '../../../../../../examples/appendix/basic-syntax/src/bin/printing-formats.rs?raw';
+import printingArguments from '../../../../../../examples/appendix/basic-syntax/src/bin/printing-arguments.rs?raw';
+import printingOptions from '../../../../../../examples/appendix/basic-syntax/src/bin/printing-options.rs?raw';
+import printingTypes from '../../../../../../examples/appendix/basic-syntax/src/bin/printing-types.rs?raw';
+
+写实验时，我们经常需要把变量的值输出到终端。Rust 使用 `println!` 打印一行文字；末尾的 `!` 表示它是宏调用，而不是普通函数调用。
+
+## 打印变量
+
+先运行下面的程序，观察每行输出：
+
+<small class="code-source">源文件：<code>examples/appendix/basic-syntax/src/bin/printing-values.rs</code></small>
+<Code code={printingValues} lang="rust" />
+
+输出：
+
+```text
+Hello
+Hello, Rust
+Rust: 3
+Rust: 3
+{Rust}
+```
+
+双引号里的内容是格式字符串。`{}` 是占位符，依次使用后面提供的参数；`{name}` 和 `{count}` 则直接使用同名变量。`println!` 在每次输出的末尾加上换行。
+
+如果要输出大括号本身，写 `{{` 和 `}}`。格式字符串里的占位符和参数不匹配时，编译器会报错。
+
+打印已有变量不会移走它的所有权：格式化时使用的是对值的借用。打印之后，`name` 和 `count` 仍然可以使用。
+
+## 打印数组和结构体
+
+上面的 `{}` 适合输出数字、字符串等面向用户的内容。但数组和许多自定义类型不能直接用 `{}` 打印。需要查看它们的值时，可以使用 `{:?}`：
+
+<small class="code-source">源文件：<code>examples/appendix/basic-syntax/src/bin/printing-debug.rs</code></small>
+<Code code={printingDebug} lang="rust" />
+
+输出：
+
+```text
+[1, 2, 3]
+Point {
+    x: 4,
+    y: 5,
+}
+(4, 5)
+```
+
+`{values:?}` 使用调试格式输出数组；`{point:#?}` 同样使用调试格式，但会分行缩进，便于查看结构。例子中的 `#[derive(Debug)]` 让编译器为 `Point` 生成调试格式所需的实现。最后一行访问两个字段，确认 `point` 在打印后仍可使用。
+
+两种写法有不同要求：`{}` 要求类型实现 `Display`，`{:?}` 要求类型实现 `Debug`。它们是两种 Trait，可以暂时理解为类型提供的不同格式化能力。不是所有类型都实现了两者；如果编译器提示缺少 `Debug`，自定义类型可以在字段都支持 `Debug` 时使用 `#[derive(Debug)]`。
+
+`{:?}` 中的 `?` 是格式说明的一部分，不是写在表达式后面用于错误传播的 `?` 运算符。
+
+## 控制输出格式
+
+占位符中的冒号后面还可以指定精度、宽度或进制：
+
+<small class="code-source">源文件：<code>examples/appendix/basic-syntax/src/bin/printing-formats.rs</code></small>
+<Code code={printingFormats} lang="rust" />
+
+输出：
+
+```text
+12.35
+|   42|
+|00042|
+101010 0x2a
+```
+
+- `{price:.2}` 保留两位小数，并按格式化规则舍入。
+- `{count:>5}` 设置最小宽度为 5，右对齐；竖线用于显示两端的位置。
+- `{count:05}` 设置最小宽度为 5，用 `0` 补足。
+- `{count:b}` 以二进制输出；`{count:#x}` 以十六进制输出，并带 `0x` 前缀。
+
+宽度是最小宽度，不会截断较长的输出。格式要求必须与类型支持的格式化方式匹配；例如数组不能用 `{}` 时，先检查它是否支持 `{:?}`。
+
+## 格式参数速查
+
+一个占位符的形式是 `{参数:格式}`。参数和格式都可以省略；格式部分存在时，冒号不能省略。下表中的 `format!` 使用与 `println!` 相同的格式语法，但返回字符串，不输出换行。示例中的 `·` 表示一个空格，并不是实际输出的字符。
+
+### 选择参数
+
+| 写法 | 作用 | 示例 | 结果 |
+| --- | --- | --- | --- |
+| `{}` | 按顺序选择位置参数 | `format!("{} {}", "a", "b")` | `a b` |
+| `{0}`、`{1}` | 按从 0 开始的位置选择参数，可以重复使用 | `format!("{1} {0} {1}", "a", "b")` | `b a b` |
+| `{name}` | 使用同名变量或显式命名的参数 | `format!("{name} {n}", n = 3)`，其中 `name` 为 `"Rust"` | `Rust 3` |
+| `{{`、`}}` | 输出大括号本身 | `format!("{{{}}}", 42)` | `{42}` |
+
+位置参数必须写在命名参数之前，所有显式提供的参数都必须被使用。显式位置不会推进 `{}` 的自动计数：`format!("{0} {}", "a", "b")` 中的两个占位符都选择第 0 个参数，而第 1 个参数未被使用，因此会报错。改成只有 `"a"` 一个参数即可得到 `a a`。
+
+格式字符串必须是字符串字面量，不能直接用运行时的字符串变量代替。编译器据此检查占位符、参数和类型是否匹配。
+
+### 选择输出方式
+
+| 格式 | 作用 | 示例 | 结果 |
+| --- | --- | --- | --- |
+| `{}` | `Display`，用于面向用户的显示 | `format!("{}", 42)` | `42` |
+| `{:?}` | `Debug`，用于查看值 | `format!("{:?}", [1, 2])` | `[1, 2]` |
+| `{:#?}` | `Debug` 的多行缩进格式 | `format!("{:#?}", [1, 2])` | 分行输出数组 |
+| `{:x?}`、`{:X?}` | `Debug` 输出中的整数使用小写、大写十六进制 | `format!("{:x?}", [15, 26])` | `[f, 1a]` |
+| `{:b}` | 二进制 | `format!("{:b}", 42)` | `101010` |
+| `{:o}` | 八进制 | `format!("{:o}", 42)` | `52` |
+| `{:x}`、`{:X}` | 小写、大写十六进制 | `format!("{:x} {:X}", 255, 255)` | `ff FF` |
+| `{:e}`、`{:E}` | 科学计数法，分别使用小写、大写 `e` | `format!("{:e}", 12.5)` | `1.25e1` |
+| `{:p}` | `Pointer` 格式，常用于查看引用或指针的地址 | `format!("{:p}", &value)` | 地址因运行环境而异 |
+
+每种输出方式要求对应的 Trait 实现。例如，`{:b}` 要求类型实现 `Binary`，不能因为占位符语法正确，就认为任意类型都能以二进制输出。
+
+### 宽度、对齐与精度
+
+| 写法 | 作用 | 示例 | 结果 |
+| --- | --- | --- | --- |
+| `{:5}` | 最小宽度为 5 | `format!("{:5}", 42)` | `···42` |
+| `{:<5}` | 左对齐 | `format!("{:<5}", "x")` | `x····` |
+| `{:>5}` | 右对齐 | `format!("{:>5}", "x")` | `····x` |
+| `{:^5}` | 居中对齐 | `format!("{:^5}", "x")` | `··x··` |
+| `{:*<5}` | 用 `*` 填充并左对齐 | `format!("{:*<5}", "x")` | `x****` |
+| `{:+}` | 为正数也显示 `+` | `format!("{:+}", 42)` | `+42` |
+| `{:05}` | 宽度为 5，用 `0` 补齐 | `format!("{:05}", -42)` | `-0042` |
+| `{:#x}`、`{:#o}`、`{:#b}` | 在进制表示前加上对应前缀 | `format!("{:#x}", 42)` | `0x2a` |
+| `{:.2}` | 浮点数保留两位小数 | `format!("{:.2}", 1.234)` | `1.23` |
+| `{:.3}` | 字符串最多输出 3 个字符 | `format!("{:.3}", "Rust")` | `Rus` |
+
+这些格式选项可以组合，例如 `format!("{:#06x}", 42)` 得到 `0x002a`。对数值使用 `0` 补齐时，零放在符号和进制前缀之后；符号和前缀也计入宽度。
+
+标准数值格式默认右对齐，字符串默认左对齐，默认填充字符是空格。精度对整数格式会被忽略，不能用来指定整数的最小位数；需要补零时使用宽度和 `0`。不同类型的格式化实现不一定支持所有选项，尤其是 `Debug` 不保证支持对齐。
+
+### 动态宽度与精度
+
+宽度和精度也可以从参数或同名变量读取。下表中 `width` 和 `precision` 的类型都是 `usize`，值分别为 `5` 和 `2`。
+
+| 写法 | 作用 | 示例 | 结果 |
+| --- | --- | --- | --- |
+| `{:>width$}` | 用命名参数或同名变量指定宽度 | `format!("{:>width$}", "x")` | `····x` |
+| `{:>1$}` | 用第 1 个位置参数指定宽度 | `format!("{:>1$}", "x", 5)` | `····x` |
+| `{:.precision$}` | 用命名参数或同名变量指定精度 | `format!("{:.precision$}", 1.234)` | `1.23` |
+| `{:.*}` | 从下一个位置参数读取精度，再读取要格式化的值 | `format!("{:.*}", 2, 1.234)` | `1.23` |
+
+`$` 引用宽度或精度参数时，不推进 `{}` 的自动位置计数；`.*` 则会消耗一个位置参数作为精度。需要同时指定宽度和精度时，也可以组合，例如 `{value:>width$.precision$}`。
+
+表中示例及其他边界可以在以下实验中核对。`assert_eq!` 检查两边是否相等；运行成功且没有输出，表示这些检查通过。
+
+<small class="code-source">源文件：<code>examples/appendix/basic-syntax/src/bin/printing-arguments.rs</code></small>
+<Code code={printingArguments} lang="rust" collapse={8} />
+
+<small class="code-source">源文件：<code>examples/appendix/basic-syntax/src/bin/printing-options.rs</code></small>
+<Code code={printingOptions} lang="rust" collapse={8} />
+
+<small class="code-source">源文件：<code>examples/appendix/basic-syntax/src/bin/printing-types.rs</code></small>
+<Code code={printingTypes} lang="rust" collapse={8} />
+
+更完整的语法与各 Trait 的说明可查阅 [Rust 标准库格式化文档](https://doc.rust-lang.org/std/fmt/)。
+
+**判断一条打印语句时，先看占位符，再看值的类型**：`{}` 用于 `Display`，`{:?}` 用于 `Debug`；冒号后的其他选项控制具体格式。

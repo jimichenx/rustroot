@@ -1,0 +1,287 @@
+---
+title: "方法接收者三件套与自动解引用"
+description: 拆解 impl 块中的关联函数与方法，理解 &self、&mut self 与 self 三种接收者如何对应借用与移动规则，并掌握点号调用点的自动借用与自动解引用机制。
+sidebar:
+  label: 方法与接收者三件套
+  order: 3
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import missingMut from '../../../../../../../examples/types/methods/src/bin/missing-mut.rs?raw';
+import consumeThroughRef from '../../../../../../../examples/types/methods/src/bin/consume-through-ref.rs?raw';
+
+上一节我们用 `struct` 把多个字段打包成了新的自定义类型，但结构体定义本身只包含数据字段，不写任何方法。
+
+在 Java 或 C++ 中，字段和方法都包裹在同一个 `class { ... }` 花括号里；而在 Rust 中，**数据布局（`struct`）与行为实现（`impl`）是分开书写的**。更重要的是，Rust 的方法没有隐藏的 `this` 引用，而是要求你在方法签名的第一个参数位置，显式写明该方法以什么方式接手当前实例。
+
+---
+
+## 数据与行为分离：`impl` 块
+
+假设我们定义了一个表示计数器的结构体 `Counter`：
+
+```rust
+struct Counter {
+    count: u32,
+}
+```
+
+要为 `Counter` 挂载行为，我们使用 **`impl`（实现，implementation）**关键字开启一个代码块。
+
+很多初学者会好奇：**一个 `struct` 和 `impl` 块之间是 `1:1` 还是 `1:N` 的关系？**
+答案是 **`1:N`（甚至可以是 `1:0`）**：
+- 一个 `struct` 可以完全不写 `impl` 块（仅仅作为纯数据载体）；
+- 也可以写一个 `impl Counter { ... }` 把所有函数都装在里面（日常最常见）；
+- 还可以拆成**多个独立的 `impl Counter` 块**——编译器在编译时会自动把它们合并到同一个类型名下。这在大型项目中按职责分组方法，或者在后续第 7 章为不同泛型条件挂载专属方法时非常实用。
+
+在 `impl Counter` 内部定义的函数，按「第一个参数是不是 `self`」分为两类：
+
+### 1. 关联函数（Associated Functions）：用 `::` 调用
+
+如果一个函数的参数列表里**没有 `self`**，它就叫**关联函数**：
+
+```rust
+impl Counter {
+    fn new() -> Counter {
+        Counter { count: 0 }
+    }
+}
+```
+
+关联函数挂在类型名名下，不依赖某个已经存在的实例。调用时使用**类型名加双冒号 `::`**（例如 `let c = Counter::new();`，就像前几章用过的 `String::from("hi")` 和 `Vec::new()`）。
+
+Rust 没有专门的构造函数语法（没有 `new Counter()` 关键字），工程上约定俗成用名为 `new`（或 `with_capacity`、`from_...`）的关联函数来构造并返回新实例。
+
+<Aside type="tip" title="扩展阅读：Rust 的命名约定与所有权成本">
+除了用 `new` 作构造函数，Rust 社区还有一整套把「所有权流向与内存分配成本」直接写进方法名的工程约定（例如为什么借用转换叫 `as_bytes`、拷贝转换叫 `to_vec`、移交所有权的转换叫 `into_bytes`，以及为什么 Getter 方法不写 `get_` 前缀）。感兴趣的话可以随时翻阅 [附录 A.5：Rust 命名约定与工程惯例速查](/appendix/basics/conventions/)。
+</Aside>
+
+### 2. 方法（Methods）：用点号 `.` 调用
+
+如果一个函数的第一个参数是 **`self`**（或其引用形式 `&self`、`&mut self`），它就成为挂载在实例上的**方法**：
+
+```rust
+impl Counter {
+    fn get(&self) -> u32 {
+        self.count
+    }
+}
+```
+
+调用方法时，直接对具体实例使用**点号 `.`**（例如 `let n = c.get();`），编译器会自动把点号左边的实例 `c` 作为第一个参数传进去。
+
+<Aside type="note" title="大写 Self 与小写 self 的区别">
+在 `impl Counter` 块内部，你可以使用关键字 **`Self`（首字母大写）**作为当前类型 `Counter` 的代称。比如 `fn new() -> Self { Self { count: 0 } }` 与写 `Counter` 完全等价。而**小写的 `self`** 则专门用作方法的第一个参数名，代表调用该方法的具体实例。
+</Aside>
+
+---
+
+## 方法接收者三件套：`&self`、`&mut self` 与 `self`
+
+为什么 Rust 不像 Java 或 C++ 那样提供一个隐藏的 `this` 指针，而是强迫你在每个方法的第一个参数位置显式写出 `self`？
+
+这体现了 Rust 最核心的设计理念：**将对实例的访问权限显式编码进方法签名**。
+
+在 Java 中，隐式的 `this` 永远拥有完整的读写权限——哪怕变量声明为 `final StringBuilder sb`，你依然能调用 `sb.append("a")` 修改它的内部状态；单看一行方法签名，你也无从知晓调用它会不会改乱内部字段。
+
+而在 Rust 中，方法签名里的第一个参数（称为**接收者 Receiver**）直接充当了**编译期的权限开关**。它把对实例的操作权限精确划分为三档，分别对应我们在第 3、4 章学过的三个独立类型：
+
+### 1. 只读借用接收者：`&self`（即 `self: &Self`）
+
+只读取实例的字段，不修改任何内容，也不接手所有权：
+
+```rust
+impl Counter {
+    fn get(&self) -> u32 {
+        self.count
+    }
+}
+```
+
+`&self` 是 `self: &Counter` 的简写。调用 `c.get()` 时，只是临时借出只读引用，方法返回后原变量 `c` 完好无损。
+
+### 2. 可变借用接收者：`&mut self`（即 `self: &mut Self`）
+
+需要原地修改实例内部的字段：
+
+```rust
+impl Counter {
+    fn bump(&mut self) {
+        self.count += 1;
+    }
+}
+```
+
+`&mut self` 是 `self: &mut Counter` 的简写。调用 `c.bump()` 时需要独占可变借用，因此要求调用方的变量声明时必须带有 **`let mut c`**。
+
+### 3. 所有权接收者：`self`（即 `self: Self`）
+
+直接按值接手整个实例的所有权：
+
+```rust
+impl Counter {
+    fn finish(self) -> u32 {
+        self.count
+    }
+}
+```
+
+`self` 是 `self: Counter` 的简写。因为自定义结构体默认走**移动（Move）**语义，一旦调用 `c.finish()`，实例 `c` 的所有权就会移动进 `finish` 方法内部并在方法结束时释放——**原变量 `c` 在调用后立即失效**。
+
+这种接手 `self` 所有权的方法在工程中有两个核心用途：
+1. **零拷贝转换**：把当前实例拆开，将其内部的堆缓冲区直接移交给另一个新类型（如 `String::into_bytes(self) -> Vec<u8>`）；
+2. **终结状态防呆**：表示「关闭连接」「提交事务」或「完成计数」等一次性收尾动作。一旦调用 `let total = c.finish();`，如果后续再误写 `c.get()`，编译器会在编译期直接报 `error[E0382]`（移动后使用）。
+
+| 接收者简写 | 完整参数类型 | 所有权与借用行为 | 调用后原变量状态 | 典型工程场景 |
+| --- | --- | --- | --- | --- |
+| **`&self`** | `self: &Self` | 共享只读借用 | 继续有效 | 读取属性、计算派生值（如 `len()`、`is_empty()`） |
+| **`&mut self`** | `self: &mut Self` | 独占可变借用 | 继续有效（需声明 `let mut`） | 原地更新字段、增删元素（如 `push()`、`clear()`） |
+| **`self`** | `self: Self` | 按值移动（若非 `Copy`） | **已失效（被消费）** | 转化为其他类型（`into_...`）或执行一次性终结操作 |
+
+---
+
+## 调用点的自动借用与自动解引用
+
+在第 3、4 章我们反复强调过，**`Counter`、`&Counter` 和 `&mut Counter` 是三个完全不同的类型实体**。
+
+如果编译器在所有地方都要求你严格按类型手写转换，那每次调个只读方法都要写 `(&c).get()`，每次修改都要写 `(&mut c).bump()`，拿着双层引用还要写 `(**rr).get()`——代码的表达效率会大打折扣。
+
+为了兼顾「底层类型严格区分」与「日常书写流畅」，Rust 在**点号 `.` 方法调用点**做了一层编译期自动化工作，使它写起来和其他面向对象语言一样自然：编译器会对照方法签名里声明的接收者类型，自动替点号左边的表达式补上所需的 **`&` / `&mut`（自动借用）**或 **`*`（自动解引用）**。
+
+我们把这个过程拆成两个方向来看，就能彻底分清谁是「自动借用」、谁是「自动解引用」：
+
+### 1. 自动借用（Autoref）：手里是值 `T`，方法要引用 `&T` / `&mut T`
+
+当你手里拿着拥有所有权的实例 `c: Counter`（或 `v: Vec<i32>`），去调用接收者为 `&self` 或 `&mut self` 的方法时，编译器会自动替你**借出引用（补上 `&` 或 `&mut`）**：
+
+```rust
+let mut v = vec![1, 2, 3];
+
+// 以下三行代码在编译期 100% 等价：
+v.push(4);            // 1. 日常写法：编译器看签名需要 &mut self，自动替 v 补上 &mut
+(&mut v).push(4);     // 2. 还原自动借用：手动借出 &mut v，再点出方法
+Vec::push(&mut v, 4); // 3. 完全展开的底层函数调用：把 &mut v 作为第一个参数传进去
+```
+
+### 2. 自动解引用（Autoderef）：手里是引用 `&T` / `&&T`，需要剥壳匹配
+
+反过来，当你手里拿的是一个引用（比如 `r: &Counter`，甚至多层引用 `rr: &&Counter`），去访问字段或调用方法时，编译器会自动在前面**补上 `*` 解引用**，一层层剥开引用外壳，直到匹配上目标类型：
+
+```rust
+let c = Counter::new();
+let r: &Counter = &c;
+let rr: &&Counter = &r;
+
+// 以下三行代码在编译期 100% 等价：
+rr.get();             // 1. 日常写法：编译器自动剥掉一层 &，拿到 &Counter 传给 get(&self)
+(*rr).get();          // 2. 还原自动解引用：手动用 * 解引用一层
+Counter::get(*rr);    // 3. 完全展开的底层函数调用
+```
+
+正是因为点号 `.` 同时具备「缺引用就自动补 `&`」和「多引用就自动补 `*`」的双向适配能力，Rust 彻底取消了 C/C++ 中区分值调用（`c.get()`）和指针调用（`r->get()`）的两套符号——无论手里是值还是引用，一律直接写 `.` 即可。
+
+（感兴趣的读者可以打开仓库中的 `examples/types/methods/src/bin/auto-ref.rs` 自行运行验证上述等价写法。）
+
+---
+
+## 自动适配越不过的三条安全边界
+
+编译器在 `.` 调用点替你省去了手写 `&`、`&mut` 和 `*` 的麻烦，但它**绝不会替你绕过任何一条所有权与借用检查规则**。
+
+判断一行 `x.method()` 能不能通过编译，最稳妥的方法就是在脑海里把它**还原成等价的底层函数调用 `Type::method(..., ...)`**，看那一步借用或移动是否合法：
+
+### 1. 不可变绑定借不出 `&mut self`（揭秘 `let s = String::from("hello")` 为什么调不了追加方法）
+
+在第 2 章 2.2 节中我们留过一个悬念：在 Java 里写 `final StringBuilder sb = ...; sb.append(" world");` 完全合法；为什么在 Rust 里写 `let s = String::from("hello");`（或 `let v = Vec::new();`），只要不加 `mut`，连追加内容的 **`s.push_str(" world")`** 或 **`v.push(1)`** 都不让调？
+
+这正是显式 `self` 权限控制带来的直接效果：
+- `String::len(&self)` 的接收者是只读的 `&self`，所以不可变的 `s` 可以随时调用 `s.len()`；
+- 而 `String::push_str(&mut self, ...)` 和 `Vec::push(&mut self, ...)` 的接收者都是要求修改权限的 **`&mut self`**。
+
+把调用还原成等价形式就一目了然了：`v.push(1)` 等价于 **`Vec::push(&mut v, 1)`**。由于 `v` 声明时没有 `mut`，编译器无法从不可变绑定上自动借出 `&mut v`，于是在编译期直接拒之门外：
+
+<small class="code-source">源文件：<code>examples/types/methods/src/bin/missing-mut.rs</code></small>
+<Code code={missingMut} lang="rust" />
+
+取消第 7 行 `// v.push(1);` 的注释，就会触发 `error[E0596]`：
+
+<small class="code-source">编译器诊断摘要：取消 missing-mut.rs 第 7 行注释后</small>
+```text
+error[E0596]: cannot borrow `v` as mutable, as it is not declared as mutable
+ --> types/methods/src/bin/missing-mut.rs:7:5
+  |
+6 |     let v: Vec<i32> = Vec::new();
+  |         - help: consider changing this to be mutable: `mut v`
+7 |     v.push(1);
+  |     ^ cannot borrow as mutable
+```
+
+### 2. 存在活跃只读借用时借不出 `&mut self`（回应第 4 章的 `E0502`）
+
+同理，在第 4 章 4.4 节中，为什么手里拿着元素引用 `let first = &v[0];` 时，调用 `v.push(4)` 会报 `error[E0502]`？因为 `v.push(4)` 在调用点等价于展开为 **`Vec::push(&mut v, 4)`**，自动借出的 `&mut v` 与仍在使用的只读借用 `first` 违反了读写排他规则。
+
+### 3. 拿着共享引用 `&T` 调不了消费所有权的 `self` 方法（`E0507`）
+
+如果一个方法的接收者是按值接手所有权的 **`self`**（例如 `String::into_bytes(self)`），而你手里只有一个只读引用 `r: &String`，会发生什么？
+
+<small class="code-source">源文件：<code>examples/types/methods/src/bin/consume-through-ref.rs</code></small>
+<Code code={consumeThroughRef} lang="rust" />
+
+- 第 8 行 `r.len()` 顺利通过：因为 `len(&self)` 等价于 `String::len(r)`，只需要 `&String`；
+- 但一旦取消第 9 行 `// let bytes = r.into_bytes();` 的注释，编译器通过**自动解引用**将其还原为等价的 **`String::into_bytes(*r)`**——试图把 `*r` 从引用背后直接移走（Move），当场违反「禁止通过引用移出目标值」的规则，报出 **`error[E0507]`**：
+
+<small class="code-source">编译器诊断摘要：取消 consume-through-ref.rs 第 9 行注释后</small>
+```text
+error[E0507]: cannot move out of `*r` which is behind a shared reference
+ --> types/methods/src/bin/consume-through-ref.rs:9:17
+  |
+9 |     let bytes = r.into_bytes();
+  |                 ^ ------------ `r.into_bytes()` takes ownership of the receiver `self`, which moves `*r`
+  |                 |
+  |                 move occurs because `*r` has type `String`, which does not implement the `Copy` trait
+```
+
+看编译器给出的提示：`r.into_bytes()` 要求接手接收者 `self` 的所有权，这会导致把 `*r` 移走，而共享引用背后的数据是不允许被移走的。
+
+---
+
+## 小结
+
+1. **`impl` 分离数据与行为（支持 `1:N`）**：`struct` 只声明字段；一个类型可以对应零个、一个或多个 `impl` 块。块内不带 `self` 的是**关联函数**（用 `Type::func()` 调用，常作构造函数），带 `self` / `&self` / `&mut self` 的是**方法**（用 `instance.method()` 调用）；
+2. **接收者三件套决定权限与去留**：`&self` 只读借用、`&mut self` 独占修改、`self` 接手所有权并消费原实例；
+3. **点号 `.` 的双向等价展开**：手里是值而方法要引用时触发**自动借用**（补 `&` / `&mut`），手里是多层引用时触发**自动解引用**（补 `*`）；展开后的等价函数调用依然受 `let mut`（`E0596`）、读写排他（`E0502`）与引用禁移（`E0507`）的严格约束。
+
+### 动手核对与小练习
+
+1. **写出等价展开式**：假设变量 `mut c: Counter` 和引用 `r: &Counter`，请参考正文的「三行等价」格式，分别写出 `c.bump()` 和 `r.get()` 对应的**手动借用/解引用写法**以及**完全展开的底层函数调用写法**。
+2. **看签名断报错**：阅读下面这段代码，指出第 15 行和第 17 行中哪一行会编译失败，报什么性质的错？
+   ```rust
+   struct Ticket {
+       id: u32,
+   }
+
+   impl Ticket {
+       fn inspect(&self) -> u32 { self.id }
+       fn redeem(self) -> u32 { self.id }
+   }
+
+   fn check(t: &Ticket) {
+       println!("{}", t.inspect()); // 第 15 行
+       let id = t.redeem();         // 第 17 行
+   }
+   ```
+
+<details>
+<summary>点击核对参考答案</summary>
+
+1. **等价展开式**：
+   - 对于 `c.bump()`（`c` 是 `Counter`，`bump` 需要 `&mut self`，触发**自动借用**）：
+     - 手动借用写法：`(&mut c).bump();`
+     - 完全展开的函数调用：`Counter::bump(&mut c);`
+   - 对于 `r.get()`（`r` 是 `&Counter`，`get` 需要 `&self`；若 `rr: &&Counter`，则 `rr.get()` 触发**自动解引用**）：
+     - `r.get()` 直接对应 `Counter::get(r);`（若对双层引用 `rr: &&Counter` 调用 `rr.get()`，手动解引用为 `(*rr).get()`，完全展开为 `Counter::get(*rr)`）。
+2. **报错诊断**：
+   - **第 15 行 `t.inspect()` 编译通过**：等价于 `Ticket::inspect(t)`，`t` 本身就是 `&Ticket`，完全匹配；
+   - **第 17 行 `let id = t.redeem();` 编译失败（报 `error[E0507]: cannot move out of *t which is behind a shared reference`）**：因为 `redeem(self)` 要求按值接手 `Ticket` 的所有权，在调用点自动解引用展开为 **`Ticket::redeem(*t)`**，而 `check` 函数只拿到了只读引用 `t: &Ticket`，无权把借来的 `*t` 移走消费掉。
+
+</details>

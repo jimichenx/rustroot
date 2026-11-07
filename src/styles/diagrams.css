@@ -1,0 +1,824 @@
+/*
+ * Rust Root 配图规范（全站唯一来源）
+ *
+ * 所有课程配图（SVG 示意图）统一使用本文件的 .diagram 外壳与 --dg-* 色板。
+ * 组件里不要再写 <style> 覆盖这些类；新增配图请复用这些类，不要另起一套颜色。
+ *
+ * 色板全部映射到 custom.css 的 --sl-color-* 主题变量，因此深色 / 浅色
+ * 两种主题、中文站与英文站自动保持一致，无需各自维护。
+ *
+ * 用法：
+ *   <figure class="diagram">
+ *     <figcaption>…</figcaption>
+ *     <svg viewBox="…">…</svg>
+ *   </figure>
+ */
+
+/* ---------- 配图色板 ---------- */
+:root {
+	/* 画布底色与边框 */
+	--dg-bg: var(--sl-color-gray-6);
+	--dg-border: var(--sl-color-gray-5);
+
+	/* 节点 / 高亮块的填充与描边 */
+	--dg-node-fill: var(--sl-color-accent-low);
+	--dg-node-stroke: var(--sl-color-accent);
+
+	/* 连线：实线强调、虚线弱化、已释放 */
+	--dg-line: var(--sl-color-accent);
+	--dg-line-muted: var(--sl-color-gray-2);
+	--dg-freed: var(--sl-color-gray-3);
+
+	/* 文字：节点主文字、次要说明、最弱标注 */
+	--dg-text: var(--sl-color-white);
+	--dg-text-muted: var(--sl-color-gray-2);
+	--dg-text-faint: var(--sl-color-gray-3);
+}
+
+/* ---------- 外壳 ---------- */
+.diagram {
+	margin: 1.5rem 0 2rem;
+}
+
+.diagram figcaption {
+	margin-bottom: 0.6rem;
+	color: var(--dg-text-muted);
+	font-size: 0.95rem;
+}
+
+.diagram svg {
+	display: block;
+	width: 100%;
+	height: auto;
+	max-width: 640px;
+	margin-inline: auto;
+	background: var(--dg-bg);
+	border: 1px solid var(--dg-border);
+	border-radius: 12px;
+}
+
+/* ---------- 结构件 ---------- */
+
+/* 分组面板（如「名字」「堆上的对象」两个框） */
+.diagram .panel {
+	fill: transparent;
+	stroke: var(--dg-border);
+}
+
+/* 槽位 / 堆上对象等高亮块 */
+.diagram .slot,
+.diagram .object,
+.diagram .node circle {
+	fill: var(--dg-node-fill);
+	stroke: var(--dg-node-stroke);
+	stroke-width: 2;
+}
+
+/* 已释放 / 失效的块 */
+.diagram .freed {
+	fill: transparent;
+	stroke: var(--dg-freed);
+	stroke-dasharray: 6 4;
+}
+
+/* 连线：实线箭头 */
+.diagram .arrow {
+	fill: none;
+	stroke: var(--dg-line);
+	stroke-width: 2;
+}
+
+/* 连线：失效 / 危险的箭头 */
+.diagram .arrow.danger {
+	stroke: var(--dg-line-muted);
+	stroke-dasharray: 5 4;
+}
+
+/* 连线：三角的边（虚线表示拉扯） */
+.diagram .edge {
+	fill: none;
+	stroke: var(--dg-line);
+	stroke-width: 2;
+	stroke-dasharray: 6 5;
+}
+
+/* ---------- 文字 ---------- */
+
+/* 面板标题等弱标注 */
+.diagram .label {
+	fill: var(--dg-text-faint);
+	font-size: 14px;
+}
+
+/* 槽位 / 对象里的主文字 */
+.diagram .name {
+	fill: var(--dg-text);
+	font-size: 16px;
+}
+
+/* 节点主文字（三角顶点） */
+.diagram .node-name {
+	fill: var(--dg-text);
+	font-size: 18px;
+	font-weight: 600;
+}
+
+/* 节点英文副标 */
+.diagram .node-en {
+	fill: var(--dg-text-muted);
+	font-size: 11px;
+}
+
+/* 图中心的说明文字 */
+.diagram .center {
+	fill: var(--dg-text-muted);
+	font-size: 15px;
+}
+
+/* 边标签与副标 */
+.diagram .edge-label {
+	fill: var(--dg-text);
+	font-size: 14px;
+}
+
+.diagram .edge-sub {
+	fill: var(--dg-text-faint);
+	font-size: 12px;
+}
+
+/* ---------- 交互式配图：1.6 push 扩容动画 ---------- */
+
+/* 元素块从旧数据搬进新数据，逐格错开，让搬运有次序 */
+.diagram.grow-figure .grow-chips > g {
+	transition: transform 0.75s cubic-bezier(0.34, 1, 0.64, 1);
+}
+
+.diagram.grow-figure.is-grown .grow-chips > g {
+	transform: translateY(132px);
+}
+
+.diagram.grow-figure .grow-chips > g:nth-child(2) {
+	transition-delay: 0.08s;
+}
+
+.diagram.grow-figure .grow-chips > g:nth-child(3) {
+	transition-delay: 0.16s;
+}
+
+.diagram.grow-figure .grow-chips > g:nth-child(4) {
+	transition-delay: 0.24s;
+}
+
+/* 新块先淡入，空位等着元素搬过来 */
+.diagram.grow-figure .grow-new {
+	opacity: 0;
+	transition: opacity 0.4s ease 0.05s;
+}
+
+.diagram.grow-figure.is-grown .grow-new {
+	opacity: 1;
+}
+
+/* 被 push 的新元素最后落进空位 */
+.diagram.grow-figure .grow-fresh {
+	opacity: 0;
+	transition: opacity 0.35s ease 0.7s;
+}
+
+.diagram.grow-figure.is-grown .grow-fresh {
+	opacity: 1;
+}
+
+/* 旧块被释放：转成灰色虚线 */
+.diagram.grow-figure .grow-old {
+	transition: stroke 0.3s ease 0.55s, stroke-dasharray 0.3s ease 0.55s;
+}
+
+.diagram.grow-figure.is-grown .grow-old {
+	stroke: var(--dg-freed);
+	stroke-dasharray: 6 4;
+}
+
+/* Vec 的指针改指新块：旧箭头淡出，新箭头淡入 */
+.diagram.grow-figure .grow-arrow-old {
+	transition: opacity 0.3s ease 0.5s;
+}
+
+.diagram.grow-figure.is-grown .grow-arrow-old {
+	opacity: 0;
+}
+
+.diagram.grow-figure .grow-arrow-new {
+	opacity: 0;
+	transition: opacity 0.3s ease 0.5s;
+}
+
+.diagram.grow-figure.is-grown .grow-arrow-new {
+	opacity: 1;
+}
+
+/* elem 仍指着旧块：变成失效的虚线 */
+.diagram.grow-figure .grow-elem-arrow {
+	transition: stroke 0.3s ease 0.6s, stroke-dasharray 0.3s ease 0.6s;
+}
+
+.diagram.grow-figure.is-grown .grow-elem-arrow {
+	stroke: var(--dg-line-muted);
+	stroke-dasharray: 5 4;
+	marker-end: url(#vg-head-muted);
+}
+
+/* 编译错误条，等画面停稳再出现 */
+.diagram.grow-figure .grow-error {
+	opacity: 0;
+	transition: opacity 0.3s ease;
+}
+
+.diagram.grow-figure.is-grown .grow-error {
+	opacity: 1;
+	transition-delay: 1.15s;
+}
+
+/* 控件：按钮与错误条 */
+.diagram.grow-figure .grow-controls {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 0.6rem 0.9rem;
+	max-width: 640px;
+	margin: 0.75rem auto 0;
+}
+
+.diagram.grow-figure .grow-button {
+	font: inherit;
+	font-size: 0.85rem;
+	padding: 0.35rem 0.95rem;
+	border: 1px solid var(--dg-node-stroke);
+	border-radius: 999px;
+	background: var(--dg-node-fill);
+	color: var(--dg-text);
+	cursor: pointer;
+}
+
+.diagram.grow-figure .grow-button:hover {
+	border-color: var(--dg-line);
+}
+
+.diagram.grow-figure .grow-button:focus-visible {
+	outline: 2px solid var(--dg-line);
+	outline-offset: 2px;
+}
+
+.diagram.grow-figure .grow-error {
+	margin: 0;
+	color: var(--dg-text-muted);
+	font-family: var(--sl-font-mono, ui-monospace, SFMono-Regular, monospace);
+	font-size: 0.8rem;
+}
+
+/* ---------- 交互式配图：1.1 困难三角的张力 ---------- */
+
+/* 光标靠近时，最近的一条边像绷紧的绳朝光标弯一下，两端顶点亮起；
+   另外两条边淡出一点，让视线停在当前这条边上。
+   边的路径由组件里的小脚本逐帧改写，这里只管高亮与过渡。 */
+.diagram.triangle-figure .edge {
+	transition: stroke-width 0.25s ease, opacity 0.25s ease;
+}
+
+.diagram.triangle-figure .node {
+	transition: filter 0.25s ease;
+}
+
+.diagram.triangle-figure .edge.is-taut {
+	stroke-width: 2.8;
+}
+
+.diagram.triangle-figure.has-tension .edge:not(.is-taut) {
+	opacity: 0.55;
+}
+
+.diagram.triangle-figure .node.is-taut circle {
+	stroke-width: 3;
+}
+
+.diagram.triangle-figure .node.is-taut {
+	filter: drop-shadow(0 0 7px var(--dg-node-stroke));
+}
+
+/* ---------- 1.1 四象限图：谁决定释放 × 靠不靠运行时回收 ---------- */
+
+/* 维度标题（列、行）加粗；副标保持小字。 */
+.diagram.grid-figure .edge-label {
+	font-weight: 600;
+}
+
+/* 十字分割线；不画外框，也不给象限填色。 */
+.diagram.grid-figure .grid-rule {
+	stroke: var(--dg-border);
+	stroke-width: 2;
+}
+
+/* ---------- 图里的代码片段（附录用） ---------- */
+.diagram .code {
+	fill: var(--dg-text);
+	font-family: var(--sl-font-mono, ui-monospace, SFMono-Regular, monospace);
+	font-size: 13px;
+}
+
+/* ---------- 分步配图：位置链（附录·位置表达式） ---------- */
+
+/* 双轨：上轨是表达式的三段芯片，下轨是嵌套结构；三条腿把两轨连起来。
+   约定：默认（关掉 JS）直接呈现第 3 步终态——链走完、落点亮起；
+   脚本武装（is-armed）后回到起点，由 is-on 逐段点亮。 */
+
+/* 段与段之间的虚线连接 */
+.diagram.chain-figure .chain-conn {
+	fill: none;
+	stroke: var(--dg-node-stroke);
+	stroke-width: 1.5;
+	stroke-dasharray: 4 3;
+	transition: stroke 0.3s ease, opacity 0.3s ease;
+}
+
+/* 芯片本体 */
+.diagram.chain-figure .chain-chip {
+	transition: opacity 0.3s ease;
+}
+
+.diagram.chain-figure .chain-chip rect {
+	fill: var(--dg-node-fill);
+	stroke: var(--dg-node-stroke);
+	stroke-width: 1.5;
+	transition: fill 0.3s ease, stroke 0.3s ease;
+}
+
+.diagram.chain-figure .chain-chip .code {
+	fill: var(--dg-node-stroke);
+	transition: fill 0.3s ease;
+}
+
+/* 武装后：一切回到中性，等 is-on 点亮 */
+.diagram.chain-figure.is-armed .chain-conn {
+	stroke: var(--dg-border);
+}
+
+.diagram.chain-figure.is-armed .chain-chip rect {
+	fill: transparent;
+	stroke: var(--dg-border);
+}
+
+.diagram.chain-figure.is-armed .chain-chip .code {
+	fill: var(--dg-text-muted);
+}
+
+.diagram.chain-figure.is-armed .chain-chip.is-on rect {
+	fill: var(--dg-node-fill);
+	stroke: var(--dg-node-stroke);
+}
+
+.diagram.chain-figure.is-armed .chain-chip.is-on .code {
+	fill: var(--dg-node-stroke);
+}
+
+.diagram.chain-figure.is-armed .chain-conn.is-on {
+	stroke: var(--dg-node-stroke);
+}
+
+/* 三条腿：默认可见（终态），武装后藏起、走到哪步亮哪条 */
+.diagram.chain-figure .chain-leg {
+	transition: opacity 0.3s ease;
+}
+
+.diagram.chain-figure.is-armed .chain-leg {
+	opacity: 0;
+}
+
+.diagram.chain-figure.is-armed .chain-leg.is-on {
+	opacity: 1;
+}
+
+/* 途经的结构层：链走过就染一层淡橙，落点保持最亮 */
+.diagram.chain-figure .chain-panel {
+	transition: stroke 0.3s ease;
+}
+
+.diagram.chain-figure .chain-panel.is-on {
+	stroke: var(--dg-node-stroke);
+	stroke-opacity: 0.45;
+}
+
+/* 字段槽位：中性是灰框，落点是填充 + 实线描边 */
+.diagram.chain-figure .chain-slot {
+	fill: transparent;
+	stroke: var(--dg-border);
+	transition: fill 0.3s ease, stroke 0.3s ease;
+}
+
+.diagram.chain-figure .chain-dest .chain-slot {
+	fill: var(--dg-node-fill);
+	stroke: var(--dg-node-stroke);
+	stroke-width: 2;
+}
+
+.diagram.chain-figure.is-armed .chain-dest .chain-slot {
+	fill: transparent;
+	stroke: var(--dg-border);
+	stroke-width: 1;
+}
+
+.diagram.chain-figure[data-step='3'] .chain-dest .chain-slot {
+	fill: var(--dg-node-fill);
+	stroke: var(--dg-node-stroke);
+	stroke-width: 2;
+}
+
+/* 落点标记：图钉与「落点」标签，只在第 3 步出现 */
+.diagram.chain-figure .chain-pin,
+.diagram.chain-figure .chain-pill {
+	transition: opacity 0.3s ease;
+}
+
+.diagram.chain-figure .chain-pin circle {
+	fill: none;
+	stroke: var(--dg-node-stroke);
+	stroke-width: 1.75;
+}
+
+.diagram.chain-figure .chain-pin circle:last-child {
+	fill: var(--dg-node-stroke);
+}
+
+.diagram.chain-figure .chain-pill rect {
+	fill: var(--dg-node-fill);
+	stroke: var(--dg-node-stroke);
+	stroke-width: 1.5;
+}
+
+.diagram.chain-figure .chain-pill text {
+	fill: var(--dg-node-stroke);
+	font-size: 12px;
+}
+
+.diagram.chain-figure.is-armed .chain-pin,
+.diagram.chain-figure.is-armed .chain-pill {
+	opacity: 0;
+}
+
+.diagram.chain-figure[data-step='3'] .chain-pin,
+.diagram.chain-figure[data-step='3'] .chain-pill {
+	opacity: 1;
+}
+
+/* 第 4 步的断链组：[2] 芯片、灰虚线箭头、越界标记。
+   data-step 由脚本写，关掉 JS 时整组不出现，图停在终态。 */
+.diagram.chain-figure .chain-oops {
+	opacity: 0;
+	transition: opacity 0.3s ease;
+}
+
+.diagram.chain-figure[data-step='4'] .chain-oops {
+	opacity: 1;
+}
+
+/* [2] 芯片：灰虚线框，不点亮 */
+.diagram.chain-figure .chain-oops .chain-chip rect {
+	fill: transparent;
+	stroke: var(--dg-line-muted);
+	stroke-dasharray: 5 4;
+}
+
+.diagram.chain-figure .chain-oops .chain-chip .code {
+	fill: var(--dg-text-muted);
+}
+
+/* 越界的叉 */
+.diagram.chain-figure .chain-x {
+	fill: none;
+	stroke: var(--dg-freed);
+	stroke-width: 1.75;
+	stroke-linecap: round;
+}
+
+/* 第 4 步：整条链换成 people → [2]，原来走到 [0] 的部分退场 */
+.diagram.chain-figure[data-step='4'] .chain-leg,
+.diagram.chain-figure[data-step='4'] .chain-zero,
+.diagram.chain-figure[data-step='4'] .chain-conn-2 {
+	opacity: 0;
+}
+
+.diagram.chain-figure[data-step='4'] .chain-name {
+	opacity: 0.35;
+}
+
+.diagram.chain-figure[data-step='4'] .chain-conn-1 {
+	stroke: var(--dg-line-muted);
+}
+
+.diagram.chain-figure[data-step='4'] .chain-panel-0 {
+	stroke: var(--dg-border);
+	stroke-opacity: 1;
+}
+
+/* 重播前瞬间复位，链条不走倒放 */
+.diagram.chain-figure.is-resetting
+	:is(
+		.chain-conn,
+		.chain-chip,
+		.chain-chip rect,
+		.chain-chip .code,
+		.chain-leg,
+		.chain-panel,
+		.chain-slot,
+		.chain-pin,
+		.chain-pill,
+		.chain-oops
+	) {
+	transition: none;
+}
+
+/* ---------- 分步配图的进度条与步骤 ---------- */
+
+/* 步骤：只被脚本隐藏；关掉 JS 时全部直接可见 */
+.diagram .step {
+	transition: opacity 0.35s ease;
+}
+
+.diagram.is-armed .step {
+	opacity: 0;
+}
+
+.diagram.is-armed .step.is-on {
+	opacity: 1;
+}
+
+/* 单动作配图的播放按钮：居中 */
+.diagram .play-row {
+	display: flex;
+	justify-content: center;
+	margin: 1rem auto 0;
+}
+
+.diagram .play-button {
+	font: inherit;
+	font-size: 0.85rem;
+	padding: 0.35rem 0.95rem;
+	border: 1px solid var(--dg-node-stroke);
+	border-radius: 999px;
+	background: var(--dg-node-fill);
+	color: var(--dg-text);
+	cursor: pointer;
+}
+
+.diagram .play-button:hover {
+	border-color: var(--dg-line);
+}
+
+.diagram .play-button:focus-visible {
+	outline: 2px solid var(--dg-line);
+	outline-offset: 2px;
+}
+
+/* 重播前瞬间复位，不显示倒放 */
+.diagram.is-resetting .step,
+.diagram.is-resetting .partial-chip,
+.diagram.borrow-figure.is-resetting .bc-before,
+.diagram.borrow-figure.is-resetting .bc-shared-arrow {
+	transition: none;
+}
+
+/* 进度条：宽度随节点数量自适应，居中；节点间距固定，不做满宽 */
+.diagram .stepper-bar {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex-wrap: wrap;
+	gap: 0.6rem;
+	margin: 1rem auto 0;
+}
+
+.diagram .stepper {
+	display: flex;
+	justify-content: center;
+}
+
+/* 导航按钮：上一步 / 下一步 / 自动播放，三个一组，与小圈等高 */
+.diagram .stepper-nav-group {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	margin: 0;
+}
+
+.diagram .stepper-icon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	box-sizing: border-box;
+	width: 28px;
+	height: 28px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--dg-text-muted);
+	cursor: pointer;
+}
+
+.diagram .stepper-icon svg {
+	display: block;
+	width: 16px;
+	height: 16px;
+	margin: 0;
+}
+
+/* 自动播放按钮只用颜色区分，不包外圈 */
+.diagram .stepper-icon-auto {
+	color: var(--dg-node-stroke);
+}
+
+.diagram .stepper-icon:hover {
+	color: var(--dg-text);
+}
+
+.diagram .stepper-icon-auto:hover {
+	color: var(--dg-node-stroke);
+}
+
+.diagram .stepper-icon:disabled {
+	opacity: 0.4;
+	cursor: default;
+	color: var(--dg-text-muted);
+}
+
+.diagram .stepper-icon:focus-visible {
+	outline: 2px solid var(--dg-line);
+	outline-offset: 2px;
+}
+
+/* 自动播放按钮：播放 / 暂停 图标切换 */
+.diagram .stepper-icon .icon-pause {
+	display: none;
+}
+
+.diagram .stepper-icon[aria-pressed='true'] .icon-play {
+	display: none;
+}
+
+.diagram .stepper-icon[aria-pressed='true'] .icon-pause {
+	display: block;
+}
+
+.diagram .stepper-dots {
+	display: flex;
+	align-items: center;
+}
+
+.diagram .stepper-seg {
+	position: relative;
+	flex: 0 0 auto;
+	width: 36px;
+	height: 22px; /* 点击区和节点一样高，线本身只有 2px */
+	margin: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	cursor: pointer;
+}
+
+.diagram .stepper-seg::before {
+	content: '';
+	position: absolute;
+	top: 50%;
+	left: 0;
+	right: 0;
+	height: 2px;
+	transform: translateY(-50%);
+	background: var(--dg-border);
+	transition: background-color 0.3s ease;
+}
+
+.diagram .stepper-seg.is-on::before {
+	background: var(--dg-node-stroke);
+}
+
+.diagram .stepper-dot {
+	flex: 0 0 auto;
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	margin: 0;
+	padding: 0;
+	border: 1.5px solid var(--dg-border);
+	border-radius: 50%;
+	background: var(--dg-bg);
+	color: var(--dg-text-muted);
+	font: inherit;
+	font-size: 0.7rem;
+	cursor: pointer;
+}
+
+.diagram .stepper-dot.is-on {
+	border-color: var(--dg-node-stroke);
+	background: var(--dg-node-fill);
+	color: var(--dg-text);
+}
+
+.diagram .stepper-dot:hover {
+	border-color: var(--dg-line);
+}
+
+.diagram .stepper-dot:focus-visible {
+	outline: 2px solid var(--dg-line);
+	outline-offset: 2px;
+}
+
+/* 临时位置那条存活条：到最后一步再拉开 */
+.diagram.temp-figure.is-armed .temp-ext {
+	transform: scaleX(0);
+	transform-box: fill-box;
+	transform-origin: left center;
+	transition: transform 0.5s ease;
+}
+
+.diagram.temp-figure .temp-ext.is-on {
+	transform: scaleX(1);
+}
+
+/* 部分移动：.0 的值淡出，转移箭头与 left 的新值淡入，.0 原位变虚线空位。
+   .partial-source 用「默认隐藏、武装后先现再淡出」表达值被移走；
+   其余淡入元素（空位 / 箭头 / left 的值 / 说明）复用通用的 .step。
+   .1 没被动过，第二拍描边加粗强调仍可用。 */
+.diagram.partial-figure .partial-source {
+	opacity: 0;
+	transition: opacity 0.35s ease;
+}
+
+.diagram.partial-figure.is-armed .partial-source {
+	opacity: 1;
+}
+
+.diagram.partial-figure.is-armed .partial-source.is-on {
+	opacity: 0;
+}
+
+.diagram.partial-figure .partial-alive {
+	transition: stroke-width 0.3s ease;
+}
+
+.diagram.partial-figure[data-step='2'] .partial-alive {
+	stroke-width: 2.5;
+}
+
+/* 借用冲突分步图。
+   .bc-before：第 1 步还活着的 "hello"、ptr 指向旧块的箭头、len/cap 的旧值。
+   关掉 JS 时藏起来，终态是虚线旧块和改指新块的箭头；
+   武装后只在第 1 步出现，第 2 步淡出，底下的 .freed 与新箭头淡入。
+   .bc-shared-arrow：r 指向 "hello" 的实线，第 1、2 步留着，第 3 步换成 .arrow.danger。 */
+.diagram.borrow-figure .bc-before,
+.diagram.borrow-figure .bc-shared-arrow {
+	opacity: 0;
+	transition: opacity 0.35s ease;
+}
+
+.diagram.borrow-figure.is-armed[data-step='1'] .bc-before,
+.diagram.borrow-figure.is-armed[data-step='1'] .bc-shared-arrow,
+.diagram.borrow-figure.is-armed[data-step='2'] .bc-shared-arrow {
+	opacity: 1;
+}
+
+/* 尊重系统的减弱动态设置：直接落到终态，不做补间 */
+@media (prefers-reduced-motion: reduce) {
+	.diagram.grow-figure .grow-chips > g,
+	.diagram.grow-figure .grow-new,
+	.diagram.grow-figure .grow-fresh,
+	.diagram.grow-figure .grow-old,
+	.diagram.grow-figure .grow-arrow-old,
+	.diagram.grow-figure .grow-arrow-new,
+	.diagram.grow-figure .grow-elem-arrow,
+	.diagram.grow-figure .grow-error,
+	.diagram.triangle-figure .edge,
+	.diagram.triangle-figure .node,
+	.diagram.chain-figure .chain-conn,
+	.diagram.chain-figure .chain-chip,
+	.diagram.chain-figure .chain-chip rect,
+	.diagram.chain-figure .chain-chip .code,
+	.diagram.chain-figure .chain-leg,
+	.diagram.chain-figure .chain-panel,
+	.diagram.chain-figure .chain-slot,
+	.diagram.chain-figure .chain-pin,
+	.diagram.chain-figure .chain-pill,
+	.diagram.chain-figure .chain-oops,
+	.diagram .step,
+	.diagram .stepper-seg::before,
+	.diagram.temp-figure .temp-ext,
+	.diagram.partial-figure .partial-source,
+	.diagram.partial-figure .partial-alive,
+	.diagram.borrow-figure .bc-before,
+	.diagram.borrow-figure .bc-shared-arrow {
+		transition-duration: 0.001s;
+		transition-delay: 0s;
+	}
+}

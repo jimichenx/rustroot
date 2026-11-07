@@ -1,0 +1,197 @@
+---
+title: "从静态到动态：当编译期单态化撞上运行时边界"
+description: 从「异构集合」与「运行时分支返回不同具体类型」两处编译失败出发，看清编译期静态单态化的物理边界，顺手厘清 impl Trait 的静态本质，并建立贯穿全书的「编译期静态 vs 运行时动态」全局大局观。
+sidebar:
+  label: 从静态到动态的大局观
+  order: 1
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import staticBoundaries from '../../../../../../../examples/types/traits/src/bin/static-boundaries.rs?raw';
+
+回顾前七章，我们其实一直生活在一个**「编译期静态确定」**的世界里：
+- 变量的字节大小在编译期算死，随函数栈帧自动进出（第 1～5 章）；
+- 即使引入了跨类型的泛型 `<T: Summary>`，编译器也是在**编译期**根据每个调用点传入的具体类型，通过**单态化（Monomorphization）**分别生成各自独立的机器码（第 7 章）。
+
+由于在编译结束的那一刻，所有类型的内存布局、每一次函数调用的目标机器码地址都已经百分之百确定，这种机制被称为**静态分发（Static Dispatch）**。
+
+只要信息在编译期已知，静态单态化就能做到「零运行时额外开销」。但在真实工程中，有很多信息是在**编译代码的那一刻根本不可能知道的**——比如监控面板在运行时动态加载了哪几种混合组件、用户在运行时点击了哪个分支。
+
+当编译期的静态单态化，正面撞上运行时的动态信息时，会发生什么？
+
+---
+
+## 撞击静态世界的两道物理边界
+
+我们直接沿用第 7 章里已经写熟的两个结构体：一篇文章 `Article`（含 `String`）和一条监控指标 `Metric`（含 `&'static str` 与 `u64`），它们都签下了 `Summary` 契约：
+
+<small class="code-source">推演用伪代码</small>
+```rust
+trait Summary {
+    fn summarize(&self) -> String;
+}
+
+struct Article { title: String }
+struct Metric  { name: &'static str, value: u64 }
+
+impl Summary for Article { ... }
+impl Summary for Metric  { ... }
+```
+
+在第 7 章中，我们写一个泛型函数 `fn notify<T: Summary>(item: &T)`，分别调用 `notify(&article)` 和 `notify(&metric)` 没有任何问题——因为编译器直接把 `notify` 拆成了 `notify_article` 和 `notify_metric` 两个独立函数。
+
+但现在，我们尝试做两件在日常业务里再普通不过的事。
+
+### 边界一：同一个集合想同时装入不同具体类型（异构集合困境）
+
+假设你的监控大屏上既有文章卡片 `Article`，又有指标卡片 `Metric`。你想把它们放进同一个 `Vec` 数组里，然后写一个循环统一调用 `.summarize()` 渲染出来：
+
+<small class="code-source">推演用伪代码：尝试把两个都实现了 <code>Summary</code> 的不同结构体放进同一个 <code>Vec</code></small>
+```rust
+let items = vec![
+    Article { title: String::from("News") },
+    Metric { name: "cpu", value: 10 }, // 报错 E0308！
+];
+```
+
+这段在 Python、Java 或 Go 里天经地义的代码，在 Rust 里会当场编译失败：
+
+<small class="code-source">编译器诊断摘要</small>
+```text
+error[E0308]: mismatched types
+  --> src/bin/static-boundaries.rs:56:9
+   |
+54 |     let _items = vec![
+   |                  ---- `Vec<Article>` inferred here
+55 |         Article { title: String::from("News") },
+56 |         Metric { name: "cpu", value: 10 },
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Article`, found `Metric`
+```
+
+为什么都实现了 `Summary`，却不能放进同一个 `Vec`？
+回想我们在第 4 章学过的 `Vec<T>` 物理布局：`Vec<T>` 在堆上是一段**每个元素字节大小完全相同、紧挨着连续排列**的内存（第 `i` 个元素的地址固定为 `ptr + i × size_of::<T>()`）。
+泛型参数 `T` 在编译期只能单态化为**唯一一种具体类型**——当第一个元素是 `Article` 时，整个数组的类型就被定死为 `Vec<Article>`，第二个槽位绝不可能塞进另一个类型 `Metric`。
+
+### 边界二：根据运行时条件返回不同的具体类型
+
+再看第二个常见需求：写一个工厂函数 `choose_item(is_article: bool)`，根据运行时的布尔参数 `is_article`，为真时返回 `Article`，为假时返回 `Metric`。
+
+此时你会发现一个难题：**函数的返回类型位置该写什么？**
+- 写 `-> Article` 不对，因为 `else` 分支返回的是 `Metric`；
+- 写 `-> Summary` 更不行，因为我们在 7.2 节刚证明过，裸 `Summary` 只是契约、没有固定栈尺寸，根本不是类型！
+
+这时，有人会想到 Rust 提供的一种省略泛型参数名字 `<T>` 的简写语法——**`impl Trait`**（字面意思是「某个实现了该契约的具体类型」）。
+
+<Aside type="note" title="顺手认识静态泛型的简写糖：impl Trait">
+在日常代码中，如果泛型参数 `<T: Summary>` 只用了一次，Rust 允许省去 `<T>`，直接在参数位置写 `fn notify(item: &impl Summary)`，或者在返回值位置写 `fn make_metric() -> impl Summary`（表示返回某个实现了 `Summary` 的具体类型，但对外隐藏 `Metric` 这个名字）。
+</Aside>
+
+那么，如果把返回类型写成 `-> impl Summary`，能不能在 `if` 分支返回 `Article`、在 `else` 分支返回 `Metric` 呢？
+
+<small class="code-source">推演用伪代码：尝试用 <code>-&gt; impl Summary</code> 在不同分支返回不同具体类型</small>
+```rust
+fn choose_item(is_article: bool) -> impl Summary {
+    if is_article {
+        Article { title: String::from("News") }
+    } else {
+        Metric { name: "cpu", value: 10 } // 依然报错 E0308！
+    }
+}
+```
+
+编译器照样当场拦截：
+
+<small class="code-source">编译器诊断摘要</small>
+```text
+error[E0308]: `if` and `else` have incompatible types
+  --> src/bin/static-boundaries.rs:45:9
+   |
+42 |     if is_article {
+   |     ------------- `if` and `else` have incompatible types
+43 |         Article { title: String::from("News") }
+   |         --------------------------------------- expected because of this
+44 |     } else {
+45 |         Metric { name: "cpu", value: 10 }
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Article`, found `Metric`
+```
+
+为什么连 `-> impl Summary` 都救不了场？
+因为 `impl Trait` 依然是 **100% 的编译期静态单态化**！
+参数 `is_article` 是 `true` 还是 `false`，要等到**程序运行起来之后**才能知道；但编译器在编译 `choose_item` 时，必须在**编译期**就确定返回值背后到底是哪**唯一一个**具体类型，才能在调用方的栈帧上预留固定字节数的槽位，并在后续调用 `.summarize()` 时直接写死那个类型的机器码地址。一旦两个分支返回不同结构体，编译期静态确定就彻底走不通了。
+
+你可以展开或运行下面这份实验源码，核对上述两道静态边界报错：
+
+<small class="code-source">源文件：<code>examples/types/traits/src/bin/static-boundaries.rs</code></small>
+<Code code={staticBoundaries} lang="rust" collapse={16} />
+
+---
+
+## 建立全局大局观：Rust 的「编译期静态 ↔ 运行时动态」显式开关
+
+站在上面两处 `E0308` 报错前，我们终于可以跳出单个语法细节，看清整门 Rust 语言最宏大的设计主轴了。
+
+**为什么在前七章里，我们几乎没有遇到过需要运行时查表或运行时计数的机制？**
+因为前七章构筑的，是 Rust 的默认起点——**编译期静态世界（Static World）**：
+- 当一个值的大小、数组的长度、变量的所有者、或者泛型函数的具体类型 `T` **在编译代码的那一刻就能百分之百确定**时，编译器就会把所有检查和分派工作全部在**编译期结清**，让你在运行时享受**零额外内存元数据、零运行时查表跳转**的性能。
+
+然而，现实世界的软件需求不可能永远在编译期写死：
+- 有时，一段连续元素的长度要到运行时切片才能确定；
+- 有时，函数返回的到底是哪个具体类型、或者数组里装的到底是哪几种具体类型，要到运行时才能确定；
+- 有时（我们将在第五篇看到），一块堆内存到底被几个结构共享、谁最后释放，也要到运行时才能确定。
+
+在 Java、Python 或 Go 等语言中，设计者为了省去你的思考，**默认把几乎所有东西都做成了运行时动态的**（所有对象默认上堆、带着对象头、方法默认动态查表、内存默认靠 GC 运行时扫描）——哪怕你的代码 90% 的场景根本不需要动态性，你也必须为那套运行时机制承担代价。
+
+而 Rust 的全局设计恰恰相反：**以编译期静态为默认起点；当且仅当编译期信息确实不够用、必须推迟到运行时决定时，为你提供成对的「动态版类型构造器」作为显式开关，把编译期抹去的信息诚实地补进运行时数据里！**
+
+请看这张贯穿全书的**「静态 vs 动态」全局对照图**：
+
+| 需求维度 | 编译期静态版（默认起点，运行时零额外开销） | 运行时动态版（按需开启开关，将缺失信息补入运行时） | 所在章节 |
+| --- | --- | --- | --- |
+| **1. 连续序列的长度** | **定长数组引用 `&[T; N]`**<br/>长度 `N` 写在编译期类型里，栈上仅需 **8 字节瘦指针** | **动态切片引用 `&[T]` / `&str`**<br/>编译期抹去长度 `N`，把长度补进运行时第 2 个机器字，变成 **16 字节胖指针 `(ptr, len)`** | **第 4 章 4.3**（已学） |
+| **2. 跨类型的多态分发** | **泛型 `<T: Trait>` / `impl Trait`**<br/>具体类型在编译期单态化定死，引用 `&T` 仅需 **8 字节瘦指针**，函数直接跳转 | **动态 `&dyn Trait`**<br/>编译期抹去具体类型，把方法 `vtable` 补进运行时第 2 个机器字，变成 **16 字节胖指针 `(ptr, vtable)`** | **第 7 章 vs 本章 8.2**（即将拆解） |
+| **3. 值的大小与存放位置** | **栈帧内联值 `T`**<br/>编译期大小已知（`Sized`），随栈帧自动进出 | **堆分配智能指针 `Box<T>` / `Vec<T>`**<br/>栈上存固定大小指针，堆上承载动态大小或递归结构 | **第 4 章 & 第 10 章** |
+| **4. 所有者数量与借用检查** | **唯一所有者 `T` 与静态借用 `&T` / `&mut T`**<br/>编译期静态追踪移动与读写排他，运行时零计数 | **引用计数 `Rc<T>` / `Arc<T>` 与内部可变 `RefCell<T>` / `Mutex<T>`**<br/>将所有权计数或借用锁搬到运行时内存中动态维护 | **第五篇 第 12～13 章** |
+
+请特别对比表格中的**第 1 行**和**第 2 行**：
+还记得我们在[第 4 章 4.3 节：切片](/types/slices/)学过的 16 字节胖指针吗？
+- 当我们把定长数组 `&[i32; 4]`（8 字节瘦指针）编译期里的长度 `4` 擦掉，变成可以指向任意长度的动态切片 **`&[i32]`** 时，因为运行时不能丢失长度信息，指针自动膨胀成了 **16 字节胖指针 `(ptr, len)`**；
+- 完全同理：当我们为了突破本节遇到的两道静态边界，把具体类型引用 `&Article`（8 字节瘦指针）编译期里的具体类型 `Article` 擦掉，变成可以指向任意 `Summary` 实现者的动态对象 **`&dyn Summary`** 时，因为运行时不能丢失「如何调用 `summarize` 方法」的信息，指针也会自动膨胀成 **16 字节胖指针 `(ptr, vtable)`**。
+
+---
+
+## 小结与展望
+
+1. **静态单态化的两道边界**：当一个集合（如 `Vec`）需要同时存放多种不同具体类型，或当函数的不同运行时分支需要返回不同具体类型时，编译期静态单态化（包括其简写糖 `impl Trait`）因无法在编译期确定唯一的具体类型布局与跳转地址而报 `E0308`。
+2. **静态与动态的全局开关**：Rust 默认将类型信息留在编译期（静态）；当信息必须推迟到运行时确定时，则通过显式的动态构造器（如从 `&[T; N]` 切换到 `&[T]`，从 `&T` 切换到 `&dyn Trait`），将编译期抹去的元信息补进运行时的胖指针中。
+
+下一节，我们就正式按下多态维度的动态开关——亲手拆解 **`&dyn Trait`**，看看那个多出来的 8 字节 `vtable` 指针在物理内存里到底长什么样，以及它是如何一举攻克本节留下的两道边界的。
+
+[继续：`dyn Trait` 与 16 字节胖指针 →](/abstraction/dyn-trait-and-vtable/)
+
+### 动手核对与小练习
+
+1. **判断静态与动态**：阅读下面两个函数签名，如果在代码里用 `Article` 和 `Metric` 分别调用它们，请问它们在编译后会各自生成几份机器码？
+   ```rust
+   fn log_one(item: &impl Summary) {
+       println!("{}", item.summarize());
+   }
+
+   fn log_pair<T: Summary>(a: &T, b: &T) {
+       println!("{} | {}", a.summarize(), b.summarize());
+   }
+   ```
+   追问：如果调用 `log_pair(&article, &metric)`（第一个参数传 `&Article`，第二个参数传 `&Metric`），能否通过编译？为什么？如果要允许两个参数传入不同的 `Summary` 具体类型，应该怎么改签名？
+2. **全局大局观映射**：请用本节建立的「信息存放在编译期类型里 vs 存放在运行时胖指针里」原则，解释为什么 `&[i32; 100]` 在栈上只占 8 字节，而 `&[i32]` 在栈上占 16 字节？
+
+<details>
+<summary>点击核对参考答案</summary>
+
+1. **`impl Trait` 与 `<T: Summary>` 的行为核对**：
+   - `log_one` 和 `log_pair` **全都是编译期静态单态化**（用两种具体类型调用就会生成两份机器码）。
+   - 但调用 **`log_pair(&article, &metric)` 会编译失败（报 `error[E0308]`）**：因为 `log_pair<T: Summary>(a: &T, b: &T)` 用同一个泛型参数 `T` 绑定了 `a` 和 `b`，要求两个实参必须是**同一种具体类型**（要么全是 `Article`，要么全是 `Metric`）。
+   - 如果要允许 `a` 和 `b` 是不同的具体类型，可以声明两个独立的泛型参数 `fn log_pair<T: Summary, U: Summary>(a: &T, b: &U)`，或者写成 `fn log_pair(a: &impl Summary, b: &impl Summary)`（每个 `&impl Summary` 对应一个独立的匿名泛型参数）。
+2. **全局大局观映射**：
+   - 在 `&[i32; 100]` 中，数组长度 `100` 在编译期已知，直接记录在编译期类型实体里，运行时无需存长度，因此栈上只需 **8 字节**存放数据起始地址；
+   - 在 `&[i32]` 中，编译期擦除了具体长度，同一个 `&[i32]` 类型在运行时可能指向长度为 3 或长度为 100 的任意片段，因此必须把缺失的长度信息 `len` 补进运行时的第 2 个机器字中，形成 **16 字节胖指针 `(ptr, len)`**。
+
+</details>

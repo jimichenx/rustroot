@@ -1,0 +1,434 @@
+/*
+ * Rust Root 自定义样式
+ * 只覆盖 Starlight 的 CSS 变量与少量排版细节，避免与主题升级冲突。
+ * 变量参考：https://starlight.astro.build/guides/css-and-tailwind/
+ */
+
+/* ---------- 品牌色：以 Rust 的锈橙为主色 ---------- */
+:root {
+	--sl-color-accent-low: #3d1b0a;
+	--sl-color-accent: #c2410c;
+	--sl-color-accent-high: #fbd1b7;
+
+	--sl-color-white: #ffffff;
+	--sl-color-gray-1: #eceef2;
+	--sl-color-gray-2: #c0c2c7;
+	--sl-color-gray-3: #888b96;
+	--sl-color-gray-4: #545861;
+	--sl-color-gray-5: #353841;
+	--sl-color-gray-6: #24272f;
+	--sl-color-black: #17181c;
+}
+
+:root[data-theme='light'] {
+	--sl-color-accent-low: #fde8d8;
+	--sl-color-accent: #b7410e;
+	--sl-color-accent-high: #4a1c07;
+
+	--sl-color-white: #17181c;
+	--sl-color-gray-1: #24272f;
+	--sl-color-gray-2: #353841;
+	--sl-color-gray-3: #545861;
+	--sl-color-gray-4: #888b96;
+	--sl-color-gray-5: #c0c2c7;
+	--sl-color-gray-6: #eceef2;
+	--sl-color-gray-7: #f5f6f8;
+	--sl-color-black: #ffffff;
+}
+
+/*
+ * 三栏宽度。Starlight 默认左栏 18.75rem、正文 45rem，右栏大纲的下限也是左栏宽度；
+ * 视口 ≥ 72rem 时，还会把「去掉正文后剩下的宽度」分一半给大纲。
+ * 英文侧栏标签比中文长，左栏加宽；大纲改成固定窄列，空出来的给正文。
+ * 大纲的宽度公式写在主题结构类上，只改变量盖不住，所以下面直接改那两列的宽度。
+ */
+:root {
+	--sl-content-width: 58rem;
+	--rr-toc-width: 16rem;
+}
+
+@media (min-width: 72rem) {
+	:root {
+		/*
+		 * 三栏出现后左栏只比默认 18.75rem 略宽，且不随窗口变宽。
+		 * 再宽，中文短标题旁边会空出一大块。英文长标题允许换行。
+		 * 大纲 17rem，长标题大致两行。
+		 */
+		--sl-sidebar-width: 21rem;
+		--rr-toc-width: 17rem;
+	}
+
+	.right-sidebar-container {
+		flex: 0 0 var(--rr-toc-width);
+		width: var(--rr-toc-width);
+	}
+
+	[data-has-sidebar][data-has-toc] .main-pane {
+		width: calc(100% - var(--rr-toc-width));
+		min-width: 0;
+		/* 主题默认把正文贴在大纲一侧（auto 0），空白全留在左边。改为两侧均分。 */
+		--sl-content-margin-inline: auto;
+	}
+
+	/*
+	 * 大纲内文原来跟着左栏宽度走。右栏本体是 position: fixed; width: 100%，
+	 * 不给内文一个明确宽度，文字会铺出视口右边被裁掉。
+	 */
+	.right-sidebar-panel .sl-container {
+		width: calc(var(--rr-toc-width) - 2 * var(--sl-sidebar-pad-x));
+		max-width: none;
+	}
+}
+
+/* 长英文标题换成两行时，两行长短靠近，避免最后单独落一个词。 */
+.sidebar-content :is(a, .group-label),
+.right-sidebar-panel a {
+	text-wrap: balance;
+}
+
+/* 右侧大纲默认行距很紧，标题和它下面的子项会粘成一块。只加大桌面大纲。 */
+.right-sidebar-panel ul {
+	display: flex;
+	flex-direction: column;
+	gap: 0.85rem;
+}
+.right-sidebar-panel li > ul {
+	margin-top: 0.55rem;
+}
+.right-sidebar-panel a {
+	padding-block: 0.1rem;
+	line-height: 1.55;
+}
+
+/* ---------- 字体：中英文各自友好的系统字体栈 ---------- */
+:root {
+	--sl-font:
+		-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, 'PingFang SC',
+		'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Source Han Sans SC', sans-serif;
+	--sl-font-mono:
+		'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+/*
+ * 旁注。Starlight 的 note 是色相 234 的靛蓝，tip 是紫色；
+ * 挨着锈橙主色，标题和左边条都会看成第二套强调色。
+ * 课里这两种都是可跳过的补充，改成灰阶卡片：底比正文抬一档，
+ * 标题用正文强文字色，链接仍走锈橙，和正文链接一致。
+ * caution 保持原色，留给真正要停一下的状态。
+ */
+.starlight-aside--note,
+.starlight-aside--tip {
+	--sl-color-asides-text-accent: var(--sl-color-gray-1);
+	--sl-color-asides-border: var(--sl-color-gray-4);
+	background-color: var(--sl-color-gray-6);
+}
+
+.starlight-aside--note .starlight-aside__content a,
+.starlight-aside--tip .starlight-aside__content a {
+	color: var(--sl-color-text-accent);
+}
+
+.starlight-aside--note .starlight-aside__content a:hover,
+.starlight-aside--tip .starlight-aside__content a:hover {
+	color: var(--sl-color-white);
+}
+
+/* ---------- 中文正文排版微调 ---------- */
+html[lang='zh-CN'] .sl-markdown-content {
+	line-height: 1.75;
+	letter-spacing: 0.01em;
+}
+
+html[lang='zh-CN'] .sl-markdown-content :is(h1, h2, h3, h4) {
+	letter-spacing: 0.02em;
+}
+
+/* 中文段落之间留稍多的呼吸空间 */
+html[lang='zh-CN'] .sl-markdown-content :not(li, .sl-steps) > p {
+	margin-block: 1.25em;
+}
+
+/* Show source paths without competing with the lesson text. */
+.sl-markdown-content .code-source {
+        display: block;
+        margin-block: 1rem 0.35rem;
+        color: var(--sl-color-gray-2);
+        font-size: 0.8rem;
+        line-height: 1.5;
+        overflow-wrap: anywhere;
+}
+
+.sl-markdown-content .code-source code {
+        font-size: inherit;
+}
+
+.sl-markdown-content .code-source + .expressive-code {
+        margin-top: 0;
+}
+
+/* 定场诗：浅底一块，和正文分开。每句一行，左齐；排不下的转行再缩进。 */
+.sl-markdown-content .epigraph {
+	margin-block: 0.35rem 1.75rem;
+	padding: 1rem 1.2rem 1.1rem;
+	border-radius: 12px;
+	background: var(--sl-color-gray-6);
+	text-align: start;
+	line-height: 1.9;
+	color: var(--sl-color-gray-1);
+}
+:root[data-theme='dark'] .sl-markdown-content .epigraph {
+	background: var(--sl-color-gray-5);
+}
+html[lang='zh-CN'] .sl-markdown-content .epigraph p {
+	margin-block: 0;
+	padding-inline-start: 2em;
+	text-indent: -2em;
+}
+html[lang='zh-CN'] .sl-markdown-content .epigraph p + p {
+	margin-top: 0.45em;
+}
+
+/* ---------- 课程正文表格：与配图同一套锈橙色板 ---------- */
+/* 外层限宽。表格至少 42rem，窄屏横向滑动，不再把列挤成一字一行。 */
+.sl-markdown-content .table-scroll {
+	max-width: 100%;
+	margin-block: 1.5rem 2rem;
+	overflow-x: auto;
+	border: 1px solid var(--sl-color-gray-5);
+	border-radius: 12px;
+}
+
+.sl-markdown-content .table-scroll > table {
+	display: table;
+	width: 100%;
+	min-width: 42rem;
+	margin-block: 0;
+	border: none;
+	border-collapse: separate;
+	border-spacing: 0;
+	border-radius: 0;
+	overflow: visible;
+}
+
+.sl-markdown-content .table-scroll :is(th, td) {
+	padding: 0.65rem 0.9rem;
+	border-bottom: 1px solid var(--sl-color-gray-5);
+	text-align: left;
+	vertical-align: top;
+}
+
+/* 行标签列至少放下「它替你选了什么」这一档短标签，滑动时钉在左侧。 */
+.sl-markdown-content .table-scroll :is(th:first-child, td:first-child) {
+	position: sticky;
+	inset-inline-start: 0;
+	z-index: 1;
+	min-width: 13em;
+	padding-inline-start: 0.9rem;
+}
+
+.sl-markdown-content .table-scroll thead th:first-child {
+	z-index: 2;
+}
+
+.sl-markdown-content .table-scroll :is(th:last-child, td:last-child) {
+	padding-inline-end: 0.9rem;
+}
+
+/* 表头行：锈橙淡底，和配图节点同色 */
+.sl-markdown-content thead th {
+	background: var(--sl-color-accent-low);
+	color: var(--sl-color-white);
+	font-weight: 600;
+	border-bottom: 1px solid var(--sl-color-accent);
+}
+
+/* 行首标签列：弱底衬出来，便于横向扫读 */
+.sl-markdown-content tbody tr > :first-child {
+	background: var(--sl-color-gray-6);
+	color: var(--sl-color-gray-1);
+	font-weight: 600;
+}
+
+/* 最后一行不再加下边框，交给外框收尾 */
+.sl-markdown-content tbody tr:last-child > * {
+	border-bottom: none;
+}
+
+/* Scope the landing layout to the homepages, not other splash pages. */
+.content-panel:has(.rr-home-title) > .sl-container,
+.content-panel:has(.rr-home) > .sl-container {
+        max-width: 62rem;
+        margin-inline: auto;
+}
+
+.hero:has(.rr-home-title) {
+        grid-template-columns: 100%;
+        padding-block: clamp(1.5rem, 5vw, 3.5rem) 2.75rem;
+}
+
+.hero:has(.rr-home-title) .stack {
+        text-align: start;
+        gap: 1.5rem;
+}
+
+.hero:has(.rr-home-title) .copy {
+        align-items: flex-start;
+        gap: 1.25rem;
+}
+
+.hero:has(.rr-home-title) h1 {
+        max-width: none;
+        font-size: clamp(1.75rem, 4.5vw, 3.25rem);
+        line-height: 1.3;
+        letter-spacing: 0.01em;
+}
+
+.hero:has(.rr-home-title) .tagline {
+        max-width: 43rem;
+        font-size: 1.0625rem;
+        line-height: 1.8;
+}
+
+.hero:has(.rr-home-title) .tagline p {
+        margin: 0;
+}
+
+.hero:has(.rr-home-title) .tagline .rr-home-slogan {
+        margin-bottom: 1rem;
+        color: var(--sl-color-white);
+        font-size: clamp(1.25rem, 2.5vw, 1.65rem);
+        font-weight: 600;
+        line-height: 1.5;
+}
+
+.hero:has(.rr-home-title) .tagline .rr-home-prerequisite {
+        margin-top: 1rem;
+        font-size: 0.875rem;
+        color: var(--sl-color-gray-2);
+}
+
+.hero:has(.rr-home-title) .actions {
+        justify-content: flex-start;
+        gap: 0.75rem 1.5rem;
+}
+
+.sl-markdown-content .rr-home h2 {
+        margin: 0 0 1rem;
+        font-size: clamp(1.35rem, 3vw, 1.8rem);
+        line-height: 1.5;
+        text-wrap: pretty;
+}
+
+.sl-markdown-content .rr-home h3 {
+        margin: 0 0 0.6rem;
+        font-size: 1.1rem;
+        line-height: 1.5;
+}
+
+.sl-markdown-content .rr-home p {
+        max-width: 43rem;
+        margin-block: 0 1rem;
+}
+
+.sl-markdown-content .rr-home .rr-home-eyebrow {
+        margin-bottom: 0.75rem;
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--sl-color-accent);
+}
+
+:root[data-theme='dark'] .rr-home .rr-home-eyebrow {
+        color: var(--sl-color-accent-high);
+}
+
+.rr-home-text-link {
+        font-size: 0.9375rem;
+        text-underline-offset: 0.2em;
+}
+
+.rr-home-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem 1.5rem;
+}
+
+.rr-home-section {
+        margin-top: 3rem;
+}
+
+.rr-home-section:first-child {
+        margin-top: 0;
+}
+
+.rr-home-route {
+        display: grid;
+        gap: 1rem;
+        margin-block: 1.5rem;
+}
+
+.sl-markdown-content .rr-home-part {
+        margin: 0;
+        padding: 1.5rem;
+        border: 1px solid var(--sl-color-gray-5);
+        border-radius: 0.75rem;
+}
+
+.rr-home-part-meta {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 0.75rem;
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--sl-color-accent-high);
+}
+
+.rr-home-part-meta span:last-child {
+        color: var(--sl-color-gray-2);
+}
+
+.rr-home-part-planned {
+        background: var(--sl-color-gray-7, var(--sl-color-gray-6));
+}
+
+.sl-markdown-content .rr-home-chapters {
+        display: grid;
+        gap: 0.75rem;
+        margin: 1.25rem 0 0;
+        padding: 1rem 0 0;
+        border-top: 1px solid var(--sl-color-gray-5);
+        list-style: none;
+}
+
+.sl-markdown-content .rr-home-chapters li {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 0.25rem 1rem;
+        margin: 0;
+        font-size: 0.875rem;
+}
+
+.rr-home-chapters a {
+        text-underline-offset: 0.2em;
+}
+
+.rr-home-chapters span {
+        color: var(--sl-color-gray-2);
+}
+
+.rr-home-reading,
+.rr-home-about {
+        max-width: 43rem;
+}
+
+.rr-home-about {
+        padding-top: 2rem;
+        border-top: 1px solid var(--sl-color-gray-5);
+}
+
+@media (min-width: 48rem) {
+        .rr-home-route {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+}

@@ -1,0 +1,113 @@
+---
+import { loadCourse } from '../config/course-slugs';
+import { compareLessons } from '../config/course-numbers';
+
+interface Props {
+        locale?: 'zh' | 'en';
+}
+
+const { locale = 'zh' } = Astro.props;
+const course = loadCourse(locale === 'en' ? 'en' : 'zh-cn');
+const chineseParts = [
+        {
+                title: '内存与所有权',
+                description: '从栈与堆出发，理解所有权、借用和变量赋值。',
+                slug: 'memory',
+        },
+        {
+                title: '类型与数据',
+                description: '理解类型的表示与约束，以及如何组合类型、组织数据。',
+                slug: 'types',
+        },
+        {
+                title: '抽象与组合',
+                description: '用泛型、Trait、迭代器和闭包表达共同行为。',
+        },
+        {
+                title: '共享与并发',
+                description: '理解共享所有权、内部可变性与跨线程安全。',
+        },
+        {
+                title: '系统边界',
+                description: '进一步讨论生命周期、unsafe 和异步机制。',
+        },
+];
+const englishParts = [
+        {
+                title: 'Memory and ownership',
+                description: 'Explore ownership, borrowing, and assignment, starting with the stack and the heap.',
+                slug: 'memory',
+        },
+        {
+                title: 'Types and data',
+                description: 'Understand type representation and constraints, and how types combine to organize data.',
+                slug: 'types',
+        },
+        {
+                title: 'Abstraction and composition',
+                description: 'Express shared behavior with generics, traits, iterators, and closures.',
+        },
+        {
+                title: 'Sharing and concurrency',
+                description: 'Understand shared ownership, interior mutability, and thread safety.',
+        },
+        {
+                title: 'System boundaries',
+                description: 'Explore advanced lifetimes, unsafe Rust, and asynchronous programming.',
+        },
+];
+const parts = (locale === 'en' ? englishParts : chineseParts).map((part, index) => {
+        const published = part.slug && course.parts.find(item => item.slug === part.slug && !item.draft);
+        const chapters = published
+                ? published.chapters
+                        .filter(chapter => !chapter.draft && chapter.slug && chapter.label)
+                        .map(chapter => {
+                                const lessons = chapter.lessons.filter(lesson => !lesson.draft).sort(compareLessons);
+                                // The chapter introduction is still a placeholder.
+                                const slug = locale === 'zh' && chapter.id === 'references-and-slices'
+                                        ? lessons[0]?.slug
+                                        : chapter.slug;
+                                return { ...chapter, lessons, link: slug ? `/${slug}/` : undefined };
+                        })
+                        .filter(chapter => chapter.lessons.length > 0 && chapter.link)
+                : [];
+        return { ...part, number: index + 1, chapters };
+});
+---
+
+<div class="rr-home-route">
+        {
+                parts.map(part => (
+                        <article class:list={['rr-home-part', { 'rr-home-part-planned': part.chapters.length === 0 }]}>
+                                <div class="rr-home-part-meta">
+                                        <span>{locale === 'zh' ? `第 ${part.number} 篇` : `Part ${part.number}`}</span>
+                                        <span>{
+                                                part.chapters.length > 0
+                                                        ? (locale === 'zh' ? '已有正文' : 'Available')
+                                                        : (locale === 'zh' ? '规划中' : part.slug ? 'Translation pending' : 'Planned')
+                                        }</span>
+                                </div>
+                                <h3>{part.title}</h3>
+                                <p>{part.description}</p>
+                                {part.chapters.length > 0 && (
+                                        <ul class="rr-home-chapters">
+                                                {part.chapters.map(chapter => (
+                                                        <li>
+                                                                <a href={chapter.link}>{
+                                                                        locale === 'zh'
+                                                                                ? `第 ${chapter.num} 章 · ${chapter.label}`
+                                                                                : `Chapter ${chapter.num} · ${chapter.label}`
+                                                                }</a>
+                                                                <span>{
+                                                                        locale === 'zh'
+                                                                                ? `${chapter.lessons.length} 节可读`
+                                                                                : `${chapter.lessons.length} ${chapter.lessons.length === 1 ? 'section' : 'sections'} available`
+                                                                }</span>
+                                                        </li>
+                                                ))}
+                                        </ul>
+                                )}
+                        </article>
+                ))
+        }
+</div>

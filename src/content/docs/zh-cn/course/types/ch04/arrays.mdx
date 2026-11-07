@@ -1,0 +1,169 @@
+---
+title: "数组：[T; N] 与编译期长度"
+description: 从数组的「连续定长内存」本质出发，对比运行时定长与编译期定长，拆解 [T; N] 的栈上布局、Copy/Move 规则与下标限制。
+sidebar:
+  label: 数组
+  order: 2
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import ArrayStackLayout from '../../../../../../components/course/ArrayStackLayout.astro';
+import ArrayIndexMove from '../../../../../../components/course/ArrayIndexMove.astro';
+import arrayBasics from '../../../../../../../examples/types/slices/src/bin/array-basics.rs?raw';
+import arrayCopyMove from '../../../../../../../examples/types/slices/src/bin/array-copy-move.rs?raw';
+import arrayFixedLen from '../../../../../../../examples/types/slices/src/bin/array-fixed-len.rs?raw';
+
+无论在哪门编程语言里，**数组（Array）**解决的都是同一个基础需求：**用一段固定长度、连续排布的内存，存放同一种类型的元素。** 而且一旦创建完成，它的长度就固定不变（不能像动态列表那样随意追加或缩减）。
+
+虽然「连续内存、一旦创建长度固定不变」这一点在各门语言里相同，但围绕**「这个长度能不能在运行时才决定」**，Rust 的数组与大多数主流语言做出了不同的取舍：
+
+- **在 Java、C# 等语言中，数组的长度既可以在写代码时静态给定（如 `new int[4]`），也允许在运行时动态决定（如 `int n = readFromInput(); new int[n];`）**。为了统一支持运行时定长，这些语言把 `int[]` 设计成同一个类型（不把长度写进类型里），统一分配在**堆内存**上，并在堆头部额外存下这个 `length`；
+- **而在 Rust 中，数组 `[T; N]` 的长度 `N` 必须在编译期就确定，不允许用运行时的变量当长度。** 因为编译期已经知道确切大小，Rust 的数组不需要去堆上动态申请，直接连续平铺在当前位置（如栈帧）上，没有额外的头部开销。
+
+至于在 Rust 里遇到「长度在运行时确定、或需要动态增删」的场景该用什么类型，我们先把 `[T; N]` 的特性理清，随后在后面两节的切片 `[T]` 与动态数组 `Vec<T>` 中逐一解决。
+
+## 数组语法与栈上布局
+
+在 Rust 中创建一个数组有两种常见写法：
+1. **逐个列出元素**：如 `[10, 20, 30, 40]`；
+2. **重复初始化语法 `[初始值; 长度]`**：如 `[0; 4]`，表示连续铺开 4 个值为 `0` 的元素（注意中间是**分号 `;`**，与数组类型的写法 `[i32; 4]` 完全对应）。
+
+先运行下面这段代码，核对一下 `[i32; 4]` 在内存中到底占多少字节：
+
+<small class="code-source">源文件：<code>examples/types/slices/src/bin/array-basics.rs</code></small>
+<Code code={arrayBasics} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+first: 10, len: 4
+zeros: [0, 0, 0, 0]
+size of [i32; 4]: 16 bytes
+```
+
+### 长度 `N` 存在哪里？
+
+仔细看最后一行输出：每个 `i32` 占 4 字节，4 个 `i32` 加起来正好是 `4 × 4 = 16` 字节。
+
+这里可以对照 `3.1` 的信息转移视角：
+- 在 **Java** 中，`new int[4]` 分配在堆上，除了 16 字节的整数数据外，还要带着 **12 字节的对象头 + 4 字节的 `length` 字段**（对齐后共占 24 至 32 字节），因为运行时的 `a.length` 要从堆内存里读取；
+- 而在 **Rust** 中，`[i32; 4]` 只有 **16 字节**，直接在栈帧上连续排开 4 个 `i32` 槽位——**没有堆分配，没有指针，长度 `4` 也不占任何运行时内存。**
+
+既然运行时内存里根本没存长度 `4`，上面代码里的 `a.len()` 是怎么算出 `4` 的？当下标越界时，Rust 又是拿什么数字去检查边界的？
+
+答案就在类型构造器 **`[T; N]`** 里：因为长度 `N` 是作为**编译期常量参数**填进构造器的，数字 `4` 早就已经记录在 **`[i32; 4]` 这个类型实体**中了。你调用 `a.len()` 时，编译器直接从类型实体里取出常数 `4` 填进机器码，运行时连一次内存读取都不需要。
+
+<ArrayStackLayout />
+
+更重要的是，在构造器 `[-; -]` 眼里，填入 `(i32, 2)` 生成的 **`[i32; 2]`**，与填入 `(i32, 4)` 生成的 **`[i32; 4]`**，是**两个完全平行、彼此没有任何相关性或从属关系的独立类型实体**——它们在编译器眼里的陌生程度，跟 `i32` 和 `String` 没什么两样。
+
+## 数组的复制、移动与下标限制
+
+在 `3.2` 中我们提过，类型构造器合成出新类型实体时，会根据规则决定新类型实体的能力。对于数组构造器 `[T; N]`，它的规则非常直接：**元素的能力决定了数组的能力**。
+
+- **如果元素类型 `T` 实现了 `Copy`**（比如 `i32`）：那么合成出的 `[i32; 4]` 也自动实现 `Copy`。执行 `let b = a;` 时，直接按位把栈上的 16 字节完整复制一份，`a` 和 `b` 都能继续使用；
+- **如果元素类型 `T` 没有实现 `Copy`**（比如背着释放责任的 `String`）：那么合成出的 `[String; 2]` 也没有 `Copy`。执行 `let moved_names = names;` 时，整个数组走移动语义，原数组 `names` 当场失效。
+
+但这里有一个几乎所有初学者都会撞上的编译报错——**如果我们不移动整个 `[String; 2]` 数组，只想用下标 `let first = names[0];` 取出里面第 0 个 `String`，行不行？**
+
+看下面这段代码：
+
+<small class="code-source">源文件：<code>examples/types/slices/src/bin/array-copy-move.rs</code></small>
+<Code code={arrayCopyMove} lang="rust" />
+
+只要你取消 `// let first = names[0];` 的注释，编译器立刻以 `error[E0508]` 拒绝编译：
+
+<small class="code-source">编译器诊断摘要：取消 array-copy-move.rs 中 let first = names[0]; 的注释后</small>
+```text
+error[E0508]: cannot move out of type `[String; 2]`, a non-copy array
+ --> src/bin/array-copy-move.rs:8:17
+  |
+8 |     let first = names[0];
+  |                 ^^^^^^^^
+  |                 |
+  |                 cannot move out of here
+  |                 move occurs because `names[_]` has type `String`, which does not implement the `Copy` trait
+  |                 help: consider borrowing here: `&names[0]`
+```
+
+### 为什么不能用 `names[0]` 移走单个元素？
+
+为什么把整个数组移走（`let moved_names = names;`）可以，只移走其中一个元素 `names[0]` 反而被编译器拦住？
+
+顺着第 1 章的「唯一释放责任」推演一步就能明白：
+1. 在上一节我们讲过，数组下标 `names[0]` 是一个**位置表达式**，指代数组中第 0 个槽位；
+2. 对 `String` 而言，直接写 `let first = names[0];` 意味着要把第 0 个槽位里的 `String` **移走（Move）**交给 `first`，原地留下一个已经失效的空位，而 `names[1]` 却还活着；
+3. 虽然这里写的下标是字面量 `0`，但在真实代码里，数组下标往往是一个**运行时才算出来的变量 `names[i]`**。当数组 `names` 离开作用域自动清理时，只看类型实体的编译器，根本不可能在编译期猜出「运行时到底是第几个格子被移空了、哪几个格子还需要释放」！
+
+因此，Rust 规定：**对于非 `Copy` 元素的数组，禁止直接通过下标 `arr[i]` 把单个元素移走。** 正如编译器在报错末尾提示的那样（`help: consider borrowing here: &names[0]`），如果你只需要使用数组里的某个 `String`，应该加上 `&` 借用它：`let first_ref = &names[0];`。
+
+<ArrayIndexMove />
+
+## 定长类型的局限
+
+把长度 `N` 放进类型实体 `[T; N]`，省去了运行时的头部开销，但也带来了一个明显的工程限制。
+
+刚才我们已经点明：`[i32; 4]` 和 `[i32; 3]` 是两个完全平行、互不相通的独立类型实体。
+
+假设我们现在想写一个最基础的数组求和函数 `sum`，哪怕我们已经学会了用共享引用 `&` 传参来避免复制整块数组，写出来的函数签名也会遇到麻烦：
+
+<small class="code-source">源文件：<code>examples/types/slices/src/bin/array-fixed-len.rs</code></small>
+<Code code={arrayFixedLen} lang="rust" />
+
+取消 `// println!("sum3: {}", sum4(&a3));` 的注释，编译器当场报类型不匹配：
+
+<small class="code-source">编译器诊断摘要：取消 array-fixed-len.rs 中标记行的注释后</small>
+```text
+error[E0308]: mismatched types
+  --> src/bin/array-fixed-len.rs:11:30
+   |
+11 |     println!("sum3: {}", sum4(&a3));
+   |                          ---- ^^^ expected an array with a fixed size of 4 elements, found one with 3 elements
+```
+
+原因很直接：
+- 函数参数写的是 `&[i32; 4]`，它就**只能**接收指向 `[i32; 4]` 这一个类型实体的引用；
+- 当你手里有一个平行的 `[i32; 3]`、一个 `[i32; 100]`，或者只想把 `a4` 的**前两个元素**传给函数求和时，`sum4` 全都拒之门外！
+
+难道在 Rust 里，每换一种数组长度，我们都要重新抄一遍求和函数吗？
+
+### 如果把 `; N` 擦掉呢？
+
+假设现在由我们来设计这门语言。
+
+既然限制来自 `[i32; 4]` 后面那个写死在类型里的 `; 4`，那从字面上看，最直接的想法就是：**把 `; N` 擦掉，设计一个不带长度参数的新类型构造器——`[T]`。**
+
+先不管底层怎么实现，单从 `sum` 函数的角度看，如果存在 `[i32]` 这样一个代表「任意长度连续 `i32` 序列」的类型，我们首先会想到把函数签名写成这样：
+
+```rust
+// 先试着猜想：把 ; 4 擦掉，直接接收 [i32] 行不行？
+fn sum(arr: [i32]) -> i32
+```
+
+这个写法直接放进编译器会报错，但方向是对的——Rust 确实有 `[T]` 这个类型。顺着这个猜想往下推，会遇到三个必须解决的底层问题：
+1. 擦掉 `; N` 之后的 **`[i32]`** 到底是什么？
+2. 把 `[i32]` 直接当成函数参数或局部变量的类型（`arr: [i32]`），在栈内存上可行吗？
+3. 原本住在类型实体里的长度 `N` 被擦掉之后，为了在运行时知道序列有多长、防止越界，那个「长度」信息又必须放到哪里去？
+
+下一节我们就来回答这三个问题。
+
+## 小结
+
+先把数组构造器 `[T; N]` 的核心特性收束成三点：
+
+1. **编译期定长，栈上连续布局**：`[T; N]` 的长度 `N` 在编译期确定并保存在类型实体中；运行时内存里就是连续排开的 `N` 个 `T`（大小固定为 `N × size_of::<T>()`），没有任何额外头部开销；
+2. **不同长度即平行无关的类型实体**：`[i32; 2]`、`[i32; 3]` 与 `[i32; 4]` 是彼此独立、互不兼容的类型实体；
+3. **随元素决定 `Copy` / `Move`**：`T` 实现 `Copy` 则 `[T; N]` 也实现 `Copy`；若 `T` 未实现 `Copy`，则禁止通过下标 `arr[i]` 单独移出某个元素（报 `E0508`），通常应使用 `&arr[i]` 借用。
+
+### 动手核对
+
+在 `array-copy-move.rs` 中，为什么开头写 `let x = a[0];`（从 `[i32; 4]` 中取第 0 个元素）完全合法，而后面写 `let first = names[0];`（从 `[String; 2]` 中取第 0 个元素）却会报 `E0508`？
+
+核对答案：因为 `a` 的元素类型是 `i32`，实现了 `Copy`。执行 `let x = a[0];` 时只是按位复制了第 0 个槽位的 4 字节整数，原槽位里的 `a[0]` 依然完好有效，数组里不会留下任何失效空位；而 `String` 没有实现 `Copy`，`let first = names[0];` 会试图把第 0 个槽位的所有权移走，在数组内部留下编译器无法静态追踪的空位。
+
+---
+
+带着刚才对 `fn sum(arr: [i32])` 的猜想与那三个追问，下一节我们亲手把**切片（`[T]` 与 `&[T]`）**和 **16 字节胖指针**推导出来。
+
+[继续：切片与胖指针 →](/types/slices/)

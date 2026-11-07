@@ -1,0 +1,130 @@
+---
+/**
+ * 3.3「两个 mut 各管一个槽位」。
+ * let r: &mut i32 = &mut x 里，r 自己的栈槽位是 8 字节，放的是 x 的栈地址；
+ * *r 与 x 是同一处 4 字节。绑定上没有 mut 就不能改指向（E0384），
+ * 类型上的 &mut 才允许通过 *r 写入。
+ * 样式见 src/styles/diagrams.css。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			caption:
+				'r occupies eight bytes and holds the stack address of x; *r is the same place as x. No mut on the binding blocks reseating r; the type &mut i32 allows the write through *r.',
+			title: 'Each mut governs one slot',
+			desc: 'Two slots sit side by side in one stack frame. On the left, variable r is declared let r: &mut i32. It occupies eight bytes and stores the stack address of x. The binding has no mut, so r = &mut y is rejected with E0384. An arrow runs from r to variable x on the right: dereferencing *r may write because the type is &mut i32. x is declared let mut x: i32, occupies four bytes, and the stored value changes from 1 to 2. x is the same place as *r, so *r += 1 changes that value.',
+			stack: 'stack frame',
+			refName: 'r',
+			refLet: 'let r: &mut i32',
+			refBytes: '8 bytes',
+			refValue: 'address of x',
+			binding1: 'no mut on binding:',
+			binding2: 'cannot reassign r = &mut y (E0384)',
+			arrow: 'deref *r',
+			arrowSub: '(write allowed via &mut i32)',
+			place: 'x (same place as *r)',
+			targetLet: 'let mut x: i32',
+			targetBytes: '4 bytes',
+			targetValue: '1 → 2',
+			write1: '*r += 1 modifies',
+			write2: 'the value at this place',
+		}
+	: {
+			caption:
+				'r 占 8 字节，里面是 x 的栈地址；*r 与 x 是同一位置。绑定上没有 mut，就不能把 r 改指别处；类型 &mut i32 允许通过 *r 写入。',
+			title: '两个 mut 各管一个槽位',
+			desc: '栈帧里并排两个槽位。左边是变量 r，声明为 let r: &mut i32，占 8 字节，槽里是 x 的栈地址。绑定没有 mut，所以不能写 r = &mut y 改指别处，否则报 E0384。箭头从 r 指向右边的变量 x，表示解引用 *r；类型 &mut i32 允许这次写入。x 声明为 let mut x: i32，占 4 字节，值从 1 变成 2。x 与位置 *r 是同一处，*r += 1 改的就是这里的值。',
+			stack: '栈帧',
+			refName: 'r',
+			refLet: 'let r: &mut i32',
+			refBytes: '8 字节',
+			refValue: 'x 的栈地址',
+			binding1: '绑定无 mut：',
+			binding2: '禁止 r = &mut y 重改指向（E0384）',
+			arrow: '解引用 *r',
+			arrowSub: '（经由 &mut i32 允许写入）',
+			place: 'x（即位置 *r）',
+			targetLet: 'let mut x: i32',
+			targetBytes: '4 字节',
+			targetValue: '1 → 2',
+			write1: '*r += 1 直接修改此位置的值',
+			write2: '',
+		};
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 270" role="img" aria-labelledby="tm-title tm-desc">
+		<title id="tm-title">{t.title}</title>
+		<desc id="tm-desc">{t.desc}</desc>
+
+		<rect class="panel" x="16" y="16" width="608" height="238" rx="12"></rect>
+		<text class="label" x="36" y="40">
+			{t.stack}
+		</text>
+
+		<text class="name" x="36" y="66">
+			{t.refName}
+		</text>
+		<text class="name" x="604" y="66" text-anchor="end">
+			{t.place}
+		</text>
+
+		<text class="code" x="36" y="88">
+			{t.refLet}
+		</text>
+		<text class="code" x="604" y="88" text-anchor="end">
+			{t.targetLet}
+		</text>
+
+		<text class="label" x="124" y="112" text-anchor="middle">
+			{t.refBytes}
+		</text>
+		<text class="label" x="548" y="112" text-anchor="middle">
+			{t.targetBytes}
+		</text>
+
+		<rect class="slot" x="36" y="126" width="176" height="72" rx="8"></rect>
+		<rect class="slot" x="492" y="126" width="112" height="72" rx="8"></rect>
+
+		<text class="name" x="124" y="168" text-anchor="middle">
+			{t.refValue}
+		</text>
+		<text class="name" x="548" y="168" text-anchor="middle">
+			{t.targetValue}
+		</text>
+
+		<path class="arrow" d="M212 162 H492" marker-end="url(#tm-head)"></path>
+		<text class="edge-label" x="352" y="146" text-anchor="middle">
+			{t.arrow}
+		</text>
+		<text class="edge-sub" x="352" y="186" text-anchor="middle">
+			{t.arrowSub}
+		</text>
+
+		<text class="label" x="36" y="222">
+			{t.binding1}
+		</text>
+		<text class="label" x="36" y="242">
+			{t.binding2}
+		</text>
+		<text class="label" x="604" y="222" text-anchor="end">
+			{t.write1}
+		</text>
+		{
+			t.write2 && (
+				<text class="label" x="604" y="242" text-anchor="end">
+					{t.write2}
+				</text>
+			)
+		}
+
+		<defs>
+			<marker id="tm-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>
