@@ -15,7 +15,6 @@ import dispatchAndCompatibility from '../../../../../../../examples/types/traits
 
 当我们分别用第 7 章的泛型 `<T: Summary>` 和上一节的 `&dyn Summary` 编写下面这两个仅相差几个字符的函数时：
 
-<small class="code-source">推演用伪代码：静态分发与动态分发的两个函数签名</small>
 ```rust
 // 方式一：泛型约束（静态分发 Static Dispatch）
 fn notify_static<T: Summary>(item: &T) -> String {
@@ -103,7 +102,6 @@ fn notify_dynamic(item: &dyn Summary) -> String {
 
 为什么不能写 `let x: &dyn Clone`？看看 `Clone` 的方法签名就明白了：
 
-<small class="code-source">推演用伪代码：按值返回 <code>Self</code> 的方法</small>
 ```rust
 trait MyClone {
     fn clone_self(&self) -> Self;
@@ -119,7 +117,6 @@ trait MyClone {
 
 如果在 Trait 的方法上又加了一个泛型参数 `<U>`，会发生什么？
 
-<small class="code-source">推演用伪代码：带有泛型参数 <code>&lt;U&gt;</code> 的方法</small>
 ```rust
 trait Logger {
     fn log_generic<U>(&self, payload: U);
@@ -135,7 +132,6 @@ trait Logger {
 
 如果一个 Trait 里定义了不带 `self` 接收者的关联函数：
 
-<small class="code-source">推演用伪代码：不带 <code>self</code> 接收者的关联函数</small>
 ```rust
 trait Configurable {
     fn default_Version() -> u32; // 没有 &self 参数！

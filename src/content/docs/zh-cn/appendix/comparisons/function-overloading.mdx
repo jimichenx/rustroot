@@ -32,7 +32,6 @@ import overloadingAlternatives from '../../../../../../examples/types/traits/src
 
 比如我们在[第 7 章 7.4 节](/abstraction/conversions-and-from/)学过的 `.into()` 或 `.parse()`：
 
-<small class="code-source">推演用伪代码：双向类型推断</small>
 ```rust
 fn process(id: u64) { ... }
 
@@ -43,7 +42,6 @@ process(42u16.into());
 
 现在设想一下：**如果 Rust 允许同名函数重载**，有人同时定义了三个 `process` 函数：
 
-<small class="code-source">推演用伪代码：假设允许同名函数重载</small>
 ```rust
 fn process(id: u32) { ... }
 fn process(id: u64) { ... }
@@ -73,7 +71,6 @@ process(42u16.into());
 
 在 Rust 中没有 `new` 关键字，构造实例全部使用普通的关联函数。**把不同构造方式的差异直接写进函数名里**，比同名重载清晰得多：
 
-<small class="code-source">推演用伪代码：用具名关联函数替代构造函数重载</small>
 ```rust
 impl ClientConfig {
     // 基础默认构造
@@ -92,7 +89,6 @@ impl ClientConfig {
 
 而在 Rust 中，这两个参数表达的是**同一个业务含义（目标主机名）**，只是调用方手头的载体类型不同。此时直接写**唯一一个**受 `AsRef<str>`（只读借用）或 `Into<Endpoint>`（接管所有权）约束的泛型函数即可：
 
-<small class="code-source">推演用伪代码：用 <code>AsRef&lt;str&gt;</code> 同时接纳 <code>&amp;str</code> 与 <code>String</code></small>
 ```rust
 fn ping<S: AsRef<str>>(target: S) {
     println!("pinging {}", target.as_ref());
@@ -109,7 +105,6 @@ ping(String::from("10.0.0.1"));
 
 在 Rust 中，当可选参数较多时，标准做法是**提取一个实现 `Default` 的配置结构体，并配合结构体更新语法 `..Default::default()`**：
 
-<small class="code-source">推演用伪代码：用结构体更新语法按需指定个别参数，其余自动取默认值</small>
 ```rust
 let cfg = ClientConfig {
     host: "api.internal",
@@ -126,7 +121,6 @@ let cfg = ClientConfig {
 
 在 Rust 中，直接将参数声明为我们第 4 章学过的**只读切片 `&[T]`** 即可——调用方只需在数组字面量前加一个 `&`，零堆内存分配就能传入任意数量的元素：
 
-<small class="code-source">推演用伪代码：用切片 <code>&amp;[u16]</code> 接收任意数量的端口</small>
 ```rust
 fn check_ports(ports: &[u16]) -> usize {
     ports.len()

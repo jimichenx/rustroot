@@ -9,7 +9,6 @@ sidebar:
 import { Aside } from '@astrojs/starlight/components';
 import ReferencePoints from '../../../../../../components/course/ReferencePoints.astro';
 
-
 上一节结束时，我们的最简模型立下了两条规则：栈变量离开作用域（`}`）时自动释放它指向的堆；带着堆资源的值在赋值 `=` 时走 Move 语义，旧变量当场失效。
 
 上一节末尾留了一个问题：靠这两条规则搭起来的模型，日常写程序时最普通的协作——把一个值传给函数用一下——还能不能自然写出来？
@@ -18,7 +17,6 @@ import ReferencePoints from '../../../../../../components/course/ReferencePoints
 
 写程序离不开函数调用。假设我们写一个最普通的函数 `print_it`，什么都不改，只把字符串 `s` 传进去打印一行：
 
-<small class="code-source">推演用伪代码</small>
 ```text
 fn print_it(msg) {
     print(msg)
@@ -40,7 +38,6 @@ fn print_it(msg) {
 
 如果硬要在不改模型的前提下，让外面的代码在调完 `print_it` 之后还能继续用这个字符串，唯一的写法是：**让函数在结尾把参数再 `return` 回来，外面的调用方重新用变量接住**：
 
-<small class="code-source">推演用伪代码</small>
 ```text
 fn print_it(msg) {
     print(msg)
@@ -111,9 +108,8 @@ fn print_it(msg) {
 
 所以，在我们的模型里，**只读引用天然就走 Copy 语义**——跟普通整数一模一样，无论赋给多少个变量、传给多少个函数，都只是复制那 8 字节地址，原来的变量和引用全都继续有效。
 
-现在用引用重写开场的伪代码，之前函数传参的困境就彻底解开了：
+现在用引用重写开场那段，之前函数传参的困境就彻底解开了：
 
-<small class="code-source">推演用伪代码</small>
 ```text
 fn print_it(msg: &String) {   // ← 接收的是引用，不接手释放责任
     print(msg)

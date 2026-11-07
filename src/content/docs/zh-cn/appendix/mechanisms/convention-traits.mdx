@@ -24,7 +24,6 @@ import conventionTraits from '../../../../../../examples/types/traits/src/bin/co
 
 当类型 `B` 可以**百分之百成功、无信息丢失**地从类型 `A` 构造出来时（例如从 `u16` 转为 `u32`、从 `&str` 转为 `String`、或从底层错误包装为顶层错误枚举），全生态约定使用 `std::convert::From`：
 
-<small class="code-source">推演用伪代码：为自定义端口类型实现 <code>From&lt;u16&gt;</code></small>
 ```rust
 struct Port(u16);
 
@@ -64,7 +63,6 @@ where
 **严禁在 `From::from` 的实现内部因为输入不合法而调用 `panic!` 或 `.unwrap()`！**
 一旦转换过程可能因输入数据不合法而失败，全生态约定必须改用返回 `Result` 的 **`std::convert::TryFrom<T>`**（其 내부包含一个关联类型 `type Error;`，用于指定失败时的错误类型）：
 
-<small class="code-source">推演用伪代码：用 <code>TryFrom&lt;u32&gt;</code> 校验端口号范围</small>
 ```rust
 impl TryFrom<u32> for Port {
     type Error = &'static str;
@@ -101,7 +99,6 @@ pub trait AsRef<T: ?Sized> {
 它的工程含义是：**「在不转移所有权、不发生高昂堆内存分配的前提下，从 `&self` 零成本借出一个 `&T` 视图」**。
 因为标准库已经为 `str` 和 `String` 都实现了 `AsRef<str>`（以及 `AsRef<Path>`、`AsRef<[u8]>`），当你在函数签名上写下 `<S: AsRef<str>>` 时，调用方无论直接传 `"localhost"` 还是传 `String::from("127.0.0.1")`（甚至连 `&` 都不用加），都能零分配地直接传入：
 
-<small class="code-source">推演用伪代码：使用 <code>AsRef&lt;str&gt;</code> 同时接纳 <code>&amp;str</code> 与 <code>String</code></small>
 ```rust
 fn print_endpoint<S: AsRef<str>>(host: S, port: Port) {
     let host_str: &str = host.as_ref();

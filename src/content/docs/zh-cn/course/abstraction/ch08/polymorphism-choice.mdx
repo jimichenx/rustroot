@@ -44,7 +44,6 @@ Rust 的做法不是砍掉面向对象的能力，而是**把这个三合一捆�
   纯纯粹粹管理栈/堆字节怎么摆，不掺杂任何虚表或继承关系。
 - **要复用字段与内部逻辑 → 用「结构体组合（Composition）」替代 `extends` 继承**：
   如果 `AdminUser` 和 `NormalUser` 都需要一套基础的账号信息（如 `id` 和 `email`），不要去找什么父类继承，直接定义一个 `struct AccountCore { id: u64, email: String }`，然后把它作为普通字段装进 `AdminUser` 里：
-  <small class="code-source">推演用伪代码：用结构体字段组合（Has-A）替代类继承（Is-A）</small>
   ```rust
   struct AccountCore {
       id: u64,
@@ -79,7 +78,6 @@ Rust 的做法不是砍掉面向对象的能力，而是**把这个三合一捆�
 
 这种**「变体种类已知且固定」**的场景，叫做**闭合集合（Closed Set）**，应毫不犹豫地选用 **`enum`**：
 
-<small class="code-source">推演用伪代码：闭合集合使用 <code>enum</code> + <code>match</code></small>
 ```rust
 enum PaymentMethod {
     Cash,
@@ -109,7 +107,6 @@ impl PaymentMethod {
 
 这种**「类型集合向外部敞开」**的场景，叫做**开放集合（Open Set）**。此时 `enum` 就无能为力了（因为外部调用方改不了你源码里的 `enum` 定义），必须选用 **`Trait`**：
 
-<small class="code-source">推演用伪代码：开放集合使用 <code>Trait</code></small>
 ```rust
 trait Notifier {
     fn send(&self, msg: &str) -> String;

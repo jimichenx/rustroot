@@ -13,6 +13,8 @@ Two years ago, I picked up Rust and began building new projects with it. Even wi
 
 ## Contact
 
+Lessons, examples, and the site source are in [github.com/jimichenx/rustroot](https://github.com/jimichenx/rustroot).
+
 For technical corrections, feedback, licensing, or publishing inquiries, reach me at [hello@rustroot.dev](mailto:hello@rustroot.dev). When reporting an issue in a section, include the page URL and the relevant paragraph.
 
 ## Attribution and license

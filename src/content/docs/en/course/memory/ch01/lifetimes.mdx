@@ -17,7 +17,6 @@ We ended with a nagging question: since a reference does not manage cleanup and 
 
 We don't even need a function call to trigger this flaw; a simple inner block `{}` is enough:
 
-<small class="code-source">Pseudocode for reasoning</small>
 ```text
 {
     r;   // declare r in the outer block to hold a reference

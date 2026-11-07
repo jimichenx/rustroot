@@ -3,14 +3,14 @@
  * 覆盖 Starlight 的 Footer。
  *
  * 在默认的编辑链接、更新时间、翻页之后，加上一块刊记。
- * 版权、作者、许可排成一行，条目之间用间隔号，窄屏按条目折行。
+ * 版权、作者、仓库、许可排成一行，条目之间用间隔号，窄屏按条目折行。
  * 许可链到协议全文，页脚只写简称。作者链到 /about/author/。
  * 两个备案号只在中文站，单独一行：ICP 链到工信部，公网安备链到公安备案查询。
  */
 import EditLink from 'virtual:starlight/components/EditLink';
 import LastUpdated from 'virtual:starlight/components/LastUpdated';
 import Pagination from 'virtual:starlight/components/Pagination';
-import { CURRENT } from '../../config/site';
+import { CURRENT, REPOSITORY } from '../../config/site';
 
 const isZh = CURRENT.code === 'zh';
 const licenseHref = isZh
@@ -39,6 +39,11 @@ const licenseHref = isZh
 						</>
 					)
 				}
+			</span>
+			<span>
+				<a href={REPOSITORY} target="_blank" rel="noopener noreferrer">
+					GitHub
+				</a>
 			</span>
 			<span>
 				{

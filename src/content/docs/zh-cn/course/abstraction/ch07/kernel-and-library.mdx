@@ -57,7 +57,6 @@ Rust 把这条原则发挥到了极致：
 
 当你在代码里写下 `a + b`、`a == b`、`b = a`（按位复制）或 `for x in v` 时，你写下的是语言级的运算符或控制流语法，但编译器在降级（Desugar）阶段会将它们直接翻译成对标准库特定 Trait 的调用：
 
-<small class="code-source">推演用伪代码：编译器将运算符语法降级为标准库 Trait 调用</small>
 ```rust
 let sum = a + b;
 // 编译器在底层自动降级为：
@@ -126,7 +125,6 @@ pub trait Copy: Clone {
 
 当你在编写操作系统内核、嵌入式单片机固件或区块链智能合约时，只需在源码顶部写下一行：
 
-<small class="code-source">推演用伪代码：在文件顶部声明脱离 <code>std</code> 编译</small>
 ```rust
 #![no_std]
 ```

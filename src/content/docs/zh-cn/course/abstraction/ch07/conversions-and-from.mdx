@@ -40,7 +40,6 @@ pub trait Into<U> {
 
 假设我们定义了一个网络端点结构体 `Endpoint`，并为它实现了从字符串切片 `&str` 转换而来的 `From<&str>`：
 
-<small class="code-source">推演用伪代码：为 <code>Endpoint</code> 实现 <code>From&lt;&amp;str&gt;</code></small>
 ```rust
 struct Endpoint {
     host: String,
@@ -56,7 +55,6 @@ impl From<&str> for Endpoint {
 
 写完这几行代码后，你不仅能写 `Endpoint::from("example.com")`，还可以直接在字符串字面量上倒过来写：
 
-<small class="code-source">推演用伪代码</small>
 ```rust
 let ep: Endpoint = "example.com".into();
 ```
@@ -101,7 +99,6 @@ where
 
 恰恰相反。有了刚刚学过的 `From` / `Into`，我们只需要为 `Endpoint` 补上从二元组 `(&str, u16)` 转换的 `From` 实现：
 
-<small class="code-source">推演用伪代码</small>
 ```rust
 impl From<(&str, u16)> for Endpoint {
     fn from((host, port): (&str, u16)) -> Self {
@@ -112,7 +109,6 @@ impl From<(&str, u16)> for Endpoint {
 
 然后，只写**唯一一个**带 `<T: Into<Endpoint>>` 约束的泛型函数 `connect`：
 
-<small class="code-source">推演用伪代码：用泛型 + <code>Into</code> 契约替代函数重载</small>
 ```rust
 fn connect<T: Into<Endpoint>>(target: T) {
     let ep: Endpoint = target.into();
@@ -122,7 +118,6 @@ fn connect<T: Into<Endpoint>>(target: T) {
 
 现在看调用点的效果：
 
-<small class="code-source">推演用伪代码</small>
 ```rust
 connect("example.com");                                        // T = &str
 connect(("127.0.0.1", 8080));                                  // T = (&str, u16)
@@ -161,7 +156,6 @@ connecting to localhost:3000
 
 因为我们在 6.4 节展示的 `?` 展开式，省略了最后半步。在编译器内部，当 `?` 遇到 `Err(e)` 分支时，展开的完整代码其实是：
 
-<small class="code-source">推演用伪代码：<code>?</code> 运算符带 <code>From::from</code> 的真实编译期展开</small>
 ```rust
 let n = match raw.parse::<u32>() {
     Ok(v) => v,
@@ -175,7 +169,6 @@ let n = match raw.parse::<u32>() {
 
 因此，我们只需要为顶层错误枚举 `AppError` 签下一份 5 行的 `From<ParseIntError>` 契约：
 
-<small class="code-source">推演用伪代码：为自定义错误实现 <code>From&lt;ParseIntError&gt;</code></small>
 ```rust
 #[derive(Debug)]
 enum AppError {

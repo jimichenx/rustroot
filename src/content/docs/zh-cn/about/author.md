@@ -13,6 +13,8 @@ sidebar:
 
 ## 联系与关注
 
+- **仓库**：[github.com/jimichenx/rustroot](https://github.com/jimichenx/rustroot)
+  课文、示例和站点代码在这个公开仓库。
 - **电子邮件**：[hello@rustroot.dev](mailto:hello@rustroot.dev)
   内容纠错、交流或转载授权，欢迎直接来信。反馈某一节的具体问题时，请附上页面地址和对应段落。
 - **微信公众号**：（筹备中，敬请关注）

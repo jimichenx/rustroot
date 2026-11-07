@@ -8,7 +8,6 @@ sidebar:
 
 import OneBinding from '../../../../../../components/course/OneBinding.astro';
 
-
 上一节结尾留了一个线索：堆上的资源自己没有确定的释放时刻，但指着它的那个栈变量有——函数返回、代码块闭合（`}`），栈变量离开作用域的时刻在编译期一清二楚。
 
 这一节我们不急着看 Rust 语法，先顺着这条线索，亲手搭一套最简的自动内存回收模型，看看它能否完美解决自动回收的问题。
@@ -19,9 +18,8 @@ import OneBinding from '../../../../../../components/course/OneBinding.astro';
 
 **栈上的变量离开作用域（`}`）时，自动释放它指向的堆资源。**
 
-先看这个最简模型怎么工作。假设在一个代码块里申请一块堆内存，用栈变量 `s` 指着它。下面用伪代码推演，不需要先掌握 Rust 语法。
+先看这个最简模型怎么工作。假设在一个代码块里申请一块堆内存，用栈变量 `s` 指着它。这里还不要求先掌握 Rust 语法。
 
-<small class="code-source">推演用伪代码</small>
 ```text
 {
     s = alloc_heap("hello")
@@ -39,7 +37,6 @@ import OneBinding from '../../../../../../components/course/OneBinding.astro';
 
 先试第一种情况：栈上的普通整数。
 
-<small class="code-source">推演用伪代码</small>
 ```text
 {
     a = 1
@@ -51,7 +48,6 @@ import OneBinding from '../../../../../../components/course/OneBinding.astro';
 
 再试第二种情况：带着堆资源的动态字符串。
 
-<small class="code-source">推演用伪代码</small>
 ```text
 {
     s = alloc_heap("hello")
@@ -104,7 +100,6 @@ import OneBinding from '../../../../../../components/course/OneBinding.astro';
 
 因为硬件内存里的字节只能被读取、复制或覆盖，数据在物理内存里是没法自己「搬家」的。所以在运行时（暂不考虑编译器的指令优化），下面这两行赋值在栈上做的物理动作完全一样——**都是一次按位复制**：
 
-<small class="code-source">推演用伪代码</small>
 ```text
 b = a    // a 是整数
 t = s    // s 指向一块堆资源

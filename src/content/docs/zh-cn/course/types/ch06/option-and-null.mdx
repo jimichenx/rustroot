@@ -28,7 +28,6 @@ import optionRefSize from '../../../../../../../examples/types/enum-option-match
 
 但在 Java、C++ 或 Go（指针）等语言中，语言设计者为了省事，没有用独立的和类型来表达这种「或关系」，而是**把 `null`（空地址）偷偷塞进了每一个引用类型里**：
 
-<small class="code-source">推演用伪代码（Java 风格隐式可空引用）</small>
 ```java
 User u = findUser("Ferris"); // 签名写着返回 User，实际返回的是 User 或 null
 System.out.println(u.name);  // 编译畅通无阻，运行时若 u 为 null 则直接崩溃

@@ -17,7 +17,6 @@ We ended with a test question: under those two rules alone, can we still pass a 
 
 Real programs cannot get far without calling functions. Suppose we write the simplest possible helper, `print_it`, which does nothing more than take a string `s` and print it once:
 
-<small class="code-source">Pseudocode for reasoning</small>
 ```text
 fn print_it(msg) {
     print(msg)
@@ -39,7 +38,6 @@ Trace what happens when `print_it(s)` runs under our minimal model:
 
 If we refuse to change the model, the only way to keep using the string after calling `print_it` is to **have the function `return` the parameter back at the end, and have the caller catch it in a variable all over again**:
 
-<small class="code-source">Pseudocode for reasoning</small>
 ```text
 fn print_it(msg) {
     print(msg)
@@ -110,9 +108,8 @@ Even if you copy `&s` bitwise a hundred times, when those hundred reference vari
 
 In our model, **read-only references follow Copy semantics**: assigning or passing one copies the address without transferring cleanup responsibility. In Rust, shared references implement `Copy`; the absence of cleanup responsibility alone does not make every type `Copy`.
 
-Rewrite our opening pseudocode with references, and the parameter-passing dilemma vanishes:
+Rewrite the opening fragment with references, and the parameter-passing dilemma vanishes:
 
-<small class="code-source">Pseudocode for reasoning</small>
 ```text
 fn print_it(msg: &String) {   // ← receives a reference; takes on no cleanup duty
     print(msg)

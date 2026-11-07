@@ -25,7 +25,6 @@ import staticBoundaries from '../../../../../../../examples/types/traits/src/bin
 
 我们直接沿用第 7 章里已经写熟的两个结构体：一篇文章 `Article`（含 `String`）和一条监控指标 `Metric`（含 `&'static str` 与 `u64`），它们都签下了 `Summary` 契约：
 
-<small class="code-source">推演用伪代码</small>
 ```rust
 trait Summary {
     fn summarize(&self) -> String;
@@ -46,7 +45,6 @@ impl Summary for Metric  { ... }
 
 假设你的监控大屏上既有文章卡片 `Article`，又有指标卡片 `Metric`。你想把它们放进同一个 `Vec` 数组里，然后写一个循环统一调用 `.summarize()` 渲染出来：
 
-<small class="code-source">推演用伪代码：尝试把两个都实现了 <code>Summary</code> 的不同结构体放进同一个 <code>Vec</code></small>
 ```rust
 let items = vec![
     Article { title: String::from("News") },
@@ -88,7 +86,6 @@ error[E0308]: mismatched types
 
 那么，如果把返回类型写成 `-> impl Summary`，能不能在 `if` 分支返回 `Article`、在 `else` 分支返回 `Metric` 呢？
 
-<small class="code-source">推演用伪代码：尝试用 <code>-&gt; impl Summary</code> 在不同分支返回不同具体类型</small>
 ```rust
 fn choose_item(is_article: bool) -> impl Summary {
     if is_article {

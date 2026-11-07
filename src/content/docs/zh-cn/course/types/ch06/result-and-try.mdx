@@ -24,7 +24,6 @@ import mixedErrors from '../../../../../../../examples/types/result-and-panic/sr
 
 在 Java、C#、Python 或 C++ 中，处理这类失败的标准做法是**抛出异常（Exception）**：函数签名照常写返回 `int`，一旦遇到错误就用 `throw new NumberFormatException(...)` 中断正常返回路径，顺着调用栈一层层往上回溯，直到某处有 `try / catch` 接住它。
 
-<small class="code-source">推演用伪代码（Java 风格非受检异常）</small>
 ```java
 int n = Integer.parseInt(input); // 签名只写返回 int，看不出它会抛 NumberFormatException
 ```

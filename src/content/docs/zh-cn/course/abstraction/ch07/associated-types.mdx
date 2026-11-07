@@ -19,7 +19,6 @@ import associatedVsGeneric from '../../../../../../../examples/types/traits/src/
 
 和泛型结构体一样，直接把待定类型 `<T>` 作为外部参数写在 Trait 名字后面的尖括号里：
 
-<small class="code-source">推演用伪代码：泛型 Trait 的定义与实现语法</small>
 ```rust
 // 1. 定义：待定类型 <T> 写在 Trait 名字后面的尖括号里
 trait MyFrom<T> {
@@ -40,7 +39,6 @@ impl MyFrom<usize> for Packet {
 
 为什么英文叫 **Associated Type（关联类型）**？因为这个类型不是从外部传入的独立参数，而是**直接挂载（关联）在该 Trait 内部的一个成员类型**——在方法签名中通过 `Self::Item` 来引用它，在 `impl` 实现时通过 `type Item = 具体类型;` 来填死它：
 
-<small class="code-source">推演用伪代码：关联类型的定义与实现语法</small>
 ```rust
 // 1. 定义：用 type Item; 在花括号内部声明一个与当前 Trait 关联的类型占位符
 trait MyIterator {
@@ -67,7 +65,6 @@ impl MyIterator for Counter {
 
 因为 `<T>` 是写在 `MyFrom<T>` 名字后面的编译期参数，填入不同的参数就会合成出**不同的契约**：`MyFrom<usize>` 和 `MyFrom<&str>` 是两份互不冲突的独立契约。因此，我们可以为同一个 `Packet` 连续写两个 `impl` 块：
 
-<small class="code-source">推演用伪代码：同一个类型对不同的 <code>T</code> 实现多次</small>
 ```rust
 // 实现 1：从 usize 构造 Packet
 impl MyFrom<usize> for Packet {
@@ -86,7 +83,6 @@ impl MyFrom<&str> for Packet {
 
 调用时，编译器会根据你传入的实参是 `64usize` 还是 `"hello"`，自动匹配到对应的那份实现：
 
-<small class="code-source">推演用伪代码</small>
 ```rust
 let p1 = Packet::my_from(64usize); // 走 impl MyFrom<usize>
 let p2 = Packet::my_from("hello"); // 走 impl MyFrom<&str>
@@ -100,7 +96,6 @@ let p2 = Packet::my_from("hello"); // 走 impl MyFrom<&str>
 
 既然尖括号 `<T>` 这么顺手，那我们设计「迭代器 / 计数器」契约时，为什么不能也照猫画虎写成下面这样的泛型 Trait 呢？
 
-<small class="code-source">推演用伪代码：尝试用泛型参数定义迭代器契约</small>
 ```rust
 trait BadIterator<Item> {
     fn next_item(&mut self) -> Option<Item>;
@@ -113,7 +108,6 @@ trait BadIterator<Item> {
 
 因为 `BadIterator<Item>` 帶着类型参数 `<Item>`，编译器会允许任何人给同一个 `Counter` 既实现一份吐出 `u32` 的版本，又实现一份吐出 `String` 的版本：
 
-<small class="code-source">推演用伪代码：同一个 <code>Counter</code> 被挂上了两套冲突的迭代产出</small>
 ```rust
 impl BadIterator<u32> for Counter {
     fn next_item(&mut self) -> Option<u32> { ... }
@@ -130,7 +124,6 @@ impl BadIterator<String> for Counter {
 
 更糟糕的是，一旦编译器认为「`Counter` 可能实现了任意多个 `BadIterator<T>`」，哪怕你只写过 `u32` 那一份实现，当你在代码里写下 `let x = counter.next_item();` 时，编译器也会因为「不确定你未来会不会再加别的 `<T>` 实现」而要求你在调用点频繁补写类型标注；并且任何接收该迭代器的泛型函数，签名都得被迫多拖一个类型参数：
 
-<small class="code-source">推演用伪代码：每个使用函数都被迫多带一个类型参数 <code>Item</code></small>
 ```rust
 // 被迫同时声明 <C, Item> 两个泛型参数：
 fn inspect_first<C, Item>(c: &mut C)
@@ -148,7 +141,6 @@ where
 
 这正是我们在本文开头见过的**写法二——关联类型（Associated Type）**的用武之地。把 `<Item>` 从契约名字后面的尖括号里拿出来，改用 `type Item;` 放进花括号内部：
 
-<small class="code-source">推演用伪代码：用关联类型将 <code>Counter</code> 的产出唯一锁死为 <code>u32</code></small>
 ```rust
 trait MyIterator {
     type Item;
@@ -175,7 +167,6 @@ impl MyIterator for Counter {
    ```
 2. **调用点零标注，泛型函数签名干净利落**：
    因为 `Counter` 的 `Item` 百分之百锁死为 `u32`，当你调用 `let first = c.next_item().unwrap();` 时，不需要写任何类型标注，编译器直接确定 `first` 就是 `u32`。而在编写接收迭代器的泛型函数时，签名也无需再拖着多余的类型参数：
-   <small class="code-source">推演用伪代码</small>
    ```rust
    // 只需要一个泛型参数 C，直接通过 C::Item 引用其关联类型
    fn inspect_first<C: MyIterator>(c: &mut C) -> Option<C::Item> {

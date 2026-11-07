@@ -162,6 +162,16 @@ html[lang='zh-CN'] .sl-markdown-content :not(li, .sl-steps) > p {
         font-size: inherit;
 }
 
+.sl-markdown-content .code-source a {
+        color: var(--sl-color-accent);
+        text-decoration-thickness: 1px;
+        text-underline-offset: 0.15em;
+}
+
+.sl-markdown-content .code-source a code {
+        color: inherit;
+}
+
 .sl-markdown-content .code-source + .expressive-code {
         margin-top: 0;
 }

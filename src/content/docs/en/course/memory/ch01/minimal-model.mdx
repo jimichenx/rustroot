@@ -18,9 +18,8 @@ Turn that clue from the previous section into the model's first rule:
 
 **When a stack variable goes out of scope (`}`), the heap resource it points to is freed automatically.**
 
-Let's trace how this minimal model behaves. Suppose a block allocates a chunk of heap memory and holds it through a stack variable `s`. We'll use pseudocode so we can focus purely on the mechanics.
+Let's trace how this minimal model behaves. Suppose a block allocates a chunk of heap memory and holds it through a stack variable `s`. Rust syntax is not required yet.
 
-<small class="code-source">Pseudocode for reasoning</small>
 ```text
 {
     s = alloc_heap("hello")
@@ -38,7 +37,6 @@ Now let's test this model against a single assignment statement, `=`.
 
 First, try an ordinary integer on the stack:
 
-<small class="code-source">Pseudocode for reasoning</small>
 ```text
 {
     a = 1
@@ -50,7 +48,6 @@ In this model, `b = a` does one thing: **it copies the bytes of `a` on the stack
 
 Next, try a dynamic string backed by a heap resource:
 
-<small class="code-source">Pseudocode for reasoning</small>
 ```text
 {
     s = alloc_heap("hello")
@@ -90,9 +87,8 @@ The `"hello"` buffer on the heap is never duplicated—only the three machine wo
 
 ## One `=`, two semantics: Copy and Move
 
-In the pseudocode, assignment still uses the same equals sign `=`. In our model, both cases start by copying bytes on the stack. This describes the model, not a guarantee that compiled Rust code performs a physical byte copy.
+In the lines above, assignment still uses the same equals sign `=`. In our model, both cases start by copying bytes on the stack. This describes the model, not a guarantee that compiled Rust code performs a physical byte copy.
 
-<small class="code-source">Pseudocode for reasoning</small>
 ```text
 b = a    // a is an integer
 t = s    // s points to a heap resource

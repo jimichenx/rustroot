@@ -25,7 +25,6 @@ import orphanRule from '../../../../../../../examples/types/traits/src/bin/orpha
 
 **第一步：用 `trait` 定义契约（只写方法签名，以分号 `;` 结尾）**
 
-<small class="code-source">推演用伪代码</small>
 ```rust
 trait Summary {
     fn summarize(&self) -> String;
@@ -36,7 +35,6 @@ trait Summary {
 
 注意对比第 5 章的 `impl Article`（直接给类型自己加方法）与这里的 **`impl Summary for Article`**（为 `Article` 实现 `Summary` 契约）：
 
-<small class="code-source">推演用伪代码</small>
 ```rust
 struct Article {
     title: String,
@@ -65,7 +63,6 @@ impl Summary for Metric {
 
 一旦实现了 Trait，你就可以直接在 `Article` 或 `Metric` 的实例上调用 `.summarize()`：
 
-<small class="code-source">推演用伪代码</small>
 ```rust
 let post = Article { title: String::from("Rust Root"), author: String::from("Ferris") };
 println!("{}", post.summarize()); // 输出：Rust Root by Ferris
@@ -79,7 +76,6 @@ println!("{}", post.summarize()); // 输出：Rust Root by Ferris
 
 如果你有 Java、Go 或 TypeScript 背景，此时你的手会条件反射地写出下面这行代码——**直接拿 `Summary` 当作函数参数的类型**：
 
-<small class="code-source">推演用伪代码：把 Trait 直接当成参数类型</small>
 ```rust
 fn bad_notify(item: Summary) {
     println!("{}", item.summarize());
@@ -110,7 +106,6 @@ error[E0277]: the size for values of type `(dyn Summary + 'static)` cannot be kn
 
 既然 `Summary` 是筛选类型的契约，那正确的用法就是拿它去**约束泛型类型参数 `<T>`**——写成 **`<T: Summary>`**：
 
-<small class="code-source">推演用伪代码：用 Trait 约束泛型参数 <code>T</code></small>
 ```rust
 fn notify<T: Summary>(item: &T) {
     println!("[notify] {}", item.summarize());
@@ -130,7 +125,6 @@ fn notify<T: Summary>(item: &T) {
 
 这种写在泛型参数后面的 `<T: Summary>` 语法，叫做**泛型约束（Trait Bound）**。当一个泛型参数需要同时满足多份契约时，可以用 `+` 号并列叠加；如果约束较长，也可以用 `where` 子句移到函数签名末尾：
 
-<small class="code-source">推演用伪代码：用 <code>+</code> 叠加约束与 <code>where</code> 子句</small>
 ```rust
 // 直接用 + 叠加多份契约
 fn log_and_notify<T: Summary + std::fmt::Debug>(item: &T) { ... }
@@ -150,7 +144,6 @@ where
 
 哪怕你心里清楚待会儿只会把拥有 `.value` 字段的 `Metric` 传给 `notify`，只要你在函数体里多写一行访问 `.value` 的代码：
 
-<small class="code-source">推演用伪代码：在泛型函数体内越界访问契约之外的字段</small>
 ```rust
 fn notify<T: Summary>(item: &T) {
     println!("{}", item.summarize());
@@ -164,7 +157,6 @@ fn notify<T: Summary>(item: &T) {
 
 反过来，在调用 `notify` 的地方，如果你试图传入一个没有签下 `Summary` 契约的结构体 `Unregistered`：
 
-<small class="code-source">推演用伪代码：在调用点传入未实现契约的类型</small>
 ```rust
 struct Unregistered { id: u32 }
 
@@ -189,7 +181,6 @@ notify(&raw); // 报错 E0277！Unregistered 没有实现 Summary
 
 1. **默认方法（Default Methods）相互调用**：
    Trait 中的方法不必全部以分号 `;` 留空，也可以直接写出带花括号 `{ ... }` 的默认方法体，且**默认方法内部可以直接调用同一契约中尚未实现的其他方法**：
-   <small class="code-source">推演用伪代码：默认方法 <code>headline</code> 直接调用待实现的 <code>summarize</code></small>
    ```rust
    trait Summary {
        fn summarize(&self) -> String; // 留给具体类型去实现
@@ -202,7 +193,6 @@ notify(&raw); // 报错 E0277！Unregistered 没有实现 Summary
    这样一来，具体类型只需实现 `summarize` 一个方法，就能自动白拿 `.headline()`（我们在第 9 章将看到的迭代器 `Iterator` 正是利用这一机制：你只需实现一个 `.next()`，就能自动获得 `.count()`、`.map()`、`.filter()` 等数十个方法）。
 2. **前置父契约约束（Supertraits，如 `trait Printable: Summary`）**：
    既然泛型参数可以加 `: Summary` 约束，Trait 自己也可以加约束。如果定义一份新契约 `Printable` 时，要求实现它的类型必须先具备 `Summary` 的能力，可以写成：
-   <small class="code-source">推演用伪代码</small>
    ```rust
    trait Printable: Summary {
        fn print(&self) {
@@ -222,7 +212,6 @@ notify(&raw); // 报错 E0277！Unregistered 没有实现 Summary
 
 而在 Rust 中，`impl Trait for Type` 是独立于类型定义之外的外挂能力表。只要我们在当前包（crate）里定义了一个新契约 `Shout`，我们立刻就能**事后为标准库里早已存在的 `String` 挂上这项新能力**：
 
-<small class="code-source">推演用伪代码：为我们自己的 Trait 与标准库的 <code>String</code> 编写实现</small>
 ```rust
 trait Shout {
     fn shout(&self) -> String;
@@ -243,7 +232,6 @@ impl Shout for String {
 
 如果你写下下面这行代码，试图把「别人的 Trait」挂到「别人的类型」上：
 
-<small class="code-source">推演用伪代码：在当前包里把标准库的 <code>Display</code> 挂到标准库的 <code>Vec&lt;i32&gt;</code> 上</small>
 ```rust
 impl std::fmt::Display for Vec<i32> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

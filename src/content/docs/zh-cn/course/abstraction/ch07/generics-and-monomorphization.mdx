@@ -24,7 +24,6 @@ import bareGenericLimit from '../../../../../../../examples/types/generics/src/b
 
 **1. 泛型结构体**：定义带参数槽的积类型构造器。
 
-<small class="code-source">推演用伪代码</small>
 ```rust
 struct Pair<T> {
     first: T,
@@ -34,7 +33,6 @@ struct Pair<T> {
 
 **2. 泛型枚举**：定义带参数槽的和类型构造器（如标准库的 `Option<T>` 与 `Result<T, E>`）。
 
-<small class="code-source">推演用伪代码</small>
 ```rust
 enum Option<T> {
     None,
@@ -44,7 +42,6 @@ enum Option<T> {
 
 **3. 泛型函数**：在函数名后声明 `<T>`，供形参或返回值使用。
 
-<small class="code-source">推演用伪代码</small>
 ```rust
 fn first_item<T>(pair: Pair<T>) -> T {
     pair.first
@@ -53,7 +50,6 @@ fn first_item<T>(pair: Pair<T>) -> T {
 
 **4. 泛型方法块**：第一个 `impl<T>` 向编译器声明「接下来这个块里 `T` 是待填入的泛型类型参数」，第二个 `Pair<T>` 则是把参数填进构造器，为任意 `T` 合成出的 `Pair<T>` 批量挂载方法。
 
-<small class="code-source">推演用伪代码</small>
 ```rust
 impl<T> Pair<T> {
     fn into_swapped(self) -> Pair<T> {

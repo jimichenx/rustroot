@@ -9,6 +9,9 @@
  * 语言切换与 hreflang 通过 `otherLocale()` 指向对方域名的同一路径。
  */
 
+/** 公开课程仓库。顶栏、页脚和「编辑本页」都指向这里，分支是 `develop`。 */
+export const REPOSITORY = 'https://github.com/jimichenx/rustroot';
+
 export type SiteLocale = 'zh' | 'en';
 
 export interface LocaleConfig {

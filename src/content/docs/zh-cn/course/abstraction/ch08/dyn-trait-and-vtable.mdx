@@ -62,7 +62,6 @@ import dynFatPointer from '../../../../../../../examples/types/traits/src/bin/dy
 
 我们先用 4 行代码当场测量 `&Article` 与 `&dyn Summary` 在栈上的字节大小：
 
-<small class="code-source">推演用伪代码：对比瘦指针 <code>&amp;Article</code> 与胖指针 <code>&amp;dyn Summary</code> 的栈上尺寸</small>
 ```rust
 let post = Article { title: String::from("News") };
 let thin_ref: &Article = &post;
@@ -109,7 +108,6 @@ println!("&dyn Summary = {} bytes", size_of::<&dyn Summary>()); // 输出：16 b
 
 既然不管是 `&Article` 还是 `&Metric`，一旦转成 `&dyn Summary`，它们在栈/堆上的类型就完全统一、且大小统统是 **16 字节**，我们就可以直接构建一个 `Vec<&dyn Summary>` 数组，把文章和监控指标装在一起循环渲染：
 
-<small class="code-source">推演用伪代码：用 <code>Vec&lt;&amp;dyn Summary&gt;</code> 组建异构集合</small>
 ```rust
 let post = Article { title: String::from("News") };
 let cpu = Metric { name: "cpu", value: 42 };
@@ -127,7 +125,6 @@ for widget in dashboard {
 再看第二个问题：在工厂函数 `choose_item(is_article: bool)` 中，我们要在函数内部现场创建 `Article` 或 `Metric` 并把**所有权**交出函数。
 因为局部变量离开函数栈帧就会销毁，我们不能返回局部变量的借用 `&dyn Summary`；此时只需换用我们在第 8.1 节全局表里见过的**堆独占智能指针 `Box`**，将返回类型写为 **`Box<dyn Summary>`**（把 `Article` 或 `Metric` 的裸数据放在堆上，栈上同样返回 **16 字节的 `(data_ptr, vtable_ptr)` 胖指针**，并独自承担离开作用域时释放堆内存的责任；`Box` 的完整细节将在第 10 章展开）：
 
-<small class="code-source">推演用伪代码：用 <code>Box&lt;dyn Summary&gt;</code> 在运行时分支返回不同结构体</small>
 ```rust
 fn choose_item(is_article: bool) -> Box<dyn Summary> {
     if is_article {

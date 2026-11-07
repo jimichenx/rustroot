@@ -61,7 +61,6 @@ member points = 500, leaked security_key = 9999
 
 有面向对象（OOP）经验的开发者看到上面的 `BadRole` 会指出：在 Java 或 C++ 里，标准做法不是写一个大结构体，而是定义一个基类或接口 `Role`，再派生出 `Guest`、`Member`、`Admin` 三个子类（Subclass），让每个子类只持有自己的字段：
 
-<small class="code-source">推演用伪代码（Java 风格子类建模）</small>
 ```java
 abstract class Role {}
 class Guest extends Role {}

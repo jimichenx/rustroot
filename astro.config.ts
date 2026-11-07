@@ -1,9 +1,10 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import { satteri } from '@astrojs/markdown-satteri';
-import { CURRENT, SITE_LOCALE } from './src/config/site';
+import { CURRENT, REPOSITORY, SITE_LOCALE } from './src/config/site';
 import { sidebar } from './src/config/sidebar';
 import { chapterLessonsPlugin } from './src/plugins/chapter-lessons';
+import { exampleSourcePlugin } from './src/plugins/example-source';
 import { cjkEmphasisPlugin } from './src/plugins/cjk-emphasis';
 import { wrapTablesPlugin } from './src/plugins/wrap-tables';
 
@@ -28,7 +29,7 @@ export default defineConfig({
 	markdown: {
 		processor: satteri({
 			mdastPlugins: [cjkEmphasisPlugin],
-			hastPlugins: [wrapTablesPlugin, chapterLessonsPlugin],
+			hastPlugins: [wrapTablesPlugin, exampleSourcePlugin, chapterLessonsPlugin],
 		}),
 	},
 	server: { port: CURRENT.devPort },
@@ -57,9 +58,8 @@ export default defineConfig({
 			sidebar,
 			lastUpdated: true,
 			credits: false,
-			// TODO: 仓库公开后填入 GitHub 地址，并开启 editLink
-			// social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/...' }],
-			// editLink: { baseUrl: 'https://github.com/.../edit/main/' },
+			social: [{ icon: 'github', label: 'GitHub', href: REPOSITORY }],
+			editLink: { baseUrl: `${REPOSITORY}/edit/develop/` },
 		}),
 	],
 	// 两台 dev server 不能共用 Vite 预构建缓存，否则后启动的语言会盖掉先启动的模块。

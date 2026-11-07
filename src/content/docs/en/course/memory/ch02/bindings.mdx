@@ -15,9 +15,9 @@ import reference from '../../../../../../../examples/memory/variables/src/bin/in
 import javaCopy from '../../../../../../../examples/memory/variables/java/ReferenceCopy.java?raw';
 
 
-In Chapter 1, we used pseudocode to derive a memory reclamation model without a garbage collector: each heap resource has a single owner at any moment and is freed automatically when that owner goes out of scope (`}`); on assignment, `=` splits into Copy and Move depending on whether cleanup duty transfers.
+Chapter 1 derived a memory reclamation model without a garbage collector: each heap resource has a single owner at any moment and is freed automatically when that owner goes out of scope (`}`); on assignment, `=` splits into Copy and Move depending on whether cleanup duty transfers.
 
-Starting in this section, we open the compiler and replace pseudocode with real Rust code.
+Starting in this section, we open the compiler and check that model against real Rust code.
 
 For many newcomers to Rust, frustration starts with the most basic variable declarations and assignments: you write a few lines of `let` and `=`, and some variables remain usable while others fail to compile on the spot. We'll start with the syntax of a first `let` statement, then match our model from Chapter 1 against the compiler's diagnostics.
 
