@@ -19,7 +19,7 @@ For technical corrections, feedback, licensing, or publishing inquiries, reach m
 
 ## Attribution and license
 
-The prose, figures, and pages of this site form a single work. Example code under `examples/` is released separately under the MIT License; see the footer for scope.
+The prose, figures, and pages of this site form a single work. Example code under `examples/` is released separately under the MIT License. The two licenses and what each covers are in [LICENSE](https://github.com/jimichenx/rustroot/blob/develop/LICENSE) at the root of the public repository.
 
 The text and figures on this site are licensed under [CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/deed.en). When sharing or quoting, keep the author name and link to this page or to [rustroot.dev](https://rustroot.dev).
 

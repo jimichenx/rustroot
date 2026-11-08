@@ -1,0 +1,191 @@
+---
+/**
+ * 9.2「闭包与捕获机制」分步配图：
+ * 顶部常驻：语言内核唯一的编译期合成动作（闭包表达式 → 匿名 struct → 实现 Fn / FnMut / FnOnce）。
+ * 下方三行（3 步分步对比）：按闭包体对捕获字段的最高权限要求（只读 / 修改 / 移出消耗），
+ * 决定调用方法的接收者（&self / &mut self / self），直接投射为 Fn、FnMut、FnOnce 三个 Trait。
+ * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+import FigureControls from './FigureControls.astro';
+
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			caption:
+				'The compiler kernel performs one compile-time synthesis: turning each closure expression into an anonymous struct that stores captured variables as fields. Calling a closure invokes a method on that struct whose receiver is &self, &mut self, or self, mapping directly to Fn, FnMut, and FnOnce.',
+			title: 'Anonymous struct synthesis and receiver mapping for closures',
+			desc: 'Top banner: The compiler synthesizes a closure expression `|args| body` into an anonymous `struct` holding captured fields, and implements `Fn / FnMut / FnOnce` call methods. Below are three rows: Row 1 (`|| text.len()`) reads the captured variable, stores `&text` (or moved `text`), calls `fn call(&self)`, and implements `Fn` for repeatable read-only calls. Row 2 (`|| count += 1`) mutates the captured variable (requiring `let mut f`), stores `&mut count` (or moved `count`), calls `fn call_mut(&mut self)`, and implements `FnMut` for sequential mutable calls. Row 3 (`|| text`) moves ownership out of the closure, stores `text: String` by value, calls `fn call_once(self)`, and implements `FnOnce`, which consumes `self` on the first call and reports E0382 if called again.',
+			bannerTitle: 'Compiler kernel · single compile-time synthesis',
+			bannerC1: '|args| body',
+			bannerC2: 'struct { captured fields }',
+			bannerC3: 'Fn / FnMut / FnOnce',
+			col1: '1. Action on captured var',
+			col2: '2. Synthesized struct & receiver',
+			col3: '3. Implemented Trait & call rule',
+			r1Code: '|| text.len()',
+			r1Act: 'read-only access',
+			r1Call: 'fn call(&self)',
+			r1Field: 'field &text (or moved text)',
+			r1Trait: 'impl Fn',
+			r1State: '&self · repeatable calls',
+			r2Code: '|| count += 1',
+			r2Act: 'mutate · needs let mut f',
+			r2Call: 'fn call_mut(&mut self)',
+			r2Field: 'field &mut count (or moved)',
+			r2Trait: 'impl FnMut',
+			r2State: '&mut self · sequential',
+			r3Code: '|| text',
+			r3Act: 'moves out ownership',
+			r3Call: 'fn call_once(self)',
+			r3Field: 'field text: String (by value)',
+			r3Trait: 'impl FnOnce',
+			r3State: 'self · once only (E0382)',
+			stepper: 'Steps',
+			steps: [
+				'read-only capture: &self → Fn',
+				'mutable capture: &mut self → FnMut',
+				'consuming capture: self → FnOnce',
+			],
+		}
+	: {
+			caption:
+				'语言内核在编译期只做一件事：把每个闭包表达式合成一个把捕获变量存作字段的匿名 `struct`；调用闭包就是调用该匿名 `struct` 的方法，方法接收者只有 `&self`、`&mut self`、`self` 三种，直接投射为标准库的 `Fn`、`FnMut`、`FnOnce`。',
+			title: '闭包合成匿名 struct 与三种方法接收者的映射关系',
+			desc: '顶部面板展示语言内核唯一的编译期合成动作：闭包表达式 `|args| body` 合成匿名 `struct`（捕获变量存为字段），并实现 `Fn / FnMut / FnOnce` 调用方法。下方三行对应三种捕获与调用级别：第 1 行 `|| text.len()` 只读访问外部变量，字段存 `&text`（或 `move` 后的 `text`），调用签名为 `fn call(&self)`，实现 `impl Fn`（`&self` 只读，可任意多次调用）；第 2 行 `|| count += 1` 修改外部变量（需 `let mut f`），字段存 `&mut count`（或 `move` 后的 `count`），调用签名为 `fn call_mut(&mut self)`，实现 `impl FnMut`（`&mut self` 独占修改，可多次顺序调用）；第 3 行 `|| text` 移出所有权，字段存 `text: String`，调用签名为 `fn call_once(self)`，实现 `impl FnOnce`（`self` 按值消耗，仅能调用一次，再调报 E0382）。',
+			bannerTitle: '语言内核唯一动作 · 编译期合成匿名 struct 与调用方法',
+			bannerC1: '闭包 |args| body',
+			bannerC2: '合成匿名 struct（捕获作字段）',
+			bannerC3: 'Fn / FnMut / FnOnce',
+			col1: '1. 闭包体对捕获变量的动作',
+			col2: '2. 合成的匿名 struct 与方法接收者',
+			col3: '3. 实现的 Trait 与调用约束',
+			r1Code: '|| text.len()',
+			r1Act: '只读访问外部变量',
+			r1Call: 'fn call(&self)',
+			r1Field: '字段存 &text（或 move 后 text）',
+			r1Trait: 'impl Fn',
+			r1State: '&self 只读 · 可多次调用',
+			r2Code: '|| count += 1',
+			r2Act: '修改变量 · 需 let mut f',
+			r2Call: 'fn call_mut(&mut self)',
+			r2Field: '字段存 &mut count（或 move）',
+			r2Trait: 'impl FnMut',
+			r2State: '&mut self 独占 · 顺序多调',
+			r3Code: '|| text',
+			r3Act: '移出捕获变量所有权',
+			r3Call: 'fn call_once(self)',
+			r3Field: '字段存 text: String（按值持有）',
+			r3Trait: 'impl FnOnce',
+			r3State: 'self 消耗 · 再调报 E0382',
+			stepper: '步骤',
+			steps: [
+				'只读捕获字段：&self → Fn',
+				'修改捕获字段：&mut self → FnMut',
+				'移出消耗字段：self → FnOnce',
+			],
+		};
+
+const rows = [
+	{
+		y: 120,
+		code: t.r1Code,
+		action: t.r1Act,
+		callSig: t.r1Call,
+		fieldLine: t.r1Field,
+		traitImpl: t.r1Trait,
+		state: t.r1State,
+		consumed: false,
+	},
+	{
+		y: 204,
+		code: t.r2Code,
+		action: t.r2Act,
+		callSig: t.r2Call,
+		fieldLine: t.r2Field,
+		traitImpl: t.r2Trait,
+		state: t.r2State,
+		consumed: false,
+	},
+	{
+		y: 288,
+		code: t.r3Code,
+		action: t.r3Act,
+		callSig: t.r3Call,
+		fieldLine: t.r3Field,
+		traitImpl: t.r3Trait,
+		state: t.r3State,
+		consumed: true,
+	},
+];
+---
+
+<figure class="diagram" data-stepper>
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 374" role="img" aria-labelledby="csm-title csm-desc">
+		<title id="csm-title">{t.title}</title>
+		<desc id="csm-desc">{t.desc}</desc>
+
+		{/* 顶部常驻横幅：语言内核唯一的编译期合成动作 */}
+		<rect class="panel" x="16" y="14" width="608" height="68" rx="10"></rect>
+		<text class="label" x="32" y="34">{t.bannerTitle}</text>
+
+		<text class="code" x="92" y="62" text-anchor="middle">{t.bannerC1}</text>
+		<path class="arrow" d="M 164 58 H 190" marker-end="url(#csm-head)"></path>
+		<text class="code" x="304" y="62" text-anchor="middle">{t.bannerC2}</text>
+		<path class="arrow" d="M 418 58 H 444" marker-end="url(#csm-head)"></path>
+		<text class="code" x="532" y="62" text-anchor="middle">{t.bannerC3}</text>
+
+		{/* 三栏列标题 */}
+		<text class="edge-sub" x="98" y="106" text-anchor="middle">{t.col1}</text>
+		<text class="edge-sub" x="314" y="106" text-anchor="middle">{t.col2}</text>
+		<text class="edge-sub" x="536" y="106" text-anchor="middle">{t.col3}</text>
+
+		{/* 三行对比：左栏常驻，中栏与右栏随步点亮 */}
+		{rows.map((row, i) => (
+			<g>
+				{/* 左栏：闭包表达式与对捕获变量的动作 */}
+				<rect class="slot" x="16" y={row.y} width="164" height="64" rx="8"></rect>
+				<text class="code" x="98" y={row.y + 26} text-anchor="middle">{row.code}</text>
+				<text class="edge-sub" x="98" y={row.y + 48} text-anchor="middle">{row.action}</text>
+
+				{/* 中栏 + 右栏：一步点亮 */}
+				<g class="step" data-step={i + 1}>
+					<path class="arrow" d={`M 180 ${row.y + 32} H 202`} marker-end="url(#csm-head)"></path>
+
+					{/* 中栏：合成的匿名 struct 字段与调用接收者签名 */}
+					<rect class="panel" x="202" y={row.y} width="224" height="64" rx="8"></rect>
+					<text class="code" x="314" y={row.y + 26} text-anchor="middle">{row.callSig}</text>
+					<text class="edge-sub" x="314" y={row.y + 48} text-anchor="middle">{row.fieldLine}</text>
+
+					<path class="arrow" d={`M 426 ${row.y + 32} H 448`} marker-end="url(#csm-head)"></path>
+
+					{/* 右栏：实现的 Trait 与调用约束 */}
+					<rect
+						class={row.consumed ? 'freed' : 'object'}
+						x="448"
+						y={row.y}
+						width="176"
+						height="64"
+						rx="8"
+					></rect>
+					<text class="code" x="536" y={row.y + 26} text-anchor="middle">{row.traitImpl}</text>
+					<text class="edge-sub" x="536" y={row.y + 48} text-anchor="middle">{row.state}</text>
+				</g>
+			</g>
+		))}
+
+		<defs>
+			<marker id="csm-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+
+	<FigureControls controls="stepper" label={t.stepper} steps={t.steps} />
+</figure>
+
+<script>
+	import { initFigures } from '../../scripts/motion';
+	initFigures();
+</script>

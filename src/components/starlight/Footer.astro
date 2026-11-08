@@ -13,6 +13,7 @@ import Pagination from 'virtual:starlight/components/Pagination';
 import { CURRENT, REPOSITORY } from '../../config/site';
 
 const isZh = CURRENT.code === 'zh';
+const repositoryLabel = REPOSITORY.replace(/^https:\/\//, '');
 const licenseHref = isZh
 	? 'https://creativecommons.org/licenses/by-nc-nd/4.0/deed.zh-hans'
 	: 'https://creativecommons.org/licenses/by-nc-nd/4.0/deed.en';
@@ -42,7 +43,7 @@ const licenseHref = isZh
 			</span>
 			<span>
 				<a href={REPOSITORY} target="_blank" rel="noopener noreferrer">
-					GitHub
+					{repositoryLabel}
 				</a>
 			</span>
 			<span>
@@ -64,7 +65,15 @@ const licenseHref = isZh
 					)
 				}
 			</span>
-			<span>{isZh ? '示例代码 MIT' : 'Code MIT'}</span>
+			<span>
+				<a
+					href={`${REPOSITORY}/blob/develop/LICENSE-MIT`}
+					target="_blank"
+					rel="noopener noreferrer"
+				>
+					{isZh ? '示例代码 MIT' : 'Examples MIT'}
+				</a>
+			</span>
 		</p>
 		{
 			isZh && (

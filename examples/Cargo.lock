@@ -15,6 +15,10 @@ name = "binding-copy-move"
 version = "0.1.0"
 
 [[package]]
+name = "box-deref-drop"
+version = "0.1.0"
+
+[[package]]
 name = "closures-iterators"
 version = "0.1.0"
 

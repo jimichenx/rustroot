@@ -166,6 +166,8 @@ POST https://hooks.internal/alert: deploy finished
 
 在下一章（第 9 章，也是第三篇的收官章）中，之前埋下的所有线索将迎来一次酣畅淋漓的**工程大合流**——我们将亲手剥开日常出镜率最高的 **`for` 循环（迭代器 `Iterator`）** 与 **闭包（`FnOnce` / `FnMut` / `Fn`）** 的语法糖外壳，看清它们是如何用前面学过的结构体、所有权三件套与 Trait 严丝合缝地拼装出来的！
 
+[继续：第 9 章 · 迭代器与闭包 →](/abstraction/iterators-and-closures/)
+
 ### 动手核对与小练习
 
 1. **Code Review 反模式拦截**：在审查一段 AI 生成的订单状态流转代码时，你看到 AI 定义了一个 `trait OrderState`，并为 `Pending`、`Paid`、`Shipped`、`Cancelled` 四个固定的订单状态结构体实现了该 Trait，最后在 `Order` 结构体里存了一个 `state: Box<dyn OrderState>`。请问这段代码存在什么架构问题？应该如何重构？

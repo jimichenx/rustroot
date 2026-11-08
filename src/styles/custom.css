@@ -143,6 +143,14 @@ html[lang='zh-CN'] .sl-markdown-content :is(h1, h2, h3, h4) {
 	letter-spacing: 0.02em;
 }
 
+/* 作者页的公众号二维码。按原图像素附近显示，避免被正文栏拉满后糊掉。 */
+.sl-markdown-content .wechat-qr {
+	display: block;
+	width: 200px;
+	height: auto;
+	margin-block: 0.75rem 0.25rem;
+}
+
 /* 中文段落之间留稍多的呼吸空间 */
 html[lang='zh-CN'] .sl-markdown-content :not(li, .sl-steps) > p {
 	margin-block: 1.25em;
@@ -370,6 +378,100 @@ html[lang='zh-CN'] .sl-markdown-content .epigraph p + p {
         margin-top: 0;
 }
 
+.rr-home-outcomes {
+        display: grid;
+        gap: 1rem;
+        margin-top: 1.5rem;
+}
+
+.sl-markdown-content .rr-home-outcome {
+        min-width: 0;
+        margin: 0;
+        padding: 1.25rem;
+        border: 1px solid var(--sl-color-gray-5);
+        border-radius: 0.75rem;
+}
+
+.rr-home-outcome-number {
+        display: block;
+        margin-bottom: 0.75rem;
+        color: var(--sl-color-accent);
+        font-size: 0.8rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+}
+
+:root[data-theme='dark'] .rr-home-outcome-number {
+        color: var(--sl-color-accent-high);
+}
+
+.sl-markdown-content .rr-home-outcome p {
+        margin-bottom: 0;
+        color: var(--sl-color-gray-2);
+        font-size: 0.9375rem;
+}
+
+.sl-markdown-content .rr-home-route-compact {
+        display: grid;
+        gap: 0.75rem;
+        margin: 1.5rem 0 0;
+        padding: 0;
+        list-style: none;
+}
+
+.sl-markdown-content .rr-home-route-item {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 0.25rem 0.875rem;
+        margin: 0;
+        padding: 1rem;
+        border: 1px solid var(--sl-color-gray-5);
+        border-radius: 0.625rem;
+}
+
+.rr-home-route-number {
+        color: var(--sl-color-gray-3);
+        font-size: 0.8125rem;
+        font-weight: 600;
+        line-height: 1.75;
+}
+
+.sl-markdown-content .rr-home-route-copy h3 {
+        margin: 0;
+        font-size: 1rem;
+}
+
+.rr-home-route-copy a {
+        color: var(--sl-color-white);
+        text-decoration-color: var(--sl-color-accent);
+        text-underline-offset: 0.2em;
+}
+
+.rr-home-route-copy a:hover {
+        color: var(--sl-color-accent-high);
+}
+
+.sl-markdown-content .rr-home-route-copy p {
+        margin: 0.25rem 0 0;
+        color: var(--sl-color-gray-2);
+        font-size: 0.875rem;
+}
+
+.rr-home-route-status {
+        grid-column: 2;
+        color: var(--sl-color-gray-3);
+        font-size: 0.75rem;
+        font-weight: 600;
+}
+
+.rr-home-route-status.is-available {
+        color: var(--sl-color-accent);
+}
+
+:root[data-theme='dark'] .rr-home-route-status.is-available {
+        color: var(--sl-color-accent-high);
+}
+
 .rr-home-route {
         display: grid;
         gap: 1rem;
@@ -438,6 +540,14 @@ html[lang='zh-CN'] .sl-markdown-content .epigraph p + p {
 }
 
 @media (min-width: 48rem) {
+        .rr-home-outcomes {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .sl-markdown-content .rr-home-route-compact {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
         .rr-home-route {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
         }

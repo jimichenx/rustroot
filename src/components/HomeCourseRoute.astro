@@ -20,16 +20,22 @@ const chineseParts = [
                 slug: 'types',
         },
         {
-                title: '抽象与组合',
+                title: '泛型、Trait 与函数式组合',
                 description: '用泛型、Trait、迭代器和闭包表达共同行为。',
+                slug: 'abstraction',
         },
+	{
+		title: '智能指针、借用与生命周期边界',
+		description: '理解智能指针、引用与跨函数的生命周期约束。',
+		slug: 'pointers',
+	},
         {
                 title: '共享与并发',
                 description: '理解共享所有权、内部可变性与跨线程安全。',
         },
         {
-                title: '系统边界',
-                description: '进一步讨论生命周期、unsafe 和异步机制。',
+                title: '工程组织与系统边界',
+                description: '组织工程，并探索 unsafe 和异步机制。',
         },
 ];
 const englishParts = [
@@ -71,10 +77,28 @@ const parts = (locale === 'en' ? englishParts : chineseParts).map((part, index) 
                         })
                         .filter(chapter => chapter.lessons.length > 0 && chapter.link)
                 : [];
-        return { ...part, number: index + 1, chapters };
+        return { ...part, number: index + 1, chapters, hasPage: Boolean(published?.hasIndex && chapters.length > 0) };
 });
 ---
 
+{locale === 'zh' ? (
+        <ol class="rr-home-route-compact">
+                {parts.map(part => (
+                        <li class="rr-home-route-item">
+                                <span class="rr-home-route-number" aria-hidden="true">{String(part.number).padStart(2, '0')}</span>
+                                <div class="rr-home-route-copy">
+                                        <h3>
+                                                {part.hasPage ? <a href={`/${part.slug}/`}>{part.title}</a> : part.title}
+                                        </h3>
+                                        <p>{part.description}</p>
+                                </div>
+                                <span class:list={['rr-home-route-status', { 'is-available': part.hasPage }]}>
+                                        {part.hasPage ? '已有正文' : '规划中'}
+                                </span>
+                        </li>
+                ))}
+        </ol>
+) : (
 <div class="rr-home-route">
         {
                 parts.map(part => (
@@ -111,3 +135,4 @@ const parts = (locale === 'en' ? englishParts : chineseParts).map((part, index) 
                 ))
         }
 </div>
+)}

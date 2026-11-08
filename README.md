@@ -74,7 +74,9 @@ A part, a chapter, and a lesson do not use the `chNN` folder name in the public 
 
 ## License
 
-- **Text, figures, and course pages** are licensed under [CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/deed.en). You may share them for non-commercial use if you credit the author and link to [rustroot.dev](https://rustroot.dev). Commercial use, paid training, and adaptations need written permission.
-- **Example code** under `examples/` is licensed under the [MIT License](LICENSE-MIT).
+This repository uses two licenses. See [LICENSE](LICENSE).
+
+- **Course text, figures, pages, and the site program** (everything except `examples/`) are licensed under [CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/deed.en). You may share them for non-commercial use if you credit the author and link to [rustroot.dev](https://rustroot.dev). Commercial use, paid training, and adaptations need written permission.
+- **Example programs** under `examples/` are licensed under the [MIT License](LICENSE-MIT).
 
 Copyright © 2026 RustRoot.

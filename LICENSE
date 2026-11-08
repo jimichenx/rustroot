@@ -1,0 +1,33 @@
+Copyright (c) 2026 RustRoot
+
+本仓库使用两份协议，不是一份覆盖全部文件的开源许可证。
+
+- `examples/` 以外的全部内容，包括课文、配图、页面和站点程序：CC BY-NC-ND 4.0。可以在非商业场合分享，须署名并链回原作；不得散布改编版本。商业使用、付费培训和改编需要事先书面许可，来信 hello@rustroot.dev。
+- `examples/` 下的示例程序：MIT。见 LICENSE-MIT。
+
+署名可以写成：jimichen，Rust Root，https://rustroot.dev/about/author/
+
+协议正文以 Creative Commons 公布的法律文本为准：
+https://creativecommons.org/licenses/by-nc-nd/4.0/legalcode
+
+---
+
+This repository uses two licenses. It is not under one open source license.
+
+## Course text, figures, pages, and the site program
+
+Everything except the `examples/` directory is licensed under the Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International License (CC BY-NC-ND 4.0).
+
+https://creativecommons.org/licenses/by-nc-nd/4.0/legalcode
+
+You may share that material for non-commercial use if you credit the author and link to the original. You may not distribute adaptations. Commercial use, paid training, and adaptations require prior written permission from the author: hello@rustroot.dev
+
+A suitable credit line is:
+
+    jimichen, Rust Root, https://rustroot.dev/about/author/
+
+The legal terms are the Creative Commons legal code linked above. This summary does not replace that text. CC BY-NC-ND 4.0 is not an OSI-approved open source license.
+
+## Example programs
+
+The programs under `examples/` are licensed under the MIT License. See LICENSE-MIT.

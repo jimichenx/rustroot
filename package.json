@@ -2,6 +2,7 @@
   "name": "rustroot",
   "version": "0.1.0",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE",
   "description": "Rust Root — 从底层理念与思维方式理解 Rust 的课程网站（rustroot.cn / rustroot.dev）",
   "type": "module",
   "scripts": {

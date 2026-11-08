@@ -1,0 +1,165 @@
+---
+/**
+ * 10.2「递归枚举：BadList 无限大小 vs List 用 Box 截断」。
+ * 左栏 .freed 虚线：Cons 原地内联另一个 BadList，4 + 4 + 4 + … = ∞，E0072。
+ * 右栏 .slot / .object 实线：栈上 list 固定 16B（tag/i32 8B + Box 指针 8B），
+ * 指针串起堆上的 Cons(2, Box) 和 Nil，类型大小在 Box 处截断。
+ * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	lang?: 'zh' | 'en';
+}
+
+const copy = {
+	zh: {
+		caption:
+			'BadList 把另一个 BadList 嵌在自己里面，大小变成无穷，编译器报 E0072；List 用 8 字节的 Box 指向堆上下一个节点，栈上的枚举就固定是 16 字节。',
+		title: 'BadList 的无限大小，以及 Box 如何把 List 截成 16 字节',
+		desc: '左栏是虚线框的 BadList。枚举写成 Cons(i32, BadList) 和 Nil。Cons 里再内联 Cons(1)、Cons(2)、Cons(3)……每层加上 4 字节，大小是 4 加 4 加 4 直到无穷，编译器报 error E0072，无法为它安排栈槽。右栏是 List：Cons(i32, Box<List>) 和 Nil。栈上的 list 是 Cons(1, Box)，固定 16 字节，其中 8 字节是判别值与 i32，8 字节是 Box 指针。指针指向堆上的 Cons(2, Box)，再指向堆上的 Nil。下一个节点有多大都不计入栈上这 16 字节，递归的体积计算在 Box 处截断。',
+		badTitle: 'BadList',
+		badKind: '原地内联 · 无限大小',
+		badEnum: 'enum BadList',
+		badVariants: 'Cons(i32, BadList), Nil',
+		bad1: 'Cons(1, BadList)',
+		bad2: 'Cons(2, BadList)',
+		bad3: 'Cons(3, …)',
+		formula: '4 + 4 + 4 + …',
+		infinity: '= ∞',
+		noEnd: '没有终点',
+		ellipsis: '…',
+		badFoot: '栈大小无法确定',
+		badErr: 'error[E0072]',
+		okTitle: 'List',
+		okKind: '8 字节指针截断递归',
+		okEnum: 'enum List',
+		okVariants: 'Cons(i32, Box<List>), Nil',
+		stackRow: '栈 · Cons(1, Box) · 16B',
+		cellI32_1: 'i32: 1',
+		cellTag: 'tag/i32 · 8B',
+		cellBox: 'Box<List>',
+		cellPtr: '指针 · 8B',
+		heapRow: '堆 · Cons(2, Box)',
+		cellI32_2: 'i32: 2',
+		nil: 'Nil',
+		nilSub: '堆上的终点',
+		ptr8: '8B',
+		okFoot: '体积在 Box 处截断',
+		okSize: '栈上固定 16 字节',
+	},
+	en: {
+		caption:
+			'BadList inlines another BadList, so its size is infinite and the compiler reports E0072. List points at the next node with an 8-byte Box, and the enum stays 16 bytes on the stack.',
+		title: 'BadList has infinite size; Box keeps List at 16 bytes',
+		desc: 'Left side, drawn with dashed frames, is BadList: Cons(i32, BadList) and Nil. Cons inlines another Cons, then another: Cons(1), Cons(2), Cons(3), and so on. Each layer adds 4 bytes, so the size is 4 + 4 + 4 + … and never finishes. The compiler reports error E0072 and cannot reserve a stack slot. Right side is List: Cons(i32, Box<List>) and Nil. The stack value list is Cons(1, Box), a fixed 16 bytes: 8 bytes for the tag and i32, 8 bytes for the Box pointer. That pointer aims at Cons(2, Box) on the heap, which aims at Nil on the heap. However large the next node is, it is not part of those 16 stack bytes. The size calculation stops at Box.',
+		badTitle: 'BadList',
+		badKind: 'inlined · infinite size',
+		badEnum: 'enum BadList',
+		badVariants: 'Cons(i32, BadList), Nil',
+		bad1: 'Cons(1, BadList)',
+		bad2: 'Cons(2, BadList)',
+		bad3: 'Cons(3, …)',
+		formula: '4 + 4 + 4 + …',
+		infinity: '= ∞',
+		noEnd: 'no finite end',
+		ellipsis: '…',
+		badFoot: 'no finite stack size',
+		badErr: 'error[E0072]',
+		okTitle: 'List',
+		okKind: '8B pointer breaks the cycle',
+		okEnum: 'enum List',
+		okVariants: 'Cons(i32, Box<List>), Nil',
+		stackRow: 'stack · Cons(1, Box) · 16B',
+		cellI32_1: 'i32: 1',
+		cellTag: 'tag/i32 · 8B',
+		cellBox: 'Box<List>',
+		cellPtr: 'ptr · 8B',
+		heapRow: 'heap · Cons(2, Box)',
+		cellI32_2: 'i32: 2',
+		nil: 'Nil',
+		nilSub: 'end on the heap',
+		ptr8: '8B',
+		okFoot: 'size stops at Box',
+		okSize: '16 bytes on the stack',
+	},
+} as const;
+
+const { lang } = Astro.props;
+const locale = lang ?? (SITE_LOCALE === 'en' ? 'en' : 'zh');
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 484" role="img" aria-labelledby="brl-title brl-desc">
+		<title id="brl-title">{t.title}</title>
+		<desc id="brl-desc">{t.desc}</desc>
+
+		{/* 左栏：原地内联，大小算不完 */}
+		<rect class="freed" x="12" y="8" width="300" height="468" rx="10"></rect>
+		<text class="edge-label" x="162" y="34" text-anchor="middle">{t.badTitle}</text>
+		<text class="node-en" x="162" y="52" text-anchor="middle">{t.badKind}</text>
+		<text class="code" x="162" y="76" text-anchor="middle">{t.badEnum}</text>
+		<text class="code" x="162" y="96" text-anchor="middle">{t.badVariants}</text>
+
+		<rect class="freed" x="28" y="112" width="268" height="292" rx="8"></rect>
+		<text class="code" x="162" y="136" text-anchor="middle">{t.bad1}</text>
+
+		<rect class="freed" x="46" y="150" width="232" height="238" rx="8"></rect>
+		<text class="code" x="162" y="174" text-anchor="middle">{t.bad2}</text>
+
+		<rect class="freed" x="64" y="188" width="196" height="184" rx="8"></rect>
+		<text class="code" x="162" y="216" text-anchor="middle">{t.bad3}</text>
+		<text class="edge-label" x="162" y="248" text-anchor="middle">{t.formula}</text>
+		<text class="node-name" x="162" y="280" text-anchor="middle">{t.infinity}</text>
+		<text class="edge-sub" x="162" y="308" text-anchor="middle">{t.noEnd}</text>
+		<text class="edge-sub" x="162" y="336" text-anchor="middle">{t.ellipsis}</text>
+
+		<text class="edge-label" x="162" y="432" text-anchor="middle">{t.badFoot}</text>
+		<text class="code" x="162" y="454" text-anchor="middle">{t.badErr}</text>
+
+		{/* 右栏：Box 把下一节点放到堆上，栈上固定 16B */}
+		<rect class="panel" x="328" y="8" width="300" height="468" rx="10"></rect>
+		<text class="edge-label" x="478" y="34" text-anchor="middle">{t.okTitle}</text>
+		<text class="node-en" x="478" y="52" text-anchor="middle">{t.okKind}</text>
+		<text class="code" x="478" y="76" text-anchor="middle">{t.okEnum}</text>
+		<text class="code" x="478" y="96" text-anchor="middle">{t.okVariants}</text>
+
+		<text class="edge-sub" x="344" y="118">{t.stackRow}</text>
+		<rect class="slot" x="344" y="128" width="268" height="68" rx="6"></rect>
+		<rect class="panel" x="356" y="138" width="116" height="48" rx="4"></rect>
+		<text class="code" x="414" y="158" text-anchor="middle">{t.cellI32_1}</text>
+		<text class="edge-sub" x="414" y="176" text-anchor="middle">{t.cellTag}</text>
+		<rect class="panel" x="484" y="138" width="116" height="48" rx="4"></rect>
+		<text class="code" x="542" y="158" text-anchor="middle">{t.cellBox}</text>
+		<text class="edge-sub" x="542" y="176" text-anchor="middle">{t.cellPtr}</text>
+
+		<text class="edge-sub" x="344" y="222">{t.heapRow}</text>
+		<rect class="object" x="344" y="232" width="268" height="68" rx="6"></rect>
+		<rect class="panel" x="356" y="242" width="116" height="48" rx="4"></rect>
+		<text class="code" x="414" y="262" text-anchor="middle">{t.cellI32_2}</text>
+		<text class="edge-sub" x="414" y="280" text-anchor="middle">{t.cellTag}</text>
+		<rect class="panel" x="484" y="242" width="116" height="48" rx="4"></rect>
+		<text class="code" x="542" y="262" text-anchor="middle">{t.cellBox}</text>
+		<text class="edge-sub" x="542" y="280" text-anchor="middle">{t.cellPtr}</text>
+
+		<rect class="slot" x="484" y="332" width="116" height="52" rx="6"></rect>
+		<text class="code" x="542" y="354" text-anchor="middle">{t.nil}</text>
+		<text class="edge-sub" x="542" y="372" text-anchor="middle">{t.nilSub}</text>
+
+		<path class="arrow" d="M 542 196 V 226" marker-end="url(#brl-head)"></path>
+		<text class="edge-sub" x="554" y="216">{t.ptr8}</text>
+		<path class="arrow" d="M 542 300 V 326" marker-end="url(#brl-head)"></path>
+		<text class="edge-sub" x="554" y="318">{t.ptr8}</text>
+
+		<text class="edge-label" x="478" y="432" text-anchor="middle">{t.okFoot}</text>
+		<text class="edge-sub" x="478" y="454" text-anchor="middle">{t.okSize}</text>
+
+		<defs>
+			<marker id="brl-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

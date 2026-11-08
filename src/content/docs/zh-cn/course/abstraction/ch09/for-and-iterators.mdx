@@ -1,0 +1,409 @@
+---
+title: "剥开 for 循环语法糖：IntoIterator、Iterator 与遍历三件套"
+description: 从 for 循环的基础语法与初学者的三大困惑出发，认识标准库 IntoIterator 与 Iterator 契约，看清极小语言内核如何靠 4 行机械展开与三个独立类型打通遍历三件套。
+sidebar:
+  label: for 循环与迭代器三件套
+  order: 1
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import ForThreeModes from '../../../../../../components/course/ForThreeModes.astro';
+import forDesugar from '../../../../../../../examples/types/closures-iterators/src/bin/for-desugar.rs?raw';
+import loopPush from '../../../../../../../examples/types/closures-iterators/src/bin/loop-push.rs?raw';
+
+在传统编程语言里，学习 `for` 循环几乎不需要花费任何精力。但在 Rust 里，很多初学者刚写下第一个 `for` 循环就会接连碰壁；而想要深究底层原理的人，往往更想不通背后的类型是怎么变魔术的。
+
+本节我们就从 `for` 循环的基础语法和初学者的真实困惑出发，把这层看似神秘的窗户纸彻底捅破。你会看到：**语言内核为 `for` 循环做的事情少得惊人，真正干活的，全是我们前八章学过的类型机制与标准库 Trait。**
+
+---
+
+## `for` 循环的基础语法与初学者的三大困惑
+
+在 Rust 中，已经取消了 C / Java 那种需要手写索引增减、常因边界失误导致下标越界的 `for (int i = 0; i < n; i++)` 三段式语法。Rust 的 `for` 循环统一采用**「`for` + 元素绑定模式 + `in` + 目标表达式」**的结构：
+
+```rust
+// 1. 遍历一个整数范围（0..3 表示左闭右开区间：0, 1, 2；0..=3 则包含 3）
+for i in 0..3 {
+    println!("step {i}");
+}
+
+// 2. 遍历一个集合容器
+let names = vec![String::from("Rust"), String::from("Root")];
+for s in names {
+    println!("{s}");
+}
+```
+
+语法看上去一目了然。但只要你围绕上面这段遍历 `names` 的代码多写两行，三个在传统语言里闻所未闻的困惑就会立刻冒出来：
+
+### 困惑一：为什么遍历完一次，原集合 `names` 就报废了？
+
+如果你在上面的 `for s in names` 循环结束之后，想再打印一次 `names` 的长度：
+
+```rust
+let names = vec![String::from("Rust"), String::from("Root")];
+for s in names {
+    println!("{s}");
+}
+println!("total = {}", names.len()); // 编译失败：error[E0382]!
+```
+
+编译器会当场报错：`error[E0382]: borrow of moved value: names`。仅仅是遍历打印了一遍元素，整个 `names` 数组竟然直接失效了。
+
+### 困惑二：为什么在右边加个 `&`，左边的 `s` 也跟着变成了 `&String`？
+
+为了保住 `names`，教材和编译器提示都会告诉你：把 `in names` 改成借用写法 **`in &names`**。
+
+```rust
+for s in &names {
+    // 此时 names 保住了，但左边的 s 类型竟然自动变成了 &String
+    let _: &String = s;
+}
+```
+
+对于只想把代码跑通的人来说，背下「加 `&` 就是只读借用遍历」这条口诀就够了。但只要你多问一句原理，就会觉得匪夷所思：**我在 `in` 右边的容器 `names` 前面加了一个 `&`，凭什么 `in` 左边的元素变量 `s` 也自动从 `String` 变成了引用 `&String`？难道编译器在解析 `for` 语法时，专门写了识别 `&` 和 `&mut` 的特殊规则吗？**
+
+### 困惑三：为什么循环变量 `s` 前面不写 `mut`，每一轮却能赋上新值？
+
+在第 2 章我们学过，不加 `mut` 的变量是不可变绑定，不能重新赋值。可是在 `for s in &names` 里，`s` 前面明明没有写 `mut`，为什么第 1 轮它是 `"Rust"`，第 2 轮却能变成 `"Root"`？到底是谁在背后发生了可变修改？
+
+要一次性解开这三个困惑，我们必须先请出标准库里支撑 `for` 循环的两位真正主角：**`Iterator`** 与 **`IntoIterator`**。
+
+---
+
+## 登场准备：认识 `Iterator` 与 `IntoIterator` 两大契约
+
+在[第 7 章 7.5 节](/abstraction/kernel-and-library/)我们讲过，Rust 的设计哲学是「极小语言内核 + 标准库契约」。语言内核里根本没有内置「怎么遍历 `Vec` 或 `HashMap`」的逻辑，所有的遍历规则都定义在核心库 `core::iter` 的两个 Trait 里。
+
+在看编译器如何展开 `for` 循环之前，我们先认清这两个 Trait 的名字含义与签名长相。
+
+### 1. `Iterator`（迭代器契约 —— 负责「逐个吐出元素」的游标状态机）
+
+英文 **`Iterator`** 译为**迭代器**。你可以把它理解为一个**自带当前位置游标的取数状态机**。它在标准库中的核心定义只有短短三行：
+
+```rust
+pub trait Iterator {
+    type Item;
+    fn next(&mut self) -> Option<Self::Item>;
+}
+```
+
+请用我们在第 5、6、7 章学过的知识，逐行审视这份签名：
+- **`type Item;`**（[第 7 章 7.3 节：关联类型](/abstraction/associated-types/)）：声明该迭代器每次吐出的**元素类型**。因为一个具体的迭代器吐出什么类型是唯一确定的（一对一关系），所以用关联类型 `type Item` 锁死，而不是写成泛型 `Iterator<T>`。
+- **`&mut self`**（[第 5 章 5.3 节：可变接收者](/types/methods/)）：为什么调用 `next` 必须传入独占可变借用 `&mut self`？因为每取走一个元素，迭代器内部的**游标指针就必须往前挪动一格**——推进游标是在修改迭代器自身的状态。
+- **`-> Option<Self::Item>`**（[第 6 章 6.3 节：`Option` 枚举](/types/option-and-null/)）：怎么表达「还有下一个元素」和「已经走到头了」？
+  - 在 Java 中，`Iterator` 接口拆成了 `hasNext()`（问还有没有）和 `next()`（取下一个）两个方法；如果程序员不调 `hasNext()` 就直接调 `next()`，运行时就会抛出 `NoSuchElementException` 异常。
+  - Rust 直接用和类型 `Option` 把这两件事合二为一：还有元素时返回 **`Some(元素)`**，走到末尾没有元素时返回 **`None`**，从类型签名上根除了越界取值的可能。
+
+### 2. `IntoIterator`（转入迭代器契约 —— 负责「把容器变成迭代器」的入口）
+
+第二个契约叫 **`IntoIterator`**（字面意思是「可转换为迭代器的」）。我们在第 7 章学过，Rust 里凡是以 `Into...` 命名的契约或方法，都代表**按值接手 `self` 并将其转换成另一种类型**。它的标准库定义如下：
+
+```rust
+pub trait IntoIterator {
+    type Item;
+    type IntoIter: Iterator<Item = Self::Item>;
+    fn into_iter(self) -> Self::IntoIter;
+}
+```
+
+- **`type Item;`**：转换出的迭代器最终吐出的元素类型；
+- **`type IntoIter: Iterator<Item = Self::Item>;`**：带有 Trait 约束的关联类型，规定转换出来的目标类型 `IntoIter` 必须是一个合格的 `Iterator`，且两边吐出的 `Item` 类型必须一致；
+- **`fn into_iter(self) -> Self::IntoIter;`**：注意接收者是按值传递的 **`self`**——调用 `into_iter` 会接收当前值，并产出一个实现了 `Iterator` 的游标状态机。
+
+<Aside type="note" title="为什么需要 IntoIterator 和 Iterator 两个 Trait，合并成一个不行吗？">
+初学者看到这里常会问：**「为什么不直接让集合 `Vec<T>` 实现 `Iterator`（直接在 `Vec` 上调 `.next()`），非要多绕一层 `IntoIterator` 先把集合转成迭代器呢？」**
+
+这背后是极其严密的工程职责分离：
+1. **集合负责「存数据」，迭代器负责「记游标」**：
+   `Vec<T>` 的物理内存只有栈上的 24 字节 `(ptr, len, cap)`，它里面**并没有存放「当前遍历到了第几个下标」的游标字段**。如果强行让 `Vec<T>` 自己实现 `Iterator`，那么全天下所有的 `Vec` 哪怕从来不遍历，也得在内存里白白多背一个游标计数器。
+2. **如果合并，同一个集合将无法同时进行两次只读遍历**：
+   因为推进游标 `next(&mut self)` 要求独占可变借用 **`&mut self`**。如果游标直接长在 `Vec` 身上，那么遍历 `Vec` 就必须独占修改 `Vec` 本身——你连写一个双层嵌套循环同时只读遍历同一个数组都做不到。
+3. **拆开后的完美配合**：
+   把两者拆开后，`Vec` 只管存数据；每次需要遍历时，通过 **`IntoIterator::into_iter`** 临时生成一台独立的轻量游标状态机（实现了 **`Iterator`**）。两层循环就生成两台独立的游标，各自修改各自的游标位置，底层数据纹丝不动。
+</Aside>
+
+认识了这两张表，现在我们来看看语言内核究竟做了什么。
+
+---
+
+## 第一步：极小内核的唯一动作——把 `for` 机械展开为 4 行代码
+
+当你写下任何一行 `for 模式 in 表达式 { 循环体 }` 时，Rust 编译器内核**根本不去检查 `表达式` 是数组、切片还是带不带 `&`**。
+
+编译器只通过 `#[lang = "into_iter"]` 语言项钩子，把你写的 `for` 循环机械地脱糖（Desugar）展开为以下 4 行普通代码：
+
+```rust
+// 你写的语法糖：
+for x in expr {
+    body
+}
+
+// 编译器在底层机械展开的等价代码：
+{
+    let mut iter = IntoIterator::into_iter(expr); // 1. 循环开始前：调用一次 into_iter
+    while let Some(x) = iter.next() {             // 2. 每一轮循环：调用一次 iter.next()
+        body
+    }
+}
+```
+
+*(注：`while let 模式 = 表达式` 是我们在[第 6 章 6.2 节](/types/pattern-matching/)学过的 `if let` 的循环版本：只要右边 `iter.next()` 返回的值能匹配上 `Some(x)` 模式，就解构绑定出 `x` 并执行循环体；一旦返回 `None` 匹配失败，就立即跳出循环。)*
+
+仅仅看清这 4 行展开代码，刚才的**困惑一**和**困惑三**就当场烟消云散了：
+
+1. **解答困惑一（为什么 `for s in names` 会吃掉整个集合）**：
+   看展开的第 1 行：`IntoIterator::into_iter(names)`。
+   因为 `into_iter(self)` 的接收者是按值传递的 `self`，这完全等同于一次普通的函数按值传参。**并不是循环每一轮搬走一个元素才把 `names` 掏空的，而是在第 1 轮循环还没开始之前，整个 `names` 的所有权就已经一次性移交给了 `into_iter` 函数。** 循环结束后再去访问 `names`，自然会触发我们在第 2 章就熟知的 `error[E0382]`。
+2. **解答困惑三（为什么循环变量 `x` 不用加 `mut`，每轮却能变）**：
+   看展开的第 1 行和第 2 行：
+   - 真正需要在循环过程中不断修改内部状态的，是编译器自动生成的隐藏游标变量 **`let mut iter`**（因为每轮调用 `iter.next()` 都需要传入 `&mut iter`）；
+   - 而你写的循环变量 `x`，根本不是同一个变量在被反复重新赋值，而是每一轮进入 `while let Some(x) = iter.next()` 分支时**全新声明并绑定的局部变量**。上一轮的 `x` 在上一轮花括号结束时就已经离开作用域销毁了（除非你在单轮循环体内部需要修改 `x` 本身，才需要写 `for mut x in ...`）。
+
+---
+
+## 第二步：破解核心悬念——为什么 `in &names` 会让左边的 `s` 自动变成 `&String`？
+
+现在，我们直面全节最核心的那个问题（**困惑二**）：
+既然编译器对所有 `for` 循环一视同仁，统统机械展开成 `IntoIterator::into_iter(expr)`，而且 `into_iter(self)` 的参数明明写死了按值接收 **`self`**，那么当我们写下 `for s in &names` 时，到底发生了什么？为什么左边的 `s` 会自动变成 `&String`？
+
+很多人之所以想不通，是因为把 C++ 或 Java 的直觉带了进来，误以为「`names` 是真正的类型，`&names` 只是在 `names` 前面加了一个借用修饰符」。
+
+请立刻唤醒我们在[第 3 章 3.2 节：类型构造器](/types/type-constructors/)和[第 4 章 4.1 节：引用构造器](/types/reference-constructors/)立下的核心公理：
+> **`Vec<T>`、`&Vec<T>` 与 `&mut Vec<T>`，在编译器眼里是三个完全独立、地位平等的编译期类型实体。**
+
+因为它们是三个截然不同的独立类型，标准库的作者直接在库代码里，**分别为这三个类型各自写了一份独立的 `impl IntoIterator` 实现**。
+
+我们把标准库里的这三份实现并排摆在桌面上（省略底层细节，只看契约签名）：
+
+```rust
+// 实现 1：为拥有所有权的 Vec<T> 实现 IntoIterator
+impl<T> IntoIterator for Vec<T> {
+    type Item = T;                              // 锁死吐出的元素类型是 T
+    type IntoIter = std::vec::IntoIter<T>;      // 接管堆内存的消耗型迭代器
+    fn into_iter(self) -> Self::IntoIter { ... } // 这里的 self 类型就是 Vec<T>
+}
+
+// 实现 2：为共享引用类型 &'a Vec<T> 实现 IntoIterator
+impl<'a, T> IntoIterator for &'a Vec<T> {
+    type Item = &'a T;                          // 锁死吐出的元素类型是 &'a T
+    type IntoIter = std::slice::Iter<'a, T>;    // 只读借用游标迭代器
+    fn into_iter(self) -> Self::IntoIter {      // 注意：这里的 self 类型就是 &'a Vec<T>
+        self.iter()
+    }
+}
+
+// 实现 3：为可变引用类型 &'a mut Vec<T> 实现 IntoIterator
+impl<'a, T> IntoIterator for &'a mut Vec<T> {
+    type Item = &'a mut T;                      // 锁死吐出的元素类型是 &'a mut T
+    type IntoIter = std::slice::IterMut<'a, T>; // 可变借用游标迭代器
+    fn into_iter(self) -> Self::IntoIter {      // 注意：这里的 self 类型就是 &'a mut Vec<T>
+        self.iter_mut()
+    }
+}
+```
+
+请仔细看上面**实现 2** 的 `impl<'a, T> IntoIterator for &'a Vec<T>`，整个推理链条瞬间严丝合缝地扣上了：
+
+1. 当你写下 `for s in &names` 时，编译器机械将其展开为 `IntoIterator::into_iter(&names)`；
+2. 传入的实参是 `&names`，它的类型是 **`&Vec<String>`**；
+3. 编译器去查谁实现了 `IntoIterator`，精准匹配到了上面的**实现 2（`impl IntoIterator for &Vec<T>`）**；
+4. 在这份实现里，代词 `Self` 代表的就是 **`&Vec<String>`** 本身。因此 `fn into_iter(self)` 按值接收的 `self`，仅仅是把 `&names` 这个 8 字节的只读引用按位复制（`Copy`）了进去，原集合 `names` 的所有权纹丝未动；
+5. 更妙的是，在这份实现里，关联类型被明确写死为 **`type Item = &'a String;`**。于是每轮调用 `iter.next()` 返回的就是 `Option<&String>`，经过 `while let Some(s)` 模式解构后，左边的 `s` 自然就被推导成了 **`&String`**。
+
+没有任何编译器暗箱操作，也没有任何专门针对 `for` 的特殊语法规则。**仅仅依靠「引用本身就是独立类型」+「Trait 为不同类型分别实现」+「关联类型 `type Item` 一对一锁定输出」，标准库就用纯库代码实现了三种截然不同的遍历模式。**
+
+<Aside type="tip" title="反证核对：如果某个集合故意不给 &mut C 实现 IntoIterator，会发生什么？">
+正因为 `for x in v`、`for x in &v` 和 `for x in &mut v` 背后靠的是三份各自独立的 `impl IntoIterator` 块（而不是编译器的内置语法捆绑），这立刻引出一个可验证的推论：**如果某个集合类型 `C` 只为 `C` 和 `&C` 实现了 `IntoIterator`，却没有为 `&mut C` 实现 `IntoIterator`，那么该集合就根本不支持 `for x in &mut v`。**
+
+这在标准库里不仅真实存在，而且是一项关键的安全设计：
+- **典型案例一：`HashSet<T>`（哈希集合）完全不支持 `for x in &mut set`**。
+  标准库为 `HashSet<T>` 和 `&HashSet<T>` 实现了 `IntoIterator`，但**故意没有为 `&mut HashSet<T>` 实现 `IntoIterator`**（也没有提供 `.iter_mut()` 方法）。原因在于：元素在哈希桶里的存放位置是由它自身的哈希值决定的；如果允许你通过 `for x in &mut set` 拿到 `&mut T` 原地修改了元素内容，它的哈希值就会改变，但它在哈希表里的槽位却没变，整个哈希集合的内部查找不变量就会被破坏。因此，当你写下 `for x in &mut set` 时，编译器会直接报 `error[E0277]: &mut HashSet<...> is not an iterator`。
+- **典型案例二：`HashMap<K, V>` 在 `&mut map` 遍历中只给值 `V` 的可变引用**。
+  同理，在[第 4 章 4.6 节](/types/hashmaps/)学过的 `HashMap<K, V>` 中，标准库在编写 `impl<'a, K, V> IntoIterator for &'a mut HashMap<K, V>` 时，将关联类型精确锁死为 **`type Item = (&'a K, &'a mut V);`**——当你写 `for (k, v) in &mut map` 时，值 `v` 是可修改的 `&mut V`，而键 `k` 依然被锁死为只读引用 `&K`，从类型源头杜绝了原地篡改哈希键的可能。
+</Aside>
+
+### 遍历三件套与接收者三件套的会师
+
+把这三种写法放在一起，你会发现它们正是我们在[第 5 章 5.3 节](/types/methods/)学过的**方法接收者三件套（`self` / `&self` / `&mut self`）**在循环遍历场景下的同构重现：
+
+<ForThreeModes />
+
+| `for` 循环写法 | 传给 `into_iter(self)` 的 `Self` 类型 | 匹配的 `IntoIterator` 实现 | 左边变量 `s` 的类型（`Item`） | 循环后原集合 `names` 的状态 |
+| --- | --- | --- | --- | --- |
+| **`for s in &names`** | **`&Vec<String>`** | 实现 2（内部调 `names.iter()`） | **`&String`**（只读借用元素） | **原封不动，后续可正常使用** |
+| **`for s in &mut names`** | **`&mut Vec<String>`** | 实现 3（内部调 `names.iter_mut()`） | **`&mut String`**（原地修改元素） | **保留所有权，元素内容已更新** |
+| **`for s in names`** | **`Vec<String>`** | 实现 1（接管堆内存缓冲） | **`String`**（移出元素所有权） | **已移动失效（再用报 `E0382`）** |
+
+运行下面这份完整的实验源码，亲手核对 `for` 循环与手动展开的等价性，以及三种遍历模式下变量 `s` 的真实类型：
+
+<small class="code-source">源文件：<code>examples/types/closures-iterators/src/bin/for-desugar.rs</code></small>
+<Code code={forDesugar} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+for:    10
+for:    20
+manual: 10
+manual: 20
+read: Rust (len = 4)
+read: Root (len = 4)
+after mut loop: ["Rust!", "Root!"]
+consumed: Rust!
+consumed: Root!
+```
+
+如果你取消源码最后一行 `println!("still here? {names:?}");` 的注释，就会看到编译器报出 `error[E0382]: borrow of moved value: names`，并且报错信息会明确指出：`names` moved due to this implicit call to `.into_iter()`（`names` 因这次隐式调用 `.into_iter()` 而被移动）。
+
+---
+
+## 第三步：一揽子实现与 `.iter()` / `.iter_mut()` 手动档
+
+弄懂了上面的机制后，细心的你一定还会追问两个问题：
+
+### 追问 1：如果 `in` 后面放的本来就是一个 `Iterator`（比如 `0..3` 或 `names.iter()`），为什么也能放进 `for` 循环？
+
+前面刚说过，`for` 循环在底层**只认 `IntoIterator`**（固定调用 `IntoIterator::into_iter(expr)`）。
+那么，当我们直接写 `for i in 0..3` 或者 `for s in names.iter()` 时，`0..3`（范围类型 `Range<i32>`）和 `names.iter()`（游标类型 `slice::Iter`）本身就已经是迭代器 `Iterator` 了，为什么对它们调 `.into_iter()` 不会报错呢？
+
+答案就在我们在[第 7 章 7.4 节](/abstraction/conversions-and-from/)学过的**一揽子实现（Blanket Implementation）**。标准库在 `core::iter` 里写下了这样一段只有 7 行的通用代码：
+
+```rust
+// 标准库中的一揽子实现：凡是实现了 Iterator 的类型 I，自动实现 IntoIterator
+impl<I: Iterator> IntoIterator for I {
+    type Item = I::Item;
+    type IntoIter = I;
+
+    fn into_iter(self) -> I {
+        self // 自己本来就是迭代器，原封不动把自己返回出去
+    }
+}
+```
+
+这段代码的含义是：**全天下所有实现了 `Iterator` 的类型，全都自动实现了 `IntoIterator`，且它的 `into_iter(self)` 方法什么都不做，直接把 `self` 原样交还。**
+正因为有这条一揽子实现兜底，`for` 循环既能吃集合（如 `&names`，调完 `into_iter` 变成迭代器），也能直接吃任何现成的迭代器（如 `0..3`、`names.iter().enumerate()`，调完 `into_iter` 还是它自己）。
+
+### 追问 2：既然 `for s in &names` 和 `for s in names.iter()` 完全等价，为什么集合还要提供 `.iter()` 和 `.iter_mut()` 方法？
+
+回看第二步的标准库源码，你会发现 `&Vec<T>` 的 `into_iter` 内部调用的就是 `self.iter()`；`&mut Vec<T>` 的 `into_iter` 内部调用的就是 `self.iter_mut()`。
+
+既然在 `for` 循环里写 `&names` 和 `&mut names` 更简短，为什么 `Vec`、切片、`HashMap` 等集合还要专门提供 `.iter()` 和 `.iter_mut()` 这两个固有方法？
+
+原因在于：**只有 `for` 循环的语法糖会替你自动调用 `IntoIterator::into_iter`。**
+一旦你离开了 `for` 循环，想在普通表达式里直接开启一条迭代器方法链（这正是我们将在 9.3 节学习的适配器链），比如想算出所有字符串的总长度：
+- 你**不能**写 `(&names).map(...).sum()`，因为 `&Vec<String>` 只是集合的引用，它本身并不是 `Iterator`，身上没有 `.map()` 和 `.sum()` 方法；
+- 这时没人替你隐式调用 `into_iter()`，你就必须手动调用 **`names.iter()`**（或 `names.iter_mut()`）先把集合转换成游标迭代器，再去接后面的方法链。
+
+因此，工程上的分工非常清晰：
+- **直接用 `for` 循环遍历整个集合时**：优先写简洁的 **`for x in &v`**、**`for x in &mut v`**、**`for x in v`**；
+- **不写 `for` 循环、需要直接链式调用迭代器方法时**：使用手动档 **`v.iter()`**、**`v.iter_mut()`**、**`v.into_iter()`**。
+
+---
+
+## 第四步：游标的物理长相与跨循环的借用排他（`E0502`）
+
+最后，我们来看看 `for x in &v` 生成的那个游标迭代器 `std::slice::Iter<'a, T>`，在物理内存里到底长什么样，以及它如何把我们在[第 4 章 4.4 节](/types/vectors/)学过的「扩容安全防线」延伸到整个循环周期。
+
+在[第 4 章 4.3 节](/types/slices/)中我们知道，切片引用 `&[T]` 是一个占 **16 字节**的胖指针 `(ptr, len)`（起始地址 + 元素个数）。
+而只读迭代器 `Iter<'a, T>` 在 64 位平台上同样占 **16 字节**——它内部存放的是两个指针 **`(ptr, end)`**：
+- `end` 固定指向连续内存末尾的边界地址；
+- `ptr` 一开始指向第 0 个元素；每调用一次 `iter.next()`，`ptr` 就往后移动一个元素的步长，直到 `ptr == end` 时返回 `None`。
+
+也就是说，**`Iter<'a, T>` 在物理上就是一个「会自己往前走的切片胖指针」，在编译期类型上则携带着对原集合 `v` 的共享借用生命周期 `'a`**。
+
+看清了这一点，你就能理解为什么下面这段「边遍历集合、边往集合里 `push` 新元素」的代码会被编译器当场拦下了：
+
+```rust
+let mut v = vec![1, 2, 3];
+for x in &v {
+    println!("visiting {x}");
+    v.push(*x); // 编译失败：error[E0502]!
+}
+```
+
+把这段代码还原成第一步的 4 行展开形式，罪魁祸首一目了然：
+
+```rust
+{
+    let mut iter = IntoIterator::into_iter(&v); // <--- 对 v 的共享借用从这里开始
+    while let Some(x) = iter.next() {           // <--- 每轮条件判断都要使用 iter，共享借用一直持续
+        println!("visiting {x}");
+        v.push(*x);                             // <--- 试图请求 &mut v，与存活的 iter 正面冲突（E0502）
+    }
+} // <--- 循环彻底结束，iter 离开作用域，对 v 的共享借用才在这里结束
+```
+
+- **物理原因**：正如第 4 章所讲，`v.push(*x)` 一旦触发容量不足（`len == cap`），就会在堆上重新分配一块更大的内存并释放旧内存；此时游标 `iter` 手里攥着的 `(ptr, end)` 指针就会瞬间变成指向已释放旧堆的**悬垂指针**；
+- **与 Java 的机制对照**：在 Java 中写同样的 `for (int x : list) { list.add(x); }`，编译期完全无法察觉，只能靠集合在运行时维护一个 `modCount` 修改计数器，等程序跑到那一行时在运行时崩溃并抛出 `ConcurrentModificationException`。而 Rust 把借用有效期直接编码进了游标类型 `Iter<'a, T>` 里——因为每轮 `while let Some(x) = iter.next()` 都要使用 `iter`，所以 `iter` 持有的共享借用横跨了**整个循环周期**，任何在循环体内修改容器结构的操作都会在编译期被 **`error[E0502]`** 直接拦截。
+
+运行下面这份实验源码，核对 `Iter` 的 16 字节尺寸，以及循环内外调用 `v.push` 的编译边界（更底层的 32 字节 `IntoIter` 内存布局与中途 `break` 释放实验可按需参阅[附录 B.3：`for` 的展开](/appendix/mechanisms/for-loop/)）：
+
+<small class="code-source">源文件：<code>examples/types/closures-iterators/src/bin/loop-push.rs</code></small>
+<Code code={loopPush} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+Vec<i32> = 24B, &[i32] = 16B, slice::Iter<i32> = 16B
+visiting 1
+visiting 2
+visiting 3
+after loop: [1, 2, 3, 4]
+```
+
+---
+
+## 小结
+
+1. **极小内核的 4 行展开**：`for x in expr { body }` 在语言层只是一条语法糖，编译器机械将其展开为一次 `let mut iter = IntoIterator::into_iter(expr);` 加一个 `while let Some(x) = iter.next()` 循环。原集合的移动发生在第 1 轮循环之前的 `into_iter` 按值传参处；循环中真正带 `mut` 发生状态改变的是游标 `iter`，而 `x` 是每轮重新解构绑定的新变量。
+2. **三个独立类型打通遍历三件套**：`Vec<T>`、`&Vec<T>`、`&mut Vec<T>` 是三个独立的编译期类型实体，标准库分别为它们各自实现了 `IntoIterator`，并用关联类型 `type Item` 一对一锁死了产出类型 `T`、`&T` 与 `&mut T`。
+3. **一揽子实现与跨循环借用检查**：标准库通过 `impl<I: Iterator> IntoIterator for I` 让所有现成的迭代器都能直接放进 `for` 循环；而借用迭代器 `Iter<'a, T>`（16 字节双指针游标）持有的共享借用横跨整个 `while let` 循环，在编译期以 `E0502` 根除了遍历期间扩容修改导致的悬垂风险。
+
+现在，我们已经把 `Iterator` 的机械构造彻底拆开了。但如果你翻看标准库 `Iterator` 的文档，会发现除了 `next` 之外，它上面最出名的是 `.filter(|x| ...)`、`.map(|x| ...)` 这些接收**闭包（Closure）**的方法。
+
+那个用两条竖线写出来的 `|x| ...` 到底是什么类型？为什么编译器又为它准备了 `FnOnce`、`FnMut`、`Fn` 三个不同的 Trait？下一节，我们用同样的第一性原理视角，把闭包的语法糖外壳也彻底剥开。
+
+[继续：祛魅闭包 · 匿名捕获 struct 与 Fn 家族 →](/abstraction/closures/)
+
+### 动手核对与小练习
+
+1. **类型与所有权推演**：阅读下面这段代码，请回答：
+   - 第 1 个循环里的变量 `w` 是什么类型？为什么 `words` 在第 1 个循环后还能继续使用？
+   - 如果把第 1 个循环写成 `for mut w in &words`，能否在循环体里调用 `w.push_str("!")` 修改字符串内容？为什么？
+   ```rust
+   let words = vec![String::from("alpha"), String::from("beta")];
+   for w in &words {
+       println!("{w}");
+   }
+   println!("count = {}", words.len());
+   ```
+2. **手动脱糖练习**：请不使用 `for` 关键字，将下面这段可变遍历代码手动改写为编译器底层展开的 `IntoIterator::into_iter` + `while let` 形式，并指出改写后哪两个地方必须写 `mut`（或 `&mut`）：
+   ```rust
+   let mut scores = vec![10, 20, 30];
+   for s in &mut scores {
+       *s += 5;
+   }
+   ```
+
+<details>
+<summary>点击核对参考答案</summary>
+
+1. **类型与所有权推演**：
+   - 第 1 个循环中 `in` 后面的表达式是 `&words`（类型为 `&Vec<String>`），匹配的是 `impl<'a, T> IntoIterator for &'a Vec<T>`，其关联类型 `type Item = &'a String`，因此 **`w` 的类型是 `&String`**。传给 `into_iter` 的只是 `&words` 这个共享引用，原变量 `words` 未发生移动，循环后依然有效。
+   - **不能**。如果写成 `for mut w in &words`，这里的 `mut` 修饰的只是局部变量绑定 `w` 本身（允许把 `w` 重新指向别的 `&String`），但 `w` 的类型依然是**不可变共享引用 `&String`**，无法通过它调用需要 `&mut String` 的 `.push_str("!")`（会报 `E0596`）。若要修改元素内容，必须把 `in` 右边写成可变借用：`for w in &mut words`。
+2. **手动脱糖练习**：
+   ```rust
+   let mut scores = vec![10, 20, 30];
+   {
+       let mut iter = IntoIterator::into_iter(&mut scores);
+       while let Some(s) = iter.next() {
+           *s += 5;
+       }
+   }
+   ```
+   除原数组 `let mut scores` 外，展开代码中有两处关键可变标记：一是传入 `into_iter` 的实参必须是可变引用 **`&mut scores`**（使 `Self` 为 `&mut Vec<i32>`，产出 `s: &mut i32`）；二是游标变量必须声明为 **`let mut iter`**（因为每轮调用 `iter.next()` 需要传入 `&mut self` 推进游标）。
+
+</details>

@@ -1,0 +1,273 @@
+---
+title: "单一所有权的堆智能指针：Box<T>"
+description: 从类型构造器视角认识最纯粹的堆独占智能指针 Box<T>，对比它与引用 &T 及 Java new 对象句柄的异同，并从持有动态大小类型（Box<[T]> / Box<dyn Trait>）、避免大体积栈复制与打断递归类型无限大小（E0072）三个维度掌握其工程使命。
+sidebar:
+  label: "堆智能指针 Box<T>"
+  order: 2
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import BoxMemoryComparisonDiagram from '../../../../../../components/diagrams/BoxMemoryComparisonDiagram.astro';
+import BoxRecursiveListDiagram from '../../../../../../components/diagrams/BoxRecursiveListDiagram.astro';
+import boxBasics from '../../../../../../../examples/types/box-deref-drop/src/bin/box-basics.rs?raw';
+import boxDstAndSize from '../../../../../../../examples/types/box-deref-drop/src/bin/box-dst-and-size.rs?raw';
+import boxRecursive from '../../../../../../../examples/types/box-deref-drop/src/bin/box-recursive.rs?raw';
+
+在上一节的全景图中，我们看到 `Vec<T>` 和 `String` 虽然也是管理堆内存的智能指针，但它们为了支持动态增删和连续切片，在栈上背着 24 字节的 `(ptr, len, cap)` 控制头。
+
+如果我们的需求非常纯粹：**既不需要动态扩容（不需要 `cap` 容量字段），也不是一串变长集合，仅仅是想把某一个原本内联在栈帧上的值 `T` 搬到堆上去住，并继续由一个变量独自持有它的释放责任**，该用什么工具？
+
+这就是智能指针家族里结构最精简、最纯粹的第一位成员——**`Box<T>`**（通常称为**装箱指针**或**堆独占指针**）。
+
+---
+
+## 第一步：从类型构造器看 `Box<T>`——把 `T` 搬上堆的所有权句柄
+
+回到我们在[第 3 章 3.2 节](/types/type-constructors/)建立的核心公式：**类型构造器 + 编译期参数 `T` → 编译期类型实体**。
+
+当你手里有一个普通结构体 `struct Point { x: i32, y: i32 }`（占 8 字节），将它填入 `Box<...>` 构造器并调用关联函数 **`Box::new(...)`** 时，就生成了一个全新的编译期类型实体 **`Box<Point>`**：
+
+```rust
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+let stack_pt: Point = Point { x: 10, y: 20 };             // 1. 直接内联在栈帧上（8 字节）
+let ref_pt: &Point = &stack_pt;                           // 2. 栈上存 8 字节地址，只读借用，不管释放
+let boxed_pt: Box<Point> = Box::new(Point { x: 30, y: 40 }); // 3. 数据搬到堆上，栈上存 8 字节独占指针
+```
+
+写下 `Box::new(Point { x: 30, y: 40 })` 的这一刻，底层依次发生了两件事：
+1. **物理位置的搬迁（栈 → 堆）**：程序向操作系统的堆分配器申请一块恰好能装下 `Point`（8 字节）的堆内存，把 `{ x: 30, y: 40 }` 写进那块堆空间，并在当前栈帧的变量 `boxed_pt` 里只留下一个指向那块堆内存的 **8 字节地址**；
+2. **能力与约束的重写（独占所有权）**：虽然 `boxed_pt: Box<Point>` 和普通引用 `ref_pt: &Point` 在运行时栈上**长得一模一样（都是那 8 字节的内存地址，没有任何多余的对象头或引用计数）**，但它们在编译期类型实体上记载的约束截然相反——`&Point` 只是临时借用，不承担释放责任且实现了 `Copy`；而 **`Box<Point>` 是堆上那个 `Point` 的唯一所有者**：
+   - 把 `boxed_pt` 赋值给新变量 `let moved_box = boxed_pt;` 时，触发的是**移动（Move）**——栈上只复制那 8 字节地址，原变量 `boxed_pt` 立即失效（再用报 `E0382`）；
+   - 当持有它的变量最终离开作用域 `{}` 时，编译器会自动先清理堆上的 `Point`，再回收那块堆内存。
+
+<BoxMemoryComparisonDiagram />
+
+### 跨语言对照：`Box::new` 与 Java / C++ 的 `new` 有什么异同？
+
+如果你有 Java、C#、Go 或 C++ 背景，看到 `Box::new(Point { ... })` 的内存结构，一定会产生强烈的熟悉感：
+
+- **它和 Java 的对象句柄（Reference）有多像？**
+  在 Java 中，除基本类型外，所有自定义类实例都必须通过 `new Point(30, 40)` 创建在堆上，栈上的变量 `Point pt` 存的只是一个指向堆内存的句柄（指针），访问字段时直接写 `pt.x`。
+  从内存布局和使用手感上看，Rust 的 **`Box<Point>` 几乎就相当于你在 Java 里用 `new` 出来的那个对象句柄**——在 Rust 里拿着 `boxed_pt`，你同样可以直接用点号写 `boxed_pt.x` 访问字段，或者写 `*boxed_pt` 解引用拿到里面的值（第 5.3 节的点号自动解引用与下一节的 `Deref` 契约在此生效）。
+- **它的本质区别在哪里？**
+  1. **对比 Java（按需上堆 + 零 GC 确定性释放）**：在 Java 中，上堆是强制默认的，且栈上的句柄可以随便复制给十几个变量共享，最后靠后台垃圾回收器（GC）扫描回收；而在 Rust 中，栈内联才是默认选项，只有当你显式写下 `Box::new` 时数据才会上堆，并且 **`Box<T>` 严格遵守单一所有权**——不带 12～16 字节的 JVM 对象头，也不需要 GC，变量一离开作用域当场释放。
+  2. **对比 C++（编译器静态兜底的 `std::unique_ptr<T>`）**：如果你写过现代 C++，`Box<T>` 在物理语义上对标的就是 C++11 的独占智能指针 `std::unique_ptr<T>`（或安全托管版的裸 `new` / `delete`）。区别在于 C++ 的 `std::unique_ptr` 在被 `std::move` 掏空后如果继续解引用，编译器默认不报错，会在运行时触发空指针崩溃；而 Rust 的 `Box<T>` 一旦移走，编译期状态表立刻封死原变量（报 `E0382`），且保证非空（同样享受第 6 章 6.3 节讲过的空位优化，`size_of::<Option<Box<T>>>() == 8`）。
+
+运行下面这段代码，核对 `Point`、`&Point` 与 `Box<Point>` 的字节大小、字段访问以及移动语义：
+
+<small class="code-source">源文件：<code>examples/types/box-deref-drop/src/bin/box-basics.rs</code></small>
+<Code code={boxBasics} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+sizes: Point = 8B, &Point = 8B, Box<Point> = 8B
+ref_pt: (10, 20)
+boxed_pt: (30, 40)
+moved_box: (30, 40)
+```
+
+---
+
+## 第二步：既然栈内联这么快，工程中为什么还需要 `Box<T>`？（三大核心使命）
+
+看清了 `Box<T>` 的物理长相后，一个非常实际的工程问题来了：
+**既然直接把值放在栈上（`let pt = Point { ... }`）既省去了一次堆内存分配，访问时又少了一次指针跳转，那我们在日常写 Rust 代码时，到底在什么场景下才应该动用 `Box<T>`？**
+
+千万不要像写 Java 那样「是个结构体就习惯性套一层 `Box::new`」。在 Rust 工程中，只有遇到以下**三大核心场景**时，才是 `Box<T>` 登场的最佳时刻。我们先从最常见的前两个工程场景说起。
+
+### 使命一：持有动态大小类型（DST）的独占所有权（`Box<[T]>` 与 `Box<dyn Trait>`）
+
+这是 `Box<T>` 在真实项目里出镜率最高的使命——而且你在前面的章节里其实已经见过它的两位主角了。
+
+回想我们在[第 4 章 4.3 节](/types/slices/)和[第 8 章 8.2 节](/abstraction/dyn-trait-and-vtable/)学过的**动态大小类型（DST）**：
+- 裸切片类型 **`[i32]`** 因为擦除了编译期长度 `; N`，编译期不知道它占多少字节；
+- 裸动态契约类型 **`dyn Summary`** 因为擦除了底层具体类型，编译期也不知道它占多少字节。
+
+因为栈帧槽位要求所有局部变量在编译期尺寸固定（`Sized`），`[i32]` 和 `dyn Summary` 绝不能直接按值放在栈上。
+当时我们是怎么处理的？
+- 如果只需要**临时借用**，我们套上引用构造器 `&`，合成出 **16 字节胖指针** `&[i32]`（存 `(ptr, len)`）和 `&dyn Summary`（存 `(data_ptr, vtable_ptr)`）；
+- 可如果我们需要把这段不定长的数据或这个动态多态对象**作为函数的返回值交出去、或者装进结构体字段里长期持有所有权**呢？引用 `&` 不持有所有权，一旦原函数栈帧退场就会悬垂；此时，我们就把外层的 `&` 换成堆独占构造器 **`Box<...>`**，组合出 **`Box<[i32]>`** 与 **`Box<dyn Summary>`**：
+
+| 类型组合 | 栈上大小 | 栈上存放的两个机器字 | 对比其他容器的工程价值 |
+| --- | --- | --- | --- |
+| **`Box<[T]>`**<br/>（装箱切片） | **16 字节** | `(ptr, len)`<br/>堆首地址 + 元素个数 | 对比 24 字节的 `Vec<T>` `(ptr, len, cap)`：当一段动态数组构建完毕、后续**不再增删扩容**时，转为 `Box<[T]>` 可裁掉冗余的 `cap` 字段（栈上省 8 字节）并回收多余预留容量，同时在类型签名上承诺「长度已锁定不变」。 |
+| **`Box<dyn Trait>`**<br/>（装箱动态契约） | **16 字节** | `(data_ptr, vtable_ptr)`<br/>堆数据地址 + 虚表地址 | 对比借用版的 `&dyn Trait`：真实具体类型实例住在堆上，由这 16 字节胖指针独自持有释放责任，因此可以自由跨出函数返回或装入 `Vec<Box<dyn Trait>>` 异构集合。 |
+
+请再次体会我们在第 3 章强调的**正交零件组合威力**：
+同样是一个 `Box<T>` 构造器，当填入编译期定长的 `Point` 时，它在栈上是 **8 字节瘦指针**；当填入动态大小类型 `[i32]` 或 `dyn Summary` 时，它与 `&` 完全同构，自动扩充为 **16 字节胖指针**，并在离开作用域时自动根据长度 `len` 或虚表里的 `drop_in_place` 函数清理堆内存。
+
+### 使命二：避免大体积栈数据的移动拷贝，或防止大枚举变体撑爆内存
+
+第二个常见使命来自物理内存的复制成本与栈空间限制：
+
+1. **大体积缓冲区的零拷贝所有权转移**：
+   假设你在处理图像或网络协议时，定义了一个包含百万字节的定长缓冲区 `[u8; 1_048_576]`（1 MB）。
+   - 如果直接作为栈变量 `let buf = [0u8; 1_048_576];`，一方面操作系统的线程默认栈空间通常只有几兆字节（2 MB～8 MB），直接在栈上开辟大数组极易引发**栈溢出（Stack Overflow）**；另一方面，当你把 `buf` 按值传给另一个函数或返回时，移动（Move）在底层需要把这 1 MB 栈字节按位复制到新位置；
+   - 如果用 **`Box<T>`** 把它放到堆上，数据稳稳住在宽敞的堆内存里，而每次按值移动 `Box<[u8; 1_048_576]>` 时，**栈上永远只需要复制 8 个字节的地址**。
+2. **给头重脚轻的 `enum` 瘦身（兑现第 6 章 6.1 节的伏笔）**：
+   回想[第 6 章 6.1 节](/types/enums-and-adt/)讲过的枚举内存布局：`enum` 的总大小必须迁就**最大的那个变体**。如果一个高频使用的枚举 `Packet` 有 5 个变体都只占 8～16 字节，唯独第 6 个罕见的错误诊断变体 `CrashDump( FullContext )` 里塞了一个 2048 字节的大结构体：
+   ```rust
+   enum Packet {
+       Heartbeat,                   // 0B 载荷
+       Ack(u64),                    // 8B 载荷
+       // ❌ 若直接内联写 CrashDump(FullContext)，会让每一个 Heartbeat 都跟着占 2000 多字节
+       // ✅ 用 Box<FullContext> 把大载荷搬到堆上，该变体在枚举内立刻缩回 8 字节指针
+       CrashDump(Box<FullContext>), // 8B 载荷（仅在真正发生 CrashDump 时才分配堆内存）
+   }
+   ```
+   只需给那个罕见的大变体套上一层 `Box<FullContext>`，整个 `enum Packet` 的大小就从两千多字节瞬间降回 **16 字节**。
+
+运行下面这段代码，核对 `Vec<i32>`（24B）转为 `Box<[i32]>`（16B）以及 `Box<dyn Summary>`（16B）的真实表现：
+
+<small class="code-source">源文件：<code>examples/types/box-deref-drop/src/bin/box-dst-and-size.rs</code></small>
+<Code code={boxDstAndSize} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+Vec<i32> = 24B, Box<[i32]> = 16B, Box<dyn Summary> = 16B
+boxed_slice sum = 100
+boxed_dyn -> latency_ms=12
+```
+
+---
+
+## 第三步：使命三——打断递归类型（Recursive Type）的编译期无限大小（`E0072`）
+
+除了上面两项日常高频用法，`Box<T>` 还有第三项在编写树形结构（如抽象语法树 AST、JSON 嵌套值、链表或二叉树）时无可替代的使命：**帮编译器算出递归类型的固定字节大小**。
+
+什么叫**递归类型（Recursive Type）**？就是**一个类型在定义自己的字段或变体时，内部又包含了一个自己同类型的值**。
+最经典的例子就是单向链表（Cons List）：一个链表节点要么是空（`Nil`），要么包含「当前整数 `i32` + 剩下的子链表 `BadList`」。
+
+如果我们顺着直觉，不加任何指针，直接写出下面这个枚举定义：
+
+```rust
+enum BadList {
+    Cons(i32, BadList), // ❌ 变体内部直接按值包含了一个 BadList
+    Nil,
+}
+```
+
+当你编译这段代码时，Rust 编译器会立刻以 **`error[E0072]`** 拦住你，并给出极其清晰的修复提示：
+
+<small class="code-source">编译器诊断摘要：取消 box-recursive.rs 中 BadList 的注释后</small>
+```text
+error[E0072]: recursive type `BadList` has infinite size
+ --> src/bin/box-recursive.rs:5:1
+  |
+5 | enum BadList {
+  | ^^^^^^^^^^^^
+6 |     Cons(i32, BadList),
+  |               ------- recursive without indirection
+  |
+help: insert some indirection (e.g., a `Box`, `Rc`, or `&`) to break the cycle
+  |
+6 |     Cons(i32, Box<BadList>),
+  |               ++++       +
+```
+
+### 为什么直接内联 `BadList` 会算出「无限大小（infinite size）」？
+
+让我们扮演一次编译器，用第 6 章的枚举尺寸公式算一算 `BadList` 占多少字节：
+- 要算出 `BadList` 的大小，就要看它最大的变体 `Cons(i32, BadList)` 占多大；
+- `Cons` 里包含一个 4 字节的 `i32`，外加一个内联的 `BadList`；
+- 可是里面那个 `BadList` 里又包含一个 `Cons(i32, BadList)`，里面又套着一个 `BadList`……
+
+```text
+size(BadList) = 4 + size(BadList) = 4 + (4 + (4 + ...)) = ∞
+```
+
+因为值类型是**直接原地内联铺开**的，这种无限套娃在数学上永远没有终点，编译器根本无法为 `BadList` 算出一个有限的字节数。
+
+### 套上 `Box<List>` 如何当场破局？
+
+看上面编译器报错末尾的 `help` 提示：`insert some indirection (e.g., a Box, Rc, or &) to break the cycle`（插入一层间接指针来打断循环）。
+
+我们只需把内部的 `List` 用 **`Box<List>`** 包起来：
+
+```rust
+enum List {
+    Cons(i32, Box<List>), // ✅ 用固定占 8 字节的 Box<List> 指针打断内联递归
+    Nil,
+}
+```
+
+现在再让编译器算一次 `List` 的大小：
+- `Cons` 变体里包含一个 `i32`（4 字节，加 4 字节对齐填充共 8 字节），以及一个 **`Box<List>`**；
+- 编译器根本不需要去关心 `Box<List>` 指向的下一个节点有多大——因为**无论 `T` 是什么定长类型，`Box<T>` 在栈上永远只是一个固定占 8 字节的内存地址**；
+- 于是，递归链条在 `Box` 这里被干脆利落地截断了：整个 `enum List` 在栈上固定只占 **`8 + 8 = 16` 字节**，下一个节点真实的数据被放在了堆上。
+
+<BoxRecursiveListDiagram />
+
+运行下面这份完整的实验源码，验证 `List` 的 16 字节固定尺寸以及递归模式匹配求和：
+
+<small class="code-source">源文件：<code>examples/types/box-deref-drop/src/bin/box-recursive.rs</code></small>
+<Code code={boxRecursive} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+size of List = 16 bytes
+sum of list = 6
+```
+
+---
+
+## 小结与追问
+
+1. **`Box<T>` 是单一所有权的堆分配构造器**：调用 `Box::new(v)` 把值 `v` 搬到堆上，栈上只留一个指向堆内存的指针（对定长 `T` 为 8 字节瘦指针，对 DST 为 16 字节胖指针）。它与 `&T` 内存布局相同，但独占所有权（赋值即移动，离开作用域自动释放堆内存），相当于带有编译期所有权检查、零对象头的 Java `new` 句柄。
+2. **`Box<T>` 的三大核心工程使命**：
+   - **使命一（最常见）**：持有动态大小类型（DST）的所有权，如长度锁定的装箱切片 **`Box<[T]>`**（16B，比 `Vec<T>` 省去 `cap`）与跨函数返回的动态多态指针 **`Box<dyn Trait>`**（16B）；
+   - **使命二**：将巨型数组或头重脚轻枚举中的罕见大变体搬到堆上，避免栈溢出并让移动操作缩减为 8 字节指针复制；
+   - **使命三**：在链表、树、AST 等**递归类型**中插入固定 8 字节的间接层（如 `Cons(i32, Box<List>)`），打断编译期的无限大小循环（`E0072`）。
+
+现在，请翻回刚才的 `box-recursive.rs` 第 17 行，观察那行模式匹配代码：
+在 `List::Cons(val, next) => val + sum_list(next)` 中，`next` 的类型明明是 **`&Box<List>`**，而函数 `sum_list(list: &List)` 签名要求的参数类型却是 **`&List`**——为什么编译器允许我们把 `&Box<List>` 直接当成 `&List` 传进去？为什么拿着 `boxed_pt: Box<Point>` 可以直接写 `*boxed_pt` 解引用？
+
+下一节，我们就掀开支撑这一切的底层系统契约——**解引用的两层底座：内建 `*` 锚点与 `Deref` / `DerefMut` Trait**。
+
+### 动手核对与小练习
+
+1. **栈与堆字节盘点**：在 64 位平台上，执行完下面三行代码后，变量 `a`、`b`、`c` 在**当前函数栈帧**上各自占多少字节？它们在**堆内存**上各自占用了多少字节？
+   ```rust
+   let a: [u64; 100] = [0; 100];
+   let b: Box<[u64; 100]> = Box::new([0; 100]);
+   let c: Box<[u64]> = vec![0u64; 100].into_boxed_slice();
+   ```
+2. **Code Review 枚举瘦身裁决**：某编译器前端团队定义了如下表示抽象语法树表达式的枚举 `Expr`：
+   ```rust
+   enum Expr {
+       Number(i64),
+       Variable(String),
+       Add(Expr, Expr),
+   }
+   ```
+   请指出这段代码为什么无法通过编译（会报什么错），并写出修复后的定义。
+
+<details>
+<summary>点击核对参考答案</summary>
+
+1. **栈与堆字节盘点**：
+   - **`a: [u64; 100]`**：定长数组直接内联在栈上，**栈上占 `100 × 8 = 800` 字节**，**堆上占 `0` 字节**；
+   - **`b: Box<[u64; 100]>`**：因为 `[u64; 100]` 的长度 `100` 是编译期已知的（属 `Sized` 定长类型），所以 `b` 在**栈上是一个 8 字节的瘦指针**，指向**堆上 `800` 字节**的数组；
+   - **`c: Box<[u64]>`**：因为内层 `[u64]` 擦除了编译期长度（属动态大小类型 DST），所以 `c` 在**栈上是一个 16 字节的胖指针 `(ptr, len)`**，同样指向**堆上 `800` 字节**的连续元素。
+2. **修复递归枚举 `Expr`**：
+   - **报错原因**：`Add(Expr, Expr)` 变体内部直接按值内联了两个 `Expr`，属于没有指针间接层的递归类型，编译器无法算出有限大小，会报 **`error[E0072]: recursive type Expr has infinite size`**。
+   - **修复方案**：用 `Box<Expr>` 把左右两个子表达式放到堆上，打断无限大小循环：
+     ```rust
+     enum Expr {
+         Number(i64),
+         Variable(String),
+         Add(Box<Expr>, Box<Expr>),
+     }
+     ```
+
+</details>

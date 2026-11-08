@@ -1,0 +1,177 @@
+---
+/**
+ * 10.2「Point / &Point / Box<Point> 内存布局对比」。
+ * 三列栈槽位在 64 位上都是 8 字节：
+ *   ① stack_pt: Point —— 值直接住在栈槽里，无堆分配
+ *   ② ref_pt: &Point —— 8 字节地址借用 ①，Copy，无释放责任
+ *   ③ boxed_pt: Box<Point> —— 8 字节地址独占堆上的 Point，Move + Drop
+ * 右列用 .object 强调；中列箭头指回左列的值，右列箭头指向堆块。
+ * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	lang?: 'zh' | 'en';
+}
+
+const copy = {
+	zh: {
+		caption:
+			'三个栈槽位在 64 位上都占 8 字节：Point 的值直接放在槽里，&Point 只借用它，Box<Point> 把值放上堆，离开作用域时负责释放；它像 Java 的 new 句柄，但没有对象头，也不靠 GC 回收。',
+		title: 'Point、&Point 与 Box<Point> 的栈堆布局与所有权',
+		desc: '图分三列。左列 stack_pt 的类型是 Point，8 字节的 { x: 10, y: 20 } 直接放在栈槽里，下方没有堆块，变量拥有这份值。中列 ref_pt 的类型是 &Point，栈槽里是 8 字节地址，箭头指向左列的值；这是可以 Copy 的借用，不负责释放。右列 boxed_pt 的类型是 Box<Point>，栈槽里同样是 8 字节地址，箭头指向堆上的 { x: 30, y: 40 }。把这个 Box 赋给别的变量会移动所有权，离开作用域时 Drop 释放堆内存。这块堆数据没有对象头，也不由 GC 回收。',
+		col1Kicker: '① 栈内联 · 8B',
+		col1Name: 'stack_pt',
+		col1Type: 'Point',
+		col1Stack1: '{ x: 10, y: 20 }',
+		col1Stack2: '值就住在槽位里',
+		col1Mid: '不向堆跳转',
+		col1F1: '拥有这份值',
+		col1F2: '无堆分配',
+		col1F3: '数据全在栈上',
+		col2Kicker: '② 借用引用 · 8B',
+		col2Name: 'ref_pt',
+		col2Type: '&Point',
+		col2Stack1: '8B 地址',
+		col2Stack2: '指向 stack_pt',
+		col2Mid: '借用左边的值',
+		col2F1: '可以 Copy',
+		col2F2: '无释放责任',
+		col2F3: '目标留在原处',
+		col3Kicker: '③ 堆独占 · 8B',
+		col3Name: 'boxed_pt',
+		col3Type: 'Box<Point>',
+		col3Stack1: '8B 地址',
+		col3Stack2: '指向堆上的 Point',
+		col3Heap1: '{ x: 30, y: 40 }',
+		col3Heap2: '堆上的 Point · 8B',
+		col3Heap3: '无对象头',
+		col3F1: '赋值即 Move',
+		col3F2: '离开作用域 Drop',
+		col3F3: '同 Java 句柄，无 GC',
+		heapNone: '无堆块',
+		heapZero: '0 字节',
+		ptr8: '8B',
+	},
+	en: {
+		caption:
+			'On a 64-bit machine each stack slot is 8 bytes: Point stores the value inline, &Point only borrows it, and Box<Point> puts the value on the heap and frees it when the owner leaves scope. The heap layout resembles a Java new handle, with no object header and no GC.',
+		title: 'Stack and heap layout of Point, &Point, and Box<Point>',
+		desc: 'Three columns. Left: stack_pt: Point holds the 8-byte value { x: 10, y: 20 } directly in the stack slot and owns it; there is no heap block. Middle: ref_pt: &Point stores an 8-byte address that points at the left-hand value. It is a Copy borrow with no duty to free. Right: boxed_pt: Box<Point> also stores an 8-byte address, and the arrow points at { x: 30, y: 40 } on the heap. Assigning the Box moves ownership; leaving scope runs Drop and frees the heap memory. That heap value has no object header and is not collected by a GC.',
+		col1Kicker: '① inline · 8B',
+		col1Name: 'stack_pt',
+		col1Type: 'Point',
+		col1Stack1: '{ x: 10, y: 20 }',
+		col1Stack2: 'value sits in the slot',
+		col1Mid: 'no hop to the heap',
+		col1F1: 'owns this value',
+		col1F2: 'no heap allocation',
+		col1F3: 'data stays on the stack',
+		col2Kicker: '② borrow · 8B',
+		col2Name: 'ref_pt',
+		col2Type: '&Point',
+		col2Stack1: '8B address',
+		col2Stack2: 'points at stack_pt',
+		col2Mid: 'borrows the left value',
+		col2F1: 'implements Copy',
+		col2F2: 'no duty to free',
+		col2F3: 'target stays put',
+		col3Kicker: '③ owning Box · 8B',
+		col3Name: 'boxed_pt',
+		col3Type: 'Box<Point>',
+		col3Stack1: '8B address',
+		col3Stack2: 'points at heap Point',
+		col3Heap1: '{ x: 30, y: 40 }',
+		col3Heap2: 'heap Point · 8B',
+		col3Heap3: 'no object header',
+		col3F1: 'assign is Move',
+		col3F2: 'Drop frees the heap',
+		col3F3: 'like Java new, no GC',
+		heapNone: 'no heap block',
+		heapZero: '0 bytes',
+		ptr8: '8B',
+	},
+} as const;
+
+const { lang } = Astro.props;
+const locale = lang ?? (SITE_LOCALE === 'en' ? 'en' : 'zh');
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 442" role="img" aria-labelledby="bmc-title bmc-desc">
+		<title id="bmc-title">{t.title}</title>
+		<desc id="bmc-desc">{t.desc}</desc>
+
+		{/* 左列：值直接内联在栈槽 */}
+		<rect class="panel" x="12" y="8" width="196" height="424" rx="10"></rect>
+		<text class="label" x="110" y="32" text-anchor="middle">{t.col1Kicker}</text>
+		<text class="name" x="110" y="58" text-anchor="middle">{t.col1Name}</text>
+		<text class="code" x="110" y="80" text-anchor="middle">{t.col1Type}</text>
+
+		<rect class="slot" x="26" y="98" width="168" height="64" rx="6"></rect>
+		<text class="code" x="110" y="122" text-anchor="middle">{t.col1Stack1}</text>
+		<text class="edge-sub" x="110" y="144" text-anchor="middle">{t.col1Stack2}</text>
+
+		<text class="edge-sub" x="110" y="190" text-anchor="middle">{t.col1Mid}</text>
+
+		<rect class="freed" x="26" y="216" width="168" height="100" rx="6"></rect>
+		<text class="edge-label" x="110" y="258" text-anchor="middle">{t.heapNone}</text>
+		<text class="edge-sub" x="110" y="282" text-anchor="middle">{t.heapZero}</text>
+
+		<text class="edge-label" x="110" y="348" text-anchor="middle">{t.col1F1}</text>
+		<text class="edge-sub" x="110" y="370" text-anchor="middle">{t.col1F2}</text>
+		<text class="edge-sub" x="110" y="392" text-anchor="middle">{t.col1F3}</text>
+
+		{/* 中列：8 字节借用，箭头指回左列 */}
+		<rect class="panel" x="222" y="8" width="196" height="424" rx="10"></rect>
+		<text class="label" x="320" y="32" text-anchor="middle">{t.col2Kicker}</text>
+		<text class="name" x="320" y="58" text-anchor="middle">{t.col2Name}</text>
+		<text class="code" x="320" y="80" text-anchor="middle">{t.col2Type}</text>
+
+		<rect class="slot" x="236" y="98" width="168" height="64" rx="6"></rect>
+		<text class="code" x="320" y="122" text-anchor="middle">{t.col2Stack1}</text>
+		<text class="edge-sub" x="320" y="144" text-anchor="middle">{t.col2Stack2}</text>
+
+		<text class="edge-sub" x="320" y="190" text-anchor="middle">{t.col2Mid}</text>
+
+		<rect class="freed" x="236" y="216" width="168" height="100" rx="6"></rect>
+		<text class="edge-label" x="320" y="258" text-anchor="middle">{t.heapNone}</text>
+		<text class="edge-sub" x="320" y="282" text-anchor="middle">{t.heapZero}</text>
+
+		<text class="edge-label" x="320" y="348" text-anchor="middle">{t.col2F1}</text>
+		<text class="edge-sub" x="320" y="370" text-anchor="middle">{t.col2F2}</text>
+		<text class="edge-sub" x="320" y="392" text-anchor="middle">{t.col2F3}</text>
+
+		{/* 右列（主强调）：8 字节独占指针，堆上才是 Point */}
+		<rect class="object" x="432" y="8" width="196" height="424" rx="10"></rect>
+		<text class="label" x="530" y="32" text-anchor="middle">{t.col3Kicker}</text>
+		<text class="name" x="530" y="58" text-anchor="middle">{t.col3Name}</text>
+		<text class="code" x="530" y="80" text-anchor="middle">{t.col3Type}</text>
+
+		<rect class="slot" x="446" y="98" width="168" height="64" rx="6"></rect>
+		<text class="code" x="530" y="122" text-anchor="middle">{t.col3Stack1}</text>
+		<text class="edge-sub" x="530" y="144" text-anchor="middle">{t.col3Stack2}</text>
+
+		<rect class="slot" x="446" y="216" width="168" height="100" rx="6"></rect>
+		<text class="code" x="530" y="250" text-anchor="middle">{t.col3Heap1}</text>
+		<text class="edge-sub" x="530" y="274" text-anchor="middle">{t.col3Heap2}</text>
+		<text class="edge-sub" x="530" y="296" text-anchor="middle">{t.col3Heap3}</text>
+
+		<text class="edge-label" x="530" y="348" text-anchor="middle">{t.col3F1}</text>
+		<text class="edge-sub" x="530" y="370" text-anchor="middle">{t.col3F2}</text>
+		<text class="edge-sub" x="530" y="392" text-anchor="middle">{t.col3F3}</text>
+
+		{/* 中列地址指向左列的值；右列地址指向堆块 */}
+		<path class="arrow" d="M 250 130 H 196" marker-end="url(#bmc-head)"></path>
+		<path class="arrow" d="M 530 162 V 210" marker-end="url(#bmc-head)"></path>
+		<text class="edge-sub" x="544" y="192">{t.ptr8}</text>
+
+		<defs>
+			<marker id="bmc-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

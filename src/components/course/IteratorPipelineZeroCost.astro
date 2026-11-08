@@ -1,0 +1,196 @@
+---
+/**
+ * 9.3「迭代器适配器与零成本抽象」分步配图：
+ * 顶部常驻：链式表达式 v.iter().filter(p).map(f).sum() 的两段职责切分（惰性组装 vs 消费者触发）。
+ * 下方三行（3 步分步推进）：
+ *   Step 1：惰性组装 —— 适配器层层包装栈上状态机 Map<Filter<Iter, P>, F>，零计算零中间堆分配。
+ *   Step 2：消费者触发 —— .sum() 循环调用 .next() 逐个拉取元素，单次遍历流过管道，零中间集合。
+ *   Step 3：零成本两段配合 —— 编译期泛型单态化 + 优化器内联消解，坍缩为手写 while 循环机器码。
+ * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+import FigureControls from './FigureControls.astro';
+
+const en = SITE_LOCALE === 'en';
+const t = en
+	? {
+			caption:
+				'Calling .iter().filter(p).map(f) does not traverse the slice or allocate intermediate Vec buffers; it wraps the cursor and closures into a stack-allocated state machine Map<Filter<Iter, P>, F>. Only when the consumer .sum() calls .next() does the pipeline pull elements one by one, and monomorphization plus inlining collapse all layers into a single register loop.',
+			title: 'Lazy iterator state machine, pull-driven next() chain, and two-stage zero-cost compilation',
+			desc: 'Top banner: `v.iter().filter(p).map(f)` performs lazy stack assembly into `Map<Filter<Iter, P>, F>`, and `.sum()` drives the `while let Some(y) = map.next()` loop. Below are three steps: Step 1 (Lazy assembly) shows how `.iter().filter(p).map(f)` wraps `Iter(ptr, end)`, `pred: P`, and `f: F` into a flat stack struct `Map { iter: Filter { iter: Iter, pred: P }, f: F }` with zero traversal and zero intermediate heap allocation. Step 2 (Consumer pull) shows `.sum()` calling `Map::next()`, which pulls from `Filter::next()` and `Iter::next()` one element at a time in a single pass without intermediate collections. Step 3 (Two-stage zero-cost compilation) shows Stage 1 monomorphization locking in concrete types `P` and `F` for direct calls, and Stage 2 optimizer inlining dissolving `.next()` layers into a compact register loop identical to a hand-written `while` loop.',
+			bannerTitle: 'Iterator pipeline · lazy stack assembly vs. consumer-driven .next() loop',
+			bannerC1: '.iter().filter(p).map(f)',
+			bannerSub1: 'adapters: wrap on stack',
+			bannerC2: 'Map<Filter<Iter, P>, F>',
+			bannerSub2: 'flat inline struct · 0 alloc',
+			bannerC3: '.sum() → .next()',
+			bannerSub3: 'consumer: drives loop',
+			col1: '1. Stage & trigger',
+			col2: '2. Stack layout / call & compiler action',
+			col3: '3. Runtime & memory cost',
+			r1Code: '.filter(p).map(f)',
+			r1Sub: 'Step 1 · lazy assembly',
+			r1Mid1: 'Map { Filter { Iter, P }, F }',
+			r1Mid2: 'inlined on stack · no traversal yet',
+			r1Out1: '0 pass · 0 Vec',
+			r1Out2: 'waits for .next()',
+			r2Code: '.sum() / .collect()',
+			r2Sub: 'Step 2 · consumer pull',
+			r2Mid1: 'Map::next → Filter::next → Iter',
+			r2Mid2: 'pull 1 by 1: ptr++ → p(&x) → f(x)',
+			r2Out1: '1 pass · 0 buffer',
+			r2Out2: '1 item in flight',
+			r3Code: 'rustc + LLVM -O',
+			r3Sub: 'Step 3 · 2-stage opt',
+			r3Mid1: '① Monomorphize P, F + ② Inline',
+			r3Mid2: 'strip wrappers & Option into 1 loop',
+			r3Out1: 'Same as while loop',
+			r3Out2: '0 vtable · reg loop',
+			stepper: 'Steps',
+			steps: [
+				'Lazy assembly: nested stack struct, zero heap allocation',
+				'Consumer pull: .sum() drives .next() one item at a time',
+				'Two-stage zero-cost: monomorphize + inline into while loop',
+			],
+		}
+	: {
+			caption:
+				'调用 `.iter().filter(p).map(f)` 不会遍历数组，也不会分配中间 `Vec`，只在栈上把游标与闭包层层内联包装成嵌套结构体 `Map<Filter<Iter, P>, F>`；只有末尾消费者 `.sum()` 调用 `.next()` 才会逐个拉取元素，经编译期单态化与内联消解后坍缩为单个寄存器循环。',
+			title: '迭代器惰性栈上状态机、消费者拉取链路与零成本抽象的两段配合',
+			desc: '顶部面板展示迭代器管道的两段切分：`v.iter().filter(p).map(f)` 只在栈上惰性组装 `Map<Filter<Iter, P>, F>`，末尾 `.sum()` 驱动 `while let Some(y) = map.next()` 循环。下方三行对应三个递进步骤：第 1 步（惰性组装）展示适配器把游标 `Iter(ptr, end)` 与闭包 `P`、`F` 按值内联成扁平栈结构体 `Map { iter: Filter { iter: Iter, pred: P }, f: F }`，未调 `next()` 前零遍历、零中间 `Vec` 分配；第 2 步（消费者拉取）展示 `.sum()` 循环调用外层 `Map::next()`，向内层 `Filter::next()` 与 `Iter::next()` 逐个拉取元素，单次遍历流过管道，零中间集合；第 3 步（零成本两段配合）展示编译期第 1 段泛型单态化锁死 `P`、`F` 具体类型（消除虚表与间接跳转），第 2 段优化器内联脱壳消除多层 `.next()` 与 `Option` 判别，生成与手写 `while` 循环一致的机器码。',
+			bannerTitle: '迭代器管道的两段切分 · 适配器惰性组装栈上状态机 vs 消费者调用 .next() 驱动循环',
+			bannerC1: '.iter().filter(p).map(f)',
+			bannerSub1: '适配器：栈上状态机包装',
+			bannerC2: 'Map<Filter<Iter, P>, F>',
+			bannerSub2: '扁平内联结构体 · 零堆分配',
+			bannerC3: '.sum() → .next()',
+			bannerSub3: '消费者：驱动单次遍历循环',
+			col1: '1. 阶段与触发动作',
+			col2: '2. 栈上布局 / 调用链与编译器动作',
+			col3: '3. 运行时结果与内存成本',
+			r1Code: '.filter(p).map(f)',
+			r1Sub: '第 1 步 · 惰性组装',
+			r1Mid1: 'Map { Filter { Iter, P }, F }',
+			r1Mid2: '游标与闭包按值内联在栈上 · 不执行遍历',
+			r1Out1: '零计算 · 零中间 Vec',
+			r1Out2: '惰性状态机栈上待命',
+			r2Code: '.sum() / .collect()',
+			r2Sub: '第 2 步 · 消费者触发',
+			r2Mid1: 'Map::next → Filter::next → Iter',
+			r2Mid2: '逐个拉取元素：游标前移 → p(&x) → f(x)',
+			r2Out1: '单次遍历 · 零临时集合',
+			r2Out2: '元素逐个流过管道',
+			r3Code: 'rustc + LLVM -O',
+			r3Sub: '第 3 步 · 两段零成本',
+			r3Mid1: '① 单态化锁死 P, F + ② 内联 .next()',
+			r3Mid2: '拆平嵌套结构体与 Option · 折叠为单循环',
+			r3Out1: '同手写 while 机器码',
+			r3Out2: '零虚表 · 寄存器循环',
+			stepper: '步骤',
+			steps: [
+				'惰性组装：适配器包装栈上状态机，零计算零堆分配',
+				'消费者拉取：.sum() 循环调 .next() 逐个拉取元素',
+				'零成本两段配合：单态化 + 内联消解 = 手写循环机器码',
+			],
+		};
+
+const rows = [
+	{
+		y: 132,
+		code: t.r1Code,
+		sub: t.r1Sub,
+		mid1: t.r1Mid1,
+		mid2: t.r1Mid2,
+		out1: t.r1Out1,
+		out2: t.r1Out2,
+	},
+	{
+		y: 218,
+		code: t.r2Code,
+		sub: t.r2Sub,
+		mid1: t.r2Mid1,
+		mid2: t.r2Mid2,
+		out1: t.r2Out1,
+		out2: t.r2Out2,
+	},
+	{
+		y: 304,
+		code: t.r3Code,
+		sub: t.r3Sub,
+		mid1: t.r3Mid1,
+		mid2: t.r3Mid2,
+		out1: t.r3Out1,
+		out2: t.r3Out2,
+	},
+];
+---
+
+<figure class="diagram" data-stepper>
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 390" role="img" aria-labelledby="ipzc-title ipzc-desc">
+		<title id="ipzc-title">{t.title}</title>
+		<desc id="ipzc-desc">{t.desc}</desc>
+
+		{/* 顶部常驻横幅：链式管道的两段切分 */}
+		<rect class="panel" x="16" y="14" width="608" height="78" rx="10"></rect>
+		<text class="label" x="28" y="34">{t.bannerTitle}</text>
+
+		<text class="code" x="112" y="58" text-anchor="middle">{t.bannerC1}</text>
+		<text class="edge-sub" x="112" y="76" text-anchor="middle">{t.bannerSub1}</text>
+
+		<path class="arrow" d="M 210 54 H 234" marker-end="url(#ipzc-head)"></path>
+
+		<text class="code" x="336" y="58" text-anchor="middle">{t.bannerC2}</text>
+		<text class="edge-sub" x="336" y="76" text-anchor="middle">{t.bannerSub2}</text>
+
+		<path class="arrow" d="M 434 54 H 458" marker-end="url(#ipzc-head)"></path>
+
+		<text class="code" x="540" y="58" text-anchor="middle">{t.bannerC3}</text>
+		<text class="edge-sub" x="540" y="76" text-anchor="middle">{t.bannerSub3}</text>
+
+		{/* 三栏列标题 */}
+		<text class="edge-sub" x="96" y="116" text-anchor="middle">{t.col1}</text>
+		<text class="edge-sub" x="322" y="116" text-anchor="middle">{t.col2}</text>
+		<text class="edge-sub" x="546" y="116" text-anchor="middle">{t.col3}</text>
+
+		{/* 三步递进：左栏常驻，中栏与右栏随步点亮 */}
+		{rows.map((row, i) => (
+			<g>
+				{/* 左栏：阶段入口与步骤标识 */}
+				<rect class="slot" x="16" y={row.y} width="160" height="68" rx="8"></rect>
+				<text class="code" x="96" y={row.y + 28} text-anchor="middle">{row.code}</text>
+				<text class="edge-sub" x="96" y={row.y + 50} text-anchor="middle">{row.sub}</text>
+
+				{/* 中栏 + 右栏：随步点亮 */}
+				<g class="step" data-step={i + 1}>
+					<path class="arrow" d={`M 176 ${row.y + 34} H 194`} marker-end="url(#ipzc-head)"></path>
+
+					{/* 中栏：栈上结构体包装 / next() 拉取链 / 单态化与内联 */}
+					<rect class="panel" x="194" y={row.y} width="256" height="68" rx="8"></rect>
+					<text class="code" x="322" y={row.y + 28} text-anchor="middle">{row.mid1}</text>
+					<text class="edge-sub" x="322" y={row.y + 50} text-anchor="middle">{row.mid2}</text>
+
+					<path class="arrow" d={`M 450 ${row.y + 34} H 468`} marker-end="url(#ipzc-head)"></path>
+
+					{/* 右栏：运行时结果与内存成本 */}
+					<rect class="object" x="468" y={row.y} width="156" height="68" rx="8"></rect>
+					<text class="code" x="546" y={row.y + 28} text-anchor="middle">{row.out1}</text>
+					<text class="edge-sub" x="546" y={row.y + 50} text-anchor="middle">{row.out2}</text>
+				</g>
+			</g>
+		))}
+
+		<defs>
+			<marker id="ipzc-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+
+	<FigureControls controls="stepper" label={t.stepper} steps={t.steps} />
+</figure>
+
+<script>
+	import { initFigures } from '../../scripts/motion';
+	initFigures();
+</script>

@@ -1,0 +1,334 @@
+---
+title: "迭代器适配器链、Option / Result 组合子与零成本抽象"
+description: 将 9.1 的迭代器与 9.2 的闭包组装成函数式流水线，拆解惰性适配器结构体的栈上内联嵌套与单态化内联消解机制，掌握 Option / Result 组合子及代码审查中的性能反模式拦截。
+sidebar:
+  label: 适配器链、组合子与零成本
+  order: 3
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import IteratorPipelineZeroCost from '../../../../../../components/course/IteratorPipelineZeroCost.astro';
+import iterThree from '../../../../../../../examples/types/closures-iterators/src/bin/iter-three.rs?raw';
+
+走完前两节，我们已经分别拆开了两台核心机器的底牌：
+- 在[第 9.1 节](/abstraction/for-and-iterators/)，我们看到**迭代器（`Iterator`）**是一个只靠 `fn next(&mut self) -> Option<Self::Item>` 推进的栈上游标状态机；
+- 在[第 9.2 节](/abstraction/closures/)，我们看到**闭包（`|x| ...`）**是一个把捕获变量存作字段、并实现了 `FnOnce` / `FnMut` / `Fn` 的栈上匿名结构体。
+
+现在，作为第 9 章（也是整个第三篇「泛型、Trait 与函数式组合」）的收官课，我们要把这两台机器正式组装到一起，回答工程中最核心的三个实战问题：
+
+1. **当我们写下一长串 `.iter().filter(|x| ...).map(|x| ...).sum()` 时，它在底层到底是怎样运行的？为什么既不会像 Python / JavaScript 的数组方法那样每一步都生成一个新的中间数组，又不会因为套了多层闭包而变慢？**
+2. **为什么 `Option` 和 `Result` 上也有同名的 `.map(...)`、`.and_then(...)`、`.unwrap_or_else(...)`？它们与迭代器是什么关系？**
+3. **在代码审查（Code Review）中，面对 AI 或同事写出的迭代器链，哪些写法是真正的零成本，哪些写法偷偷埋下了多余的堆内存分配？**
+
+---
+
+## 第一步：惰性组装 vs 消费者点火——适配器到底返回了什么？
+
+在 JavaScript 中，如果你写下 `arr.filter(p).map(f)`，数组会立刻先完整遍历第一遍，在堆上分配并返回一个装满过滤结果的新数组；接着 `.map(f)` 再把那个临时数组遍历第二遍，在堆上分配第二个新数组。
+
+如果你带着这种直觉去看 Rust 的迭代器链，往往会以为下面这段代码在第 1 步就已经把数组遍历完了：
+
+```rust
+let nums = vec![1, 2, 3, 4, 5];
+let min_val = 2;
+
+// 第 1 步：串联 .iter().filter(...).map(...)
+let pipeline = nums
+    .iter()
+    .filter(|&&x| {
+        println!("  [filter] checking {x}");
+        x > min_val
+    })
+    .map(|&x| {
+        println!("  [map] squaring {x}");
+        x * x
+    });
+
+println!("pipeline built, nothing printed yet");
+```
+
+然而当你运行这段代码时，会发现直到打印出 `"pipeline built, nothing printed yet"`，上面两个闭包里的 `println!` **竟然一行都没有执行**。
+
+为什么调用了 `.filter(...)` 和 `.map(...)`，代码却完全不动？
+
+### 1. 掀开 `.map` 与 `.filter` 的标准库源码：它们只是在栈上「拼装套娃结构体」
+
+在 Rust 标准库中，`Iterator` Trait 上的几十个方法被严格划分为两大类：**适配器（Adapters）**与**消费者（Consumers）**。
+
+像 `.map(f)`、`.filter(p)`、`.enumerate()`、`.take(n)` 这类方法叫做**迭代器适配器**。翻开标准库源码，你会发现 `Iterator::map` 的实现只有短短几行，内部**根本没有写任何循环**：
+
+```rust
+// 1. 标准库中 Map 适配器的真实定义：一个持有「内层迭代器 I」和「闭包 F」的普通泛型结构体
+pub struct Map<I, F> {
+    iter: I, // 内层迭代器（如 Filter 或 slice::Iter）
+    f: F,    // 你传进来的那个匿名闭包 struct
+}
+
+// 2. 当你调用 .map(f) 时，它仅仅是按值接手原迭代器 self 和闭包 f，拼装出一个 Map 结构体返回：
+fn map<B, F>(self, f: F) -> Map<Self, F>
+where
+    Self: Sized,
+    F: FnMut(Self::Item) -> B,
+{
+    Map { iter: self, f } // 零遍历、零计算、零堆分配，只是把两个 struct 装进一个外层 struct
+}
+
+// 3. Map<I, F> 自身也实现了 Iterator，真正的转换逻辑写在它的 next 方法里：
+impl<B, I: Iterator, F> Iterator for Map<I, F>
+where
+    F: FnMut(I::Item) -> B,
+{
+    type Item = B;
+
+    fn next(&mut self) -> Option<B> {
+        // 当有人向 Map 要下一个元素时，它才向内层 iter 要一个元素，并用闭包 f 加工后返回
+        match self.iter.next() {
+            Some(x) => Some((self.f)(x)),
+            None => None,
+        }
+    }
+}
+```
+
+请看清这个精妙的设计：
+- 当你写下 `nums.iter()` 时，栈上生成了一个 16 字节的游标结构体 **`slice::Iter<'_, i32>`**；
+- 接着调用 `.filter(p)`（其中 `p` 捕获了 `&min_val`，占 8 字节），它把游标和闭包 `p` 按值包在一起，在栈上生成了一个 **24 字节**的嵌套结构体 **`Filter<Iter, P>`**；
+- 再调用 `.map(f)`（其中 `f` 未捕获变量，占 0 字节），它又在外面套了一层，生成了最终的栈上结构体 **`Map<Filter<Iter, P>, F>`**（总大小依然是 **24 字节**）。
+
+这就是 Rust 迭代器被称为**惰性（Lazy）**的物理原因：**调用适配器方法只是在栈上用泛型结构体把游标和闭包层层内联组装成一台状态机；只要没有人去调用最外层结构体的 `.next()` 方法，这台机器就静静地躺在栈上，连一个元素都不会去读。**
+
+<Aside type="note" title="为什么 filter(|&&x| ...) 里的参数会有两个 &，而 map(|&x| ...) 里只有一个 &？">
+初学者写 `.iter().filter(...)` 时最常被这个双层引用 `&&x` 绊住。只要顺着 9.1 节的关联类型 `type Item` 推演，原因一目了然：
+1. `nums` 是 `Vec<i32>`，调用 `nums.iter()` 产出的元素类型 `Item` 是只读引用 **`&i32`**；
+2. `.map(f)` 是要把当前元素转换掉，所以直接把 `Item`（即 **`&i32`**）按值传给闭包——你在参数位置写模式 `|&x|`（或只写 `|x|` 再用 `*x`）即可解构出 `i32`；
+3. 但 `.filter(p)` 的职责是**「决定这个元素留不留」**：如果元素的 `Item` 是不可复制的 `String`，一旦 `filter` 把 `Item` 按值传给预测闭包 `p`，看完之后元素就被闭包消耗掉了，后续根本无法往下游传递。因此标准库规定 `filter` 的闭包签名固定接收 **`&Self::Item`（对元素的只读借用）**——既然 `Self::Item` 本身已经是 `&i32`，再套一层借用传给 `filter` 闭包，参数类型自然就变成了 **`&&i32`**。
+（工程小窍门：对于 `i32` 等实现了 `Copy` 的小元素，可以在 `.iter()` 后顺手加一个 `.copied()` 适配器把 `Item` 从 `&i32` 转回按值复制的 `i32`，这样后续的 `filter(|&x| ...)` 和 `map(|x| ...)` 就清爽多了。）
+</Aside>
+
+### 2. 消费者（Consumers）：踩下 `.next()` 油门的驱动循环
+
+既然适配器只负责组装状态机，那么谁来启动它？
+答案是链路最末端的**消费者方法**——例如求和 `.sum()`、计数 `.count()`、折叠 `.fold(...)`、对每个元素执行动作 `.for_each(...)`、收集成新容器 `.collect()`，以及我们在 9.1 节学过的 **`for` 循环**。
+
+所有消费者的内部其实都只干了一件事：**写一个循环，不断调用最外层迭代器的 `.next()`，直到返回 `None` 为止。**
+
+- 当你调用 `pipeline.sum()` 时，`.sum()` 内部调第 1 次 `Map::next()` → `Map` 向内调 `Filter::next()` → `Filter` 向内调 `Iter::next()` 取出 `1`；
+- `Filter` 发现 `1 > 2` 为假，当场在内部循环继续向 `Iter::next()` 取出 `2`（依然为假），再取出 `3`（`3 > 2` 为真），把 `3` 交给外层的 `Map`；
+- `Map` 计算 `3 * 3 = 9` 交给 `.sum()` 累加，然后进入下一轮拉取。
+
+**整个过程只对原数组进行了一次从头到尾的单次遍历，元素逐个流过栈上的状态机管道，全程在堆上没有分配哪怕一个字节的临时中间数组。**
+
+---
+
+## 第二步：零成本抽象的物理兑现——单态化 + 内联消解
+
+看到这里，注重性能的工程师一定会提出第二个疑问：
+**「就算没有中间数组堆分配，可是每取一个元素都要经历 `sum` → `Map::next` → `Filter::next` → `Iter::next` 四层函数调用，还要调两次闭包并不断打包拆包 `Option::Some(x)`，难道不会产生厚重的函数调用开销吗？」**
+
+如果在采用运行时虚表动态分发的语言（如 Java 的 `Stream`）里，多层包装确实伴随着虚方法调用与装箱成本。但在 Rust 中，这套多层嵌套的迭代器链会通过**两段编译期配合**，彻底坍缩为一段裸循环：
+
+<IteratorPipelineZeroCost />
+
+对照上图的 3 个步骤，看清编译器在底层是如何把抽象层彻底抹平的：
+
+1. **第一段配合：编译期泛型单态化（消除一切函数指针与虚表）**：
+   回看 `Map<I, F>` 和 `Filter<I, P>` 的定义：里面的内层迭代器 `I` 和闭包 `P`、`F` 全都是**编译期静态泛型参数**（兑现[第 7 章 7.1 节](/abstraction/generics-and-monomorphization/)）。
+   因为每个闭包都是独一无二的匿名 `struct` 类型实体，单态化之后，`Map::next` 里调用的 `(self.f)(x)` 和 `Filter::next` 里调用的 `(self.pred)(&x)` **100% 是编译期地址已知的静态直接调用**，没有任何函数指针或 `vtable` 查表。
+2. **第二段配合：优化器内联消解（把多层 `.next()` 与 `Option` 拆平为寄存器循环）**：
+   既然每一层 `.next()` 和闭包调用的目标代码都是编译期唯一锁定的几行短指令，编译器后端（LLVM 优化器）在开启优化（`--release`）时，会将 `Iter::next`、`Filter::next`、`Map::next` 以及两个闭包体**层层内联（Inline）展开到 `.sum()` 的同一个函数体里**。
+   内联之后，中间传递的 `Some(x)` / `None` 判别分支被常量传播直接抵消，整条 `.iter().filter(...).map(...).sum()` 链条在最终生成的汇编机器码上，与你手写的 `while` 裸循环逐指令一致。
+
+这就是 Rust **零成本抽象（Zero-Cost Abstractions）**最核心的工程证明：**你在源码层享受了高度声明式、可组合的契约抽象，而因为类型信息全部保留在编译期泛型实体中，单态化与内联优化在编译期替你结清了所有包装层次，运行时付出零额外代价。**
+
+### 认识最通用的消费者：`.collect()` 与 `FromIterator`
+
+在众多消费者中，最常用也最特殊的一个是 **`.collect()`**：它能把任何迭代器吐出的元素，重新收集组装成一个集合容器（如 `Vec<T>`、`HashMap<K, V>`、`String` 乃至 `Result<Vec<T>, E>`）。
+
+为什么同一个 `.collect()` 方法，既能产出 `Vec<i32>`，又能产出 `HashSet<i32>`？
+因为它的返回类型 `B` 本身就是一个泛型参数（依赖标准库的 `FromIterator` 契约）：
+
+```rust
+fn collect<B: FromIterator<Self::Item>>(self) -> B
+```
+
+正因为 `.collect()` 的目标容器类型 `B` 位于**返回值（输出端）**，编译器单看 `.iter().filter(...).collect()` 不知道你到底想收集成 `Vec` 还是别的集合。因此在使用 `.collect()` 时，通常需要通过以下两种方式之一告诉编译器目标类型：
+
+```rust
+// 方式 1（最常用）：在左边的 let 变量绑定上写明目标集合类型（内部元素可用 _ 让编译器推断）
+let evens: Vec<_> = nums.iter().copied().filter(|&x| x % 2 == 0).collect();
+
+// 方式 2：在调用点使用第 7.1 节学过的 Turbofish 语法 ::<目标类型>
+let evens = nums.iter().copied().filter(|&x| x % 2 == 0).collect::<Vec<_>>();
+```
+
+---
+
+## 第三步：同构合流——`Option` 与 `Result` 组合子
+
+一旦掌握了迭代器的 `.map`、`.filter` 与闭包，你会惊喜地发现：我们在[第 6 章](/types/enums-and-matching/)学过的 **`Option<T>`** 和 **`Result<T, E>`**，身上竟然长着一套名字和用法几乎一模一样的闭包方法——在工程中统称为**组合子（Combinators）**。
+
+为什么 `Option<T>` 和 `Iterator` 会有如此高度重合的 API？
+因为从数据视角来看，**`Option<T>` 就是一个「最多只包含 0 个或 1 个元素的微缩容器」**。当你需要对 `Option` 或 `Result` 内部的值做一步转换或提供惰性默认值，而不想写冗长的 5 行 `match` 时，直接把 9.2 节的闭包传给组合子即可：
+
+| 组合子方法 | 签名接收的闭包 Trait | 核心语义（以 `Option<T>` 为例，`Result<T, E>` 同理） | 对等的手写 `match` 逻辑 |
+| --- | --- | --- | --- |
+| **`.map(f)`** | `F: FnOnce(T) -> U` | 若为 `Some(v)`，用闭包 `f(v)` 转换并返回 **`Some(u)`**；若为 `None`，保持 `None` | `Some(v) => Some(f(v)), None => None` |
+| **`.and_then(f)`** | `F: FnOnce(T) -> Option<U>` | 当闭包 `f` 自身也会返回 `Option<U>`（可能失败）时使用，避免套成双层 `Option<Option<U>>` | `Some(v) => f(v), None => None` |
+| **`.unwrap_or_else(f)`** | `F: FnOnce() -> T` | 若为 `Some(v)` 直接取出 `v`；**仅在为 `None` 时**才调用闭包 `f()` 计算兜底默认值（惰性求值） | `Some(v) => v, None => f()` |
+
+看下面这段解析端口号配置的真实业务代码，体会组合子如何将多步可能缺失的转换写成一条干净的数据流管道：
+
+```rust
+let raw_port: Option<&str> = Some(" 8080 ");
+
+let port: u16 = raw_port
+    .map(|s| s.trim())                  // 1. T -> U：去掉首尾空格，变成 Some("8080")
+    .and_then(|s| s.parse::<u16>().ok()) // 2. T -> Option<U>：解析整数并转成 Option<u16>
+    .unwrap_or_else(|| 3000);           // 3. 兜底取值：若前面任一步为 None，才执行闭包返回 3000
+```
+
+注意观察上面表格的第 2 列：因为 `Option` / `Result` 内部最多只有一个值，闭包最多只会被执行一次，所以标准库严格遵循了我们在 9.2 节总结的「API 侧就宽不就窄」原则，将它们的参数约束全部声明为最宽容的 **`FnOnce`**。
+
+运行下面这份完整的实验源码，亲手核对适配器链的惰性求值时机、`.sum()` 与 `.collect()` 的驱动结果，以及 `Option` 组合子的链式转换：
+
+<small class="code-source">源文件：<code>examples/types/closures-iterators/src/bin/iter-three.rs</code></small>
+<Code code={iterThree} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+pipeline built (stack size = 24B), nothing printed yet
+  [filter] checking 1
+  [filter] checking 2
+  [filter] checking 3
+  [map] squaring 3
+  [filter] checking 4
+  [map] squaring 4
+  [filter] checking 5
+  [map] squaring 5
+total = 50
+evens = [2, 4]
+port = 8080
+```
+
+请特别留意输出中的日志交错顺序：并不是先把 `1..=5` 全部 `[filter]` 一遍、再全部 `[map]` 一遍，而是 **`[filter] checking 3` 刚一通过，下一行立刻就是 `[map] squaring 3`**——铁证如山地展示了每个元素是如何像水流一样逐个穿过整个栈上状态机管道的。
+
+---
+
+## 第四步：代码审查（Code Review）中的三大性能反模式拦截
+
+虽然迭代器与组合子本身是零成本抽象，但在日常项目（尤其是审查 AI 生成的 Rust 代码）中，常会看到因不理解底层所有权与惰性机制而写出的**伪函数式退化代码**。在 Code Review 时，请重点拦截以下三类高频反模式：
+
+### 反模式 1：在链条中途滥用 `.collect::<Vec<_>>()` 制造中间堆分配
+
+```rust
+// ❌ 反模式：每一步转换后都急着 .collect::<Vec<_>>() 落盘，凭空多出两次堆内存分配与搬运
+let step1: Vec<String> = raw_lines.iter().filter(|s| !s.is_empty()).cloned().collect();
+let step2: Vec< usize> = step1.iter().map(|s| s.len()).collect();
+let total: usize = step2.iter().sum();
+
+// ✅ 正道：保持惰性迭代器链条不断开，直到最后一步才由消费者 .sum() 一次性驱动结算（零堆分配）
+let total: usize = raw_lines
+    .iter()
+    .filter(|s| !s.is_empty())
+    .map(|s| s.len())
+    .sum();
+```
+
+### 反模式 2：为了躲避引用类型，在只读链条里无脑加 `.cloned()`
+
+对于 `i32`、`usize` 等 `Copy` 类型，用 `.copied()` 把 `&i32` 转成 `i32` 只是栈上几个字节的寄存器复制，完全没有问题。
+但当集合里装的是 `String` 或 `Vec<u8>` 时，AI 有时会为了少写一个 `&` 而写出 `.iter().cloned().filter(...)`：
+
+```rust
+// ❌ 反模式：在 filter 之前调 .cloned()，导致每一个 String（包括马上要被 filter 淘汰掉的）
+//          都发生了一次堆内存深拷贝（Clone）与随后的释放（Drop）
+let count = words.iter().cloned().filter(|w| w.starts_with("rust")).count();
+
+// ✅ 正道：全程保持只读借用 &String 流转，零堆分配完成统计
+let count = words.iter().filter(|w| w.starts_with("rust")).count();
+```
+
+### 反模式 3：把带开销的计算塞进急切求值的 `.unwrap_or(...)`
+
+对比 `opt.unwrap_or(fallback)` 与 `opt.unwrap_or_else(|| fallback)`：
+- **`.unwrap_or(val)` 的参数是一个普通值表达式**：在进入函数调用前，无论 `opt` 是不是 `Some`，括号里的参数**每一次都会被无条件提前求值**。如果括号里写的是 `opt.unwrap_or(String::from("default"))` 或一次数据库查询，哪怕 `opt` 已经是 `Some`，每次依然会白白分配一次堆内存 `String` 然后立刻丢弃；
+- **裁决铁律**：
+  - 当默认值是编译期常量或零成本标量（如 `0`、`""`、`false`）时 → 用简洁的 **`.unwrap_or(0)`**；
+  - 当默认值需要分配堆内存（如 `String::from(...)`、`vec![...]`）或执行函数计算时 → 必须用接收闭包的惰性版本 **`.unwrap_or_else(|| String::from("default"))`**（或 `.unwrap_or_default()`）。
+
+---
+
+## 本章总结与第三篇收束
+
+回顾第 9 章，我们用三节篇幅完成了一次底层机制的工程大合流：
+1. **`for` 循环与迭代器（9.1）**：语言内核只做 4 行代码的机械展开；`Vec<T>`、`&Vec<T>`、`&mut Vec<T>` 三个独立编译期类型实体各自实现 `IntoIterator` 并用 `type Item` 锁死输出，打通了遍历三件套。
+2. **闭包与 `Fn` 家族（9.2）**：语言内核将闭包合成为携带捕获字段的匿名 `struct`；方法接收者三件套 `&self`、`&mut self`、`self` 直接投射为 `Fn`、`FnMut`、`FnOnce`，且捕获方式（`move`）与调用契约两轴完全正交。
+3. **适配器链、组合子与零成本抽象（9.3）**：适配器通过泛型结构体将游标与闭包层层内联在栈上（惰性组装），由末端消费者调用 `.next()` 单次拉取；经由「泛型单态化 + 优化器内联消解」两段配合，声明式的函数式流水线在编译后直接坍缩为与手写循环一致的机器码。
+
+至此，**第三篇「泛型、Trait 与函数式组合」（第 7～9 章）**已经全部走完。
+你现在不仅认识了单个具体类型的内存布局，还彻底看清了 Rust 如何在没有 `class extends` 和运行时虚拟机帮忙的前提下，靠编译期单态化、Trait 契约与 16 字节虚表胖指针构建起整座零成本抽象大厦。
+
+在接下来的**第四篇「智能指针、借用与生命周期边界」（第 10～11 章）**中，我们将带着已经熟练掌握的 Trait（含关联类型）与泛型工具，去揭开最后两块底层拼图：
+- 为什么 `Box<T>`、`Vec<T>`、`String` 能像普通引用一样直接用 `*` 解引用或跨类型自动转换（**`Deref` Trait**），又如何在离开作用域的那一刻自动执行清理代码（**`Drop` Trait**）？
+- 当引用跨出函数边界或被装进结构体时，编译器又是如何用**生命周期参数 `'a`** 在函数签名上立下防悬垂契约的？
+
+[进入第四篇：智能指针、借用与生命周期边界 →](/pointers/)
+
+### 动手核对与小练习
+
+1. **惰性执行顺序推演**：阅读下面这段代码，请问它会打印出几行日志？打印的具体内容和顺序是什么？（提示：注意末尾消费者 `.take(1)` 与 `.collect()` 的配合。）
+   ```rust
+   let data = vec![10, 20, 30];
+   let res: Vec<i32> = data
+       .iter()
+       .map(|&x| {
+           println!("map {x}");
+           x + 1
+       })
+       .take(1)
+       .collect();
+   println!("res = {res:?}");
+   ```
+2. **Code Review 重构实战**：审查下面这段由 AI 生成的日志过滤函数，请指出其中隐藏的**两处**性能反模式（多余的堆内存分配），并写出零额外中间堆分配的重构代码：
+   ```rust
+   fn first_error_code(logs: &[String], default_code: &str) -> String {
+       let errors: Vec<String> = logs
+           .iter()
+           .cloned()
+           .filter(|line| line.starts_with("ERR:"))
+           .collect();
+
+       errors
+           .into_iter()
+           .next()
+           .unwrap_or(default_code.to_string())
+   }
+   ```
+
+<details>
+<summary>点击核对参考答案</summary>
+
+1. **惰性执行顺序推演**：
+   只会打印 **2 行**：
+   ```text
+   map 10
+   res = [11]
+   ```
+   **原因**：因为迭代器适配器是按需拉取的惰性状态机，`.take(1)` 限制最多只拉取 1 个元素。当 `.collect()` 第 1 次调用 `.next()` 时，`map` 处理了第 1 个元素 `10` 并打印 `map 10`；第 2 次调用 `.next()` 时，`.take(1)` 直接返回 `None` 结束循环，后面的 `20` 和 `30` 根本不会被读取或执行 `map` 闭包。
+2. **Code Review 重构实战**：
+   - **反模式一**：开头调用了 `.cloned()` 并中途 `.collect::<Vec<String>>()`，不仅把切片里每一条日志字符串都深拷贝了一份堆内存，还分配了一个中间 `Vec<String>` 数组，而实际上我们只需要找到**第一条**匹配 `"ERR:"` 的日志。
+   - **反模式二**：末尾使用了急切求值的 `.unwrap_or(default_code.to_string())`，导致哪怕找到了错误日志，每次调用函数也都会白白执行一次 `default_code.to_string()` 堆内存分配。
+   - **重构代码**（直接使用只读查找消费者 `.find(...)` + 惰性组合子 `.map_or_else(...)` 或 `.unwrap_or_else(...)`）：
+     ```rust
+     fn first_error_code(logs: &[String], default_code: &str) -> String {
+         logs.iter()
+             .find(|line| line.starts_with("ERR:"))
+             .map(|line| line.clone())
+             .unwrap_or_else(|| default_code.to_string())
+     }
+     ```
+     重构后，遍历期间全程只读借用 `&String`，找到第一条匹配项即刻短路停下，且仅在需要返回的那一个字符串上发生唯一一次堆分配。
+
+</details>
