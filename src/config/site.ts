@@ -66,8 +66,23 @@ function resolveLocale(): SiteLocale {
 /** 当前正在构建 / 开发的语言 */
 export const SITE_LOCALE: SiteLocale = resolveLocale();
 
-/** 当前语言的完整配置 */
-export const CURRENT: LocaleConfig = LOCALES[SITE_LOCALE];
+function withOrigin(locale: LocaleConfig): LocaleConfig {
+	const origin = process.env.SITE_ORIGIN?.trim().replace(/\/$/, '');
+	if (!origin || locale.code !== SITE_LOCALE) return locale;
+	let url: URL;
+	try {
+		url = new URL(origin);
+	} catch {
+		throw new Error(`SITE_ORIGIN 不是网址：${origin}`);
+	}
+	if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+		throw new Error(`SITE_ORIGIN 不是网址：${origin}`);
+	}
+	return { ...locale, site: origin };
+}
+
+/** 当前语言的完整配置。预览构建用 SITE_ORIGIN 盖住正式域名。 */
+export const CURRENT: LocaleConfig = withOrigin(LOCALES[SITE_LOCALE]);
 
 /** 对方语言（用于语言切换与 hreflang） */
 export const OTHER: LocaleConfig = LOCALES[SITE_LOCALE === 'zh' ? 'en' : 'zh'];

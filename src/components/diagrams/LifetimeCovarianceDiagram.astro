@@ -1,0 +1,137 @@
+---
+/**
+ * 11.4「范围包含（协变）与调用点自动收敛」。
+ * 上半：'static 包含 'outer，'outer 包含 'inner，长范围引用沿箭头缩成短范围。
+ * 下半：longer(&outer, &inner) 把 &outer 从 [1..12] 缩到 [3..8]，
+ * 与 &inner 对齐成同一个 'a，返回值 res 拿到同一段范围。
+ * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	lang?: 'zh' | 'en';
+}
+
+const copy = {
+	zh: {
+		caption:
+			"'static 包含 'outer，'outer 再包含 'inner。更长的引用可以顺着箭头自动归属为更短的范围。调用 longer(&outer, &inner) 时，&outer 从 [1..12] 缩到 [3..8]，与 &inner 对齐成同一个 'a，返回值 res 拿到的也是 [3..8]。",
+		title: '长范围可以缩成短范围，调用点据此定出同一个 \'a',
+		desc: "上半从长到短是 'static、'outer [1..12]、'inner [3..8]。箭头向下，更长的引用可以自动归属为更短的范围。下半是调用 longer(&outer, &inner)：&outer 缩到 [3..8]，与 &inner 对齐成同一个 'a，返回值 res 的范围也是 [3..8]。",
+		upKicker: '① 范围包含（协变）',
+		upSub: '更长的引用可以自动归属为更短的范围',
+		staticName: "'static",
+		staticRange: '[全程序]',
+		shrink1: '向下归属',
+		outerName: "'outer",
+		outerRange: '[1..12]',
+		shrink2: '再向下归属',
+		innerName: "'inner",
+		innerRange: '[3..8]',
+		downKicker: '② 调用 longer(&outer, &inner)',
+		downSub: '较长的实参缩到与较短的实参同一段 \'a',
+		outerArg: '&outer',
+		innerArg: '&inner',
+		shrinkArg: '向下缩减',
+		already: '已经对齐',
+		aKicker: '共同范围',
+		aName: "'a",
+		aRange: '[3..8]',
+		gives: '交给',
+		resKicker: '返回值',
+		resName: 'res',
+		resType: "&'a str",
+	},
+	en: {
+		caption:
+			"'static contains 'outer, and 'outer contains 'inner, so a longer reference can shrink into a shorter range. At longer(&outer, &inner), &outer narrows from [1..12] to [3..8], lines up with &inner on one 'a, and res receives [3..8].",
+		title: 'A longer lifetime can shrink, and the call settles on one \'a',
+		desc: "Top to bottom, the ranges are 'static, 'outer [1..12], and 'inner [3..8]. Arrows point downward: a longer reference may be used as a shorter one. At the call longer(&outer, &inner), &outer narrows to [3..8], matches &inner on one 'a, and the return value res gets [3..8] as well.",
+		upKicker: '① containment (covariance)',
+		upSub: 'a longer reference may shrink into a shorter one',
+		staticName: "'static",
+		staticRange: '[whole program]',
+		shrink1: 'shrinks down',
+		outerName: "'outer",
+		outerRange: '[1..12]',
+		shrink2: 'narrows again',
+		innerName: "'inner",
+		innerRange: '[3..8]',
+		downKicker: '② call longer(&outer, &inner)',
+		downSub: 'the longer argument narrows until both share one \'a',
+		outerArg: '&outer',
+		innerArg: '&inner',
+		shrinkArg: 'narrows',
+		already: 'already',
+		aKicker: 'shared range',
+		aName: "'a",
+		aRange: '[3..8]',
+		gives: 'to res',
+		resKicker: 'return',
+		resName: 'res',
+		resType: "&'a str",
+	},
+} as const;
+
+const { lang } = Astro.props;
+const locale = lang ?? (SITE_LOCALE === 'en' ? 'en' : 'zh');
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 800" role="img" aria-labelledby="lc-title lc-desc">
+		<title id="lc-title">{t.title}</title>
+		<desc id="lc-desc">{t.desc}</desc>
+
+		<rect class="panel" x="16" y="12" width="608" height="448" rx="10"></rect>
+		<rect class="slot" x="80" y="88" width="480" height="72" rx="6"></rect>
+		<rect class="slot" x="120" y="224" width="400" height="72" rx="6"></rect>
+		<rect class="object" x="170" y="360" width="300" height="72" rx="6"></rect>
+
+		<rect class="panel" x="16" y="476" width="608" height="308" rx="10"></rect>
+		<rect class="slot" x="28" y="548" width="168" height="76" rx="6"></rect>
+		<rect class="slot" x="28" y="656" width="168" height="76" rx="6"></rect>
+		<rect class="object" x="272" y="588" width="148" height="120" rx="6"></rect>
+		<rect class="slot" x="492" y="588" width="116" height="120" rx="6"></rect>
+
+		<path class="arrow" d="M 320 160 V 224" marker-end="url(#lc-head)"></path>
+		<path class="arrow" d="M 320 296 V 360" marker-end="url(#lc-head)"></path>
+		<path class="arrow" d="M 196 586 C 228 586, 240 628, 272 636" marker-end="url(#lc-head)"></path>
+		<path class="arrow" d="M 196 694 C 228 694, 240 668, 272 660" marker-end="url(#lc-head)"></path>
+		<path class="arrow" d="M 420 648 H 492" marker-end="url(#lc-head)"></path>
+
+		<text class="edge-label" x="32" y="40">{t.upKicker}</text>
+		<text class="edge-sub" x="32" y="60">{t.upSub}</text>
+		<text class="node-name" x="320" y="118" text-anchor="middle">{t.staticName}</text>
+		<text class="code" x="320" y="144" text-anchor="middle">{t.staticRange}</text>
+		<text class="edge-label" x="336" y="198">{t.shrink1}</text>
+		<text class="node-name" x="320" y="254" text-anchor="middle">{t.outerName}</text>
+		<text class="code" x="320" y="280" text-anchor="middle">{t.outerRange}</text>
+		<text class="edge-label" x="336" y="334">{t.shrink2}</text>
+		<text class="node-name" x="320" y="390" text-anchor="middle">{t.innerName}</text>
+		<text class="code" x="320" y="416" text-anchor="middle">{t.innerRange}</text>
+
+		<text class="edge-label" x="32" y="504">{t.downKicker}</text>
+		<text class="edge-sub" x="32" y="524">{t.downSub}</text>
+		<text class="code" x="112" y="578" text-anchor="middle">{t.outerArg}</text>
+		<text class="edge-sub" x="112" y="602" text-anchor="middle">{t.outerRange}</text>
+		<text class="code" x="112" y="686" text-anchor="middle">{t.innerArg}</text>
+		<text class="edge-sub" x="112" y="710" text-anchor="middle">{t.innerRange}</text>
+		<text class="edge-sub" x="234" y="568" text-anchor="middle">{t.shrinkArg}</text>
+		<text class="edge-sub" x="234" y="718" text-anchor="middle">{t.already}</text>
+		<text class="edge-sub" x="346" y="624" text-anchor="middle">{t.aKicker}</text>
+		<text class="node-name" x="346" y="650" text-anchor="middle">{t.aName}</text>
+		<text class="code" x="346" y="676" text-anchor="middle">{t.aRange}</text>
+		<text class="edge-sub" x="456" y="632" text-anchor="middle">{t.gives}</text>
+		<text class="edge-sub" x="550" y="624" text-anchor="middle">{t.resKicker}</text>
+		<text class="node-name" x="550" y="650" text-anchor="middle">{t.resName}</text>
+		<text class="code" x="550" y="676" text-anchor="middle">{t.resType}</text>
+
+		<defs>
+			<marker id="lc-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

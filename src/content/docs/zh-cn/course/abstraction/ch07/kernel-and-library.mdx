@@ -145,7 +145,7 @@ pub trait Copy: Clone {
 
 在下一章（第 8 章）中，我们将立刻撞上静态单态化的物理边界：**当一个函数的不同分支想要返回不同的具体类型，或者当一个 `Vec` 数组需要同时装入十几种实现了同一个 Trait 的不同结构体时，编译期单态化为什么突然行不通了？** 那条把类型信息装进 **16 字节虚表胖指针 `dyn Trait`（动态分发）** 的第二路径，以及如何在没有 `class extends` 的世界里做架构选型，将在下一章正式揭晓。
 
-[继续：第 8 章 · 多态与架构选型 →](/abstraction/dispatch-and-architecture/)
+[继续：第 8 章 · 静态分发、动态分发与多态选型 →](/abstraction/dispatch-and-architecture/)
 
 ### 动手核对与小练习
 

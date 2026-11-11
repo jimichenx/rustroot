@@ -1,0 +1,290 @@
+---
+/**
+ * 12.1「Rc 的 strong 如何加减」。
+ *
+ * 同一块 RcBox 留在原地，栈上的指针先后接入、退场。
+ * strong 走 1 → 2 → 3 → 2 → 1 → 0：
+ * 大于 0 时 Node 不动；归 0 的那一次，整块变虚线释放。
+ *
+ * 六步可跳。关掉 JS 时停在第 6 步（归 0，已释放）。
+ * 样式见 src/styles/diagrams.css，组件里不写 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+import FigureControls from '../course/FigureControls.astro';
+
+const copy = {
+	zh: {
+		caption:
+			'三根 8 字节指针先后指向同一块 RcBox。strong 随 Rc::clone 加 1、随 Drop 减 1；大于 0 时 Node 留着，归 0 才释放。',
+		title: 'strong 归零时才释放这块堆内存',
+		desc: '创建 shared_node 时 strong 为 1。node_a、node_b 经 Rc::clone 先后接入，strong 到 3，Node 仍是一份。node_b、node_a 离开作用域时 strong 减到 2、再减到 1，堆块留着。shared_node 最后离开，strong 归 0，RcBox 整块释放。',
+		stackKicker: '栈上的指针',
+		stackSub: '各 8 字节',
+		heapKicker: '堆 · RcBox',
+		heapSub: 'strong 在 Node 之前',
+		empty: '空位',
+		left: '已离开作用域',
+		ptr8: '8 字节地址',
+		strong: 'strong',
+		nodeName: 'Node',
+		nodeVal: 'val: 10',
+		nodeNext: 'next: None',
+		opSet: '置 1',
+		opPlus: '+ 1',
+		opMinus: '- 1',
+		noteNew: '一份 Node',
+		noteShare: '只复制地址',
+		noteKeep: '大于 0，不释放',
+		noteFree: '归 0，整块释放',
+		sharedName: 'shared_node',
+		nodeA: 'node_a',
+		nodeB: 'node_b',
+		who: [
+			'创建 shared_node',
+			'Rc::clone 接上 node_a',
+			'Rc::clone 接上 node_b',
+			'node_b 离开作用域',
+			'node_a 离开作用域',
+			'shared_node 离开作用域',
+		],
+		trails: [
+			'1',
+			'1 → 2',
+			'1 → 2 → 3',
+			'1 → 2 → 3 → 2',
+			'1 → 2 → 3 → 2 → 1',
+			'1 → 2 → 3 → 2 → 1 → 0',
+		],
+		stepper: 'strong 的加减',
+		steps: [
+			'创建 shared_node，strong = 1',
+			'node_a 接入，strong = 2',
+			'node_b 接入，strong = 3',
+			'node_b 退场，strong = 2，不释放',
+			'node_a 退场，strong = 1，不释放',
+			'最后退场，strong = 0，释放',
+		],
+	},
+	en: {
+		caption:
+			'Three 8-byte pointers take turns aiming at one RcBox. strong goes up by 1 on Rc::clone and down by 1 on Drop. The Node stays while strong is above 0, and the block is freed at 0.',
+		title: 'The heap block is freed when strong hits zero',
+		desc: 'shared_node starts with strong at 1. node_a and node_b join through Rc::clone, and strong reaches 3 while the Node stays a single copy. When node_b and then node_a leave scope, strong falls to 2 and then 1, and the block stays. shared_node leaves last, strong hits 0, and the whole RcBox is freed.',
+		stackKicker: 'pointers on the stack',
+		stackSub: '8 bytes each',
+		heapKicker: 'heap · RcBox',
+		heapSub: 'strong, then the Node',
+		empty: 'empty',
+		left: 'left scope',
+		ptr8: '8-byte address',
+		strong: 'strong',
+		nodeName: 'Node',
+		nodeVal: 'val: 10',
+		nodeNext: 'next: None',
+		opSet: 'set 1',
+		opPlus: '+ 1',
+		opMinus: '- 1',
+		noteNew: 'one Node',
+		noteShare: 'address only',
+		noteKeep: 'above 0, keep it',
+		noteFree: 'hit 0, free it',
+		sharedName: 'shared_node',
+		nodeA: 'node_a',
+		nodeB: 'node_b',
+		who: [
+			'create shared_node',
+			'Rc::clone node_a',
+			'Rc::clone node_b',
+			'node_b leaves scope',
+			'node_a leaves scope',
+			'shared_node leaves scope',
+		],
+		trails: [
+			'1',
+			'1 → 2',
+			'1 → 2 → 3',
+			'1 → 2 → 3 → 2',
+			'1 → 2 → 3 → 2 → 1',
+			'1 → 2 → 3 → 2 → 1 → 0',
+		],
+		stepper: 'How strong changes',
+		steps: [
+			'Create shared_node, strong = 1',
+			'node_a joins, strong = 2',
+			'node_b joins, strong = 3',
+			'node_b leaves, strong = 2, block stays',
+			'node_a leaves, strong = 1, block stays',
+			'Last holder leaves, strong = 0, free the block',
+		],
+	},
+} as const;
+
+const locale = SITE_LOCALE === 'en' ? 'en' : 'zh';
+const t = copy[locale];
+
+/** 这些步骤显示该元素；与 diagrams.css 里的 .rc-only-n 对应。 */
+function onlyClass(steps: readonly number[]) {
+	return ['rc-only', ...steps.map((step) => `rc-only-${step}`)].join(' ');
+}
+
+const holders = [
+	{ key: 'shared', name: t.sharedName, y: 72, arrow: 'M 252 112 H 404' },
+	{ key: 'a', name: t.nodeA, y: 164, arrow: 'M 252 204 H 324 V 154 H 404' },
+	{ key: 'b', name: t.nodeB, y: 256, arrow: 'M 252 296 H 348 V 190 H 404' },
+] as const;
+
+const numerals = [
+	{ n: '1', steps: [1, 5] },
+	{ n: '2', steps: [2, 4] },
+	{ n: '3', steps: [3] },
+	{ n: '0', steps: [6] },
+] as const;
+
+const ops = [
+	{ text: t.opSet, steps: [1] },
+	{ text: t.opPlus, steps: [2, 3] },
+	{ text: t.opMinus, steps: [4, 5, 6] },
+] as const;
+
+const notes = [
+	{ text: t.noteNew, steps: [1] },
+	{ text: t.noteShare, steps: [2, 3] },
+	{ text: t.noteKeep, steps: [4, 5] },
+	{ text: t.noteFree, steps: [6] },
+] as const;
+---
+
+<figure class="diagram rc-count-figure" data-stepper>
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 468" role="img" aria-labelledby="rcp-title rcp-desc">
+		<title id="rcp-title">{t.title}</title>
+		<desc id="rcp-desc">{t.desc}</desc>
+
+		<rect class="panel" x="16" y="16" width="236" height="340" rx="10"></rect>
+		<rect class="panel" x="388" y="16" width="236" height="340" rx="10"></rect>
+		<text class="label" x="134" y="40" text-anchor="middle">{t.stackKicker}</text>
+		<text class="edge-sub" x="134" y="58" text-anchor="middle">{t.stackSub}</text>
+		<text class="label" x="506" y="40" text-anchor="middle">{t.heapKicker}</text>
+		<text class="edge-sub" x="506" y="58" text-anchor="middle">{t.heapSub}</text>
+
+		{
+			holders.map((holder) => (
+				<g>
+					<g class={`rc-phase rc-early rc-${holder.key}-early`}>
+						<rect class="freed" x="32" y={holder.y} width="204" height="80" rx="8"></rect>
+						<text class="edge-sub" x="134" y={holder.y + 46} text-anchor="middle">
+							{t.empty}
+						</text>
+					</g>
+					<g class={`rc-phase rc-late rc-${holder.key}-late`}>
+						<rect class="freed" x="32" y={holder.y} width="204" height="80" rx="8"></rect>
+						<text class="name" x="134" y={holder.y + 34} text-anchor="middle">
+							{holder.name}
+						</text>
+						<text class="edge-sub" x="134" y={holder.y + 56} text-anchor="middle">
+							{t.left}
+						</text>
+					</g>
+					<g class={`rc-phase rc-live rc-${holder.key}-live`}>
+						<rect class="slot" x="32" y={holder.y} width="204" height="80" rx="8"></rect>
+						<text class="name" x="134" y={holder.y + 34} text-anchor="middle">
+							{holder.name}
+						</text>
+						<text class="edge-sub" x="134" y={holder.y + 56} text-anchor="middle">
+							{t.ptr8}
+						</text>
+					</g>
+				</g>
+			))
+		}
+
+		<g class="rc-phase rc-late rc-heap-late">
+			<rect class="freed" x="404" y="74" width="204" height="266" rx="10"></rect>
+			<rect class="freed" x="420" y="96" width="172" height="120" rx="6"></rect>
+			<text class="label" x="506" y="118" text-anchor="middle">{t.strong}</text>
+			<text class="edge-label" x="506" y="248" text-anchor="middle">{t.nodeName}</text>
+			<text class="code" x="506" y="274" text-anchor="middle">{t.nodeVal}</text>
+			<text class="code" x="506" y="298" text-anchor="middle">{t.nodeNext}</text>
+		</g>
+		<g class="rc-phase rc-live rc-heap-live">
+			<rect class="object" x="404" y="74" width="204" height="266" rx="10"></rect>
+			<rect class="slot" x="420" y="96" width="172" height="120" rx="6"></rect>
+			<text class="label" x="506" y="118" text-anchor="middle">{t.strong}</text>
+			<text class="edge-label" x="506" y="248" text-anchor="middle">{t.nodeName}</text>
+			<text class="code" x="506" y="274" text-anchor="middle">{t.nodeVal}</text>
+			<text class="code" x="506" y="298" text-anchor="middle">{t.nodeNext}</text>
+		</g>
+
+		{
+			holders.map((holder) => (
+				<path
+					class={`arrow rc-phase rc-live rc-${holder.key}-live`}
+					d={holder.arrow}
+					marker-end="url(#rcp-head)"
+				></path>
+			))
+		}
+
+		{
+			numerals.map((item) => (
+				<text class={`rc-num ${onlyClass(item.steps)}`} x="506" y="168" text-anchor="middle">
+					{item.n}
+				</text>
+			))
+		}
+		{
+			ops.map((item) => (
+				<text class={`edge-label ${onlyClass(item.steps)}`} x="506" y="200" text-anchor="middle">
+					{item.text}
+				</text>
+			))
+		}
+		{
+			notes.map((item) => (
+				<text class={`name ${onlyClass(item.steps)}`} x="506" y="324" text-anchor="middle">
+					{item.text}
+				</text>
+			))
+		}
+
+		<rect class="panel" x="16" y="372" width="608" height="80" rx="10"></rect>
+		{
+			t.who.map((line, index) => (
+				<text
+					class={`edge-label rc-only rc-only-${index + 1}`}
+					data-step={index + 1}
+					x="320"
+					y="404"
+					text-anchor="middle"
+				>
+					{line}
+				</text>
+			))
+		}
+		{
+			t.trails.map((line, index) => (
+				<text
+					class={`edge-sub rc-trail rc-only rc-only-${index + 1}`}
+					x="320"
+					y="430"
+					text-anchor="middle"
+				>
+					{line}
+				</text>
+			))
+		}
+
+		<defs>
+			<marker id="rcp-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+
+	<FigureControls controls="stepper" label={t.stepper} steps={[...t.steps]} />
+</figure>
+
+<script>
+	import { initFigures } from '../../scripts/motion';
+	initFigures();
+</script>

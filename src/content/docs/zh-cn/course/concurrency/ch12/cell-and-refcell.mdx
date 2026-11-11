@@ -1,0 +1,206 @@
+---
+title: Cell<T> 与 RefCell<T>：内部可变性——把借用检查搬到运行时
+description: 从修改 Rc<Node> 共享字段与只读 &self 接口追加日志的任务出发，排查为什么编译器严禁通过 &T 修改内存，并顺着物理安全边界亲手推演出「整进整出」的 Cell<T> 与「运行时借用计数」的 RefCell<T>。
+sidebar:
+  order: 2
+---
+
+import { Code } from '@astrojs/starlight/components';
+import RefCellGuardLifecycleDiagram from '../../../../../../components/diagrams/RefCellGuardLifecycleDiagram.astro';
+import cellAndRefCellSource from '../../../../../../../examples/concurrency/shared-mutability/src/bin/cell-and-refcell.rs?raw';
+
+接续上一节的「Y 字形」汇合链表：我们已经用 `Rc<Node>` 让 `node_a` 和 `node_b` 的 `next` 字段共同指向了同一个 `shared_node`（其 `val` 为 `10`）。
+
+现在，业务方提了一个再自然不过的新需求：**当程序运行到某一刻时，把那个公共节点 `shared_node` 里的数字 `val` 从 `10` 改成 `99`，好让 `node_a` 和 `node_b` 顺着 `next` 读到的都是更新后的 `99`。**
+
+与此同时，在工程的另一个模块里，你正在为一个外部定义好的消息通知 Trait 编写测试替身（Mock）：
+
+```rust
+trait Messenger {
+    fn send(&self, msg: &str); // 外部架构师把接收者写死成了只读的 &self
+}
+```
+
+你想写一个 `MockQueue` 实现这个 `Messenger`，每当别人调用 `queue.send("hello")` 时，就把这条消息追加进 `MockQueue` 内部的 `Vec<String>` 列表里，方便测试结束时核对一共发了多少条消息。
+
+在 Python、Java 或 Go 里，这两个任务连一秒钟都不用犹豫：直接写 `shared_node.val = 99` 和 `self.sent_messages.append(msg)` 就完事了。
+
+可当你在 Rust 里写下这两行代码时，编译器瞬间把两扇门全都焊死了。
+
+---
+
+## 迎头碰壁：为什么拿着 `&T` 绝不让你改数据？
+
+我们先试着给 `shared_node` 加上 `mut`，直接修改它的 `val` 字段；或者在 `send(&self)` 里往 `self.sent_messages` 追加元素：
+
+```rust
+let mut shared_node = Rc::new(Node { val: 10, next: None });
+// ❌ 编译报错 E0594: cannot assign to data in an `Rc`
+// shared_node.val = 99;
+
+impl Messenger for MockQueue {
+    fn send(&self, msg: &str) {
+        // ❌ 编译报错 E0596: cannot borrow `self.sent_messages` as mutable, as it is behind a `&` reference
+        // self.sent_messages.push(String::from(msg));
+    }
+}
+```
+
+两条报错指向了同一条前 11 章建立的铁律——**外部可变性（Inherited Mutability）**：
+在 Rust 的默认规则下，一个结构体字段能不能改，完全取决于你手里拿着的是什么——只有当你独占所有权且声明了 `let mut x`，或者手里握着全场唯一的 **`&mut T`** 时，才允许修改。而 `Rc<Node>` 解引用只能给你只读的 **`&Node`**，Trait 签名里的 `&self` 也是只读的 **`&MockQueue`**。只要隔着一层只读引用 `&`，内部的所有字段就全被锁成了只读。
+
+### 侦探诊断：编译器到底在害怕什么物理事故？
+
+在动手想办法绕过这道限制之前，我们必须先像侦探一样搞清楚：**为什么编译器这么顽固，非要禁止通过只读引用 `&T` 修改内部数据？如果它放行了，物理内存里到底会发生什么事故？**
+
+回到我们在第 4 章（`Vec` 扩容）和第 6 章（枚举变体覆盖）见过的事故现场：
+- 假设 `node_a` 和 `node_b` 都拿着指向 `shared_node` 的只读引用；
+- 如果有人先顺着 `node_a` 借出了一根指向节点内部某个字段的引用 `let r: &String = &shared_node.name;`；
+- 紧接着，如果编译器允许另一个人顺着 `shared_node` 直接修改 `name`（触发 `String` 缓冲区重新分配或释放旧堆内存），或者往 `self.sent_messages` 里 `push` 新元素导致 `Vec` 满了搬家——**那么前面那个人手里正握着的只读引用 `r`，当场就会变成指向已释放旧内存的悬垂引用。**
+
+看清这一步，破案的突破口就打开了：
+编译器之所以一刀切地规定「有 `&T` 就不准改」，**真正防范的并不是「内存里的字节发生变化」，而是防范「当内存发生变化时，外面同时有人手里正握着指向这块内存内部的引用 `&inner`」**。
+
+顺着这个物理真相，如果我们自己就是标准库的设计者，怎么设计一种既允许在只读引用 `&` 下修改内部数据（即**内部可变性 Interior Mutability**）、又 100% 保证绝不会产生悬垂引用的安全容器？
+
+根据内部装的数据是不是需要向外部借出引用，我们可以设计出两套截然不同的破局工具。
+
+---
+
+## 工具一：`Cell<T>`——既然怕内部引用悬垂，那我干脆不借出引用
+
+我们先来解救第一个任务：修改 `shared_node` 里的整数 `val: i32`。
+
+仔细想一想：刚才编译器怕的是「有人手里握着指向内部的引用 `&i32` 时，里面的值被别人改了」。
+那如果我们造一个特殊的包装盒子 **`Cell<T>`**，给它立下一条铁规矩：
+**任何人永远都不能从 `Cell<T>` 里借出指向内部数据的引用 `&T`（它故意不实现 `Deref`）。你只能把一个新值整个塞进去覆盖旧值（`.set(new_val)`），或者把里面的值按位复制一份拿出来（`.get()`）。**
+
+我们来核对一下物理安全性：
+1. 因为我们当前在**单线程**里运行，CPU 同一时刻只能顺序执行一条指令，不可能发生两个线程同时往同一块内存写字节的半写撕裂；
+2. 因为 `Cell<T>` **绝不向外提供 `&T` 引用**，所以在整个程序的任何角落，都绝对不可能有人手里握着指向 `Cell` 内部的指针；
+3. 既然外面一根指向内部的指针都没有，那么哪怕有 10 个 `Rc<Node>` 共享着同一个节点，我们随时调用 `.set(99)` 把盒子里的 `10` 改写成 `99`，又会让谁悬垂呢？**没有任何引用会悬垂。**
+
+这就是标准库 `std::cell::Cell<T>` 的设计原理：通过**「禁止借出内部引用、只允许整进整出」**，在单线程下彻底消除了别名悬垂的可能。
+
+更妙的是它的物理成本：
+- **零额外内存开销**：`Cell<i32>` 内部没有任何计数器，它在内存中就是完完全全的一个 4 字节 `i32`（`size_of::<Cell<i32>>() == 4`）；
+- **零运行时检查开销**：调用 `.set()` 和 `.get()` 编译后就是一条直接读写内存的机器指令，绝不可能触发任何运行时 `panic!`。
+
+我们把 `Node` 里的 `val: i32` 换成 `val: Cell<i32>`，当场拿下第一个任务：
+
+<small class="code-source">源文件：<code>examples/concurrency/shared-mutability/src/bin/cell-and-refcell.rs</code></small>
+<Code
+  code={cellAndRefCellSource.split('// ANCHOR: cell_node\n')[1].split('\n// ANCHOR_END: cell_node')[0] + '\n\n' + cellAndRefCellSource.split('// ANCHOR: cell_demo\n')[1].split('\n    // ANCHOR_END: cell_demo')[0]}
+  lang="rust"
+  title="用 Cell<i32> 在共享只读的 Rc<Node> 下零成本修改字段"
+/>
+
+运行输出：
+
+```text
+修改后：node_a 看到的后续值 = 99, node_b 看到的后续值 = 99
+```
+
+*(补充一点：如果 `Cell<T>` 里面装的是没有实现 `Copy` 的类型——比如 `Cell<String>`，虽然不能调 `.get()` 按位复制，但你依然可以调用 `.replace(new_str)` 把新字符串塞进去换出旧字符串，或者调用 `.take()` 把里面的值移出来并原地留下默认值，同样遵循「整进整出、绝不暴露内部引用」的安全铁律。)*
+
+---
+
+## 工具二：`RefCell<T>`——必须借出引用时，把借用检查器搬进运行时
+
+`Cell<T>` 解决标量和整体替换干净利落。但现在看我们的第二个任务：在 `MockQueue::send(&self, msg: &str)` 里，我们要往内部的 `Vec<String>` 里追加一条消息。
+
+`Vec::push(&mut self, value)` 方法要求必须拿到指向这个动态数组的**可变引用 `&mut Vec<String>`** 原地操作（如果每次追加一条消息都用 `Cell` 把整个 `Vec` 移出来、`push` 完再塞回去，写起来未免太笨重了）。
+
+可一旦允许从只读的 `&self` 里借出 `&Vec<String>` 和 `&mut Vec<String>`，前面说的悬垂风险就又回来了：万一外面的代码正拿着只读引用遍历这个 `Vec`，此时有人调用了 `send(&self)` 借出 `&mut Vec` 触发扩容搬家，遍历方的引用就会当场悬垂。
+
+编译期算不清调用顺序，我们又非要借出 `&T` 和 `&mut T` 不可——怎么破局？
+
+回想一下上一节我们是怎么发明 `Rc<T>` 的：编译期算不清谁最后释放，我们就在堆数据旁边放了一个运行时的 `strong` 计数器。
+现在同理：**编译期算不清读写借用会不会冲突，那我们就在数据 `T` 的旁边放一个运行时的「借用状态计数器（`borrow`）」，把编译期的「共享不可变、可变不共享」规则原封不动地搬到运行时去检查。**
+
+我们来亲手设计这个带运行时借用计数器的容器——标准库叫它 **`RefCell<T>`**：
+
+### 1. `RefCell<T>` 的物理内存布局与计数规则
+
+在内存里，`RefCell<T>` 没有在堆上另开空间，而是直接和内部数据 `T` 一起内联存放，只不过在 `T` 的旁边多放了一个占 8 字节的整数状态字 **`borrow: isize`**：
+
+- **空闲状态（`borrow == 0`）**：当前没有任何人借用里面的数据；
+- **申请只读借用（调用 `.borrow()`）**：
+  去检查状态字——只要 `borrow >= 0`（说明当前没有可变借用），就把 `borrow` **加 `1`**（允许多个只读借用并存，计数变为 `1, 2, 3...`），并交出一个只读访问凭条；
+- **申请可变借用（调用 `.borrow_mut()`）**：
+  去检查状态字——只有当 **`borrow == 0`**（说明当前既没有只读借用、也没有其他可变借用）时，才把 `borrow` 改写为 **`-1`**（代表独占可变锁定），并交出一个可变访问凭条；
+- **一旦违规，当场 `panic!`**：
+  如果在 `borrow > 0`（有人正在读）时调用 `.borrow_mut()`，或者在 `borrow == -1`（有人正在写）时又调用 `.borrow()` 或 `.borrow_mut()`，说明运行时发生了读写冲突——`RefCell` 会立刻在运行时触发 **`panic!`**（报错 `already borrowed: BorrowMutError`），在悬垂事故真正发生前一秒强行终止程序。
+
+<RefCellGuardLifecycleDiagram />
+
+### 2. 为什么返回的是 `Ref<T>` 和 `RefMut<T>`，而不是裸 `&T` 和 `&mut T`？
+
+仔细看上面的第 2、3 步，你会发现一个极其关键的机制细节：
+当你调用 `ref_cell.borrow()` 时，它返回的类型并不是普通的 `&T`，而是一个叫 **`Ref<T>`** 的结构体；调用 `ref_cell.borrow_mut()` 返回的也不是 `&mut T`，而是 **`RefMut<T>`**。
+
+**为什么 `RefCell` 不能直接给你返回裸引用 `&T` 和 `&mut T`？**
+
+想一想：如果 `.borrow()` 把计数器加 `1` 后，只给你返回一个普通的 `&T`——普通引用 `&T` 是没有 `Drop` 释放逻辑的。当这个 `&T` 用完离开作用域时，**谁去通知 `RefCell` 把那个 `borrow` 计数器减回 `0` 呢？没人通知。** 一旦没人把计数器减回去，这个 `RefCell` 就会永远停留在「已借出」状态，再也没法申请可变借用了。
+
+到这里，我们在第 10 章打下的底子第二次大显身手了：
+标准库专门把借出来的引用包装成了两个**守卫智能指针（Guard Smart Pointers）——`Ref<T>` 与 `RefMut<T>`**（也就是我们在 `10.1` 全景表里见过的第 4 类智能指针）：
+1. **靠 `Deref` / `DerefMut` 伪装成普通引用**：`Ref<T>` 实现了 `Deref`，`RefMut<T>` 实现了 `Deref` + `DerefMut`。所以你拿到守卫后，直接调 `.len()`、`.push()` 跟用普通引用完全没区别；
+2. **靠 `Drop` 在退场时自动归还计数**：这才是守卫的核心机制——当 `Ref<T>` 离开作用域触发 `Drop::drop` 时，它会自动把 `RefCell` 的 `borrow` 计数 **`- 1`**；当 `RefMut<T>` 离开作用域触发 `Drop::drop` 时，它会自动把 `borrow` 计数从 `-1` **恢复为 `0`**。
+
+我们用代码把 `MockQueue` 和守卫的生命周期跑一遍：
+
+<small class="code-source">源文件：<code>examples/concurrency/shared-mutability/src/bin/cell-and-refcell.rs</code></small>
+<Code
+  code={cellAndRefCellSource.split('// ANCHOR: refcell_tracker\n')[1].split('\n// ANCHOR_END: refcell_tracker')[0] + '\n\n' + cellAndRefCellSource.split('// ANCHOR: refcell_demo\n')[1].split('\n    // ANCHOR_END: refcell_demo')[0]}
+  lang="rust"
+  title="用 RefCell<Vec<String>> 实现只读接口下的运行时借用检查"
+/>
+
+运行结果：
+
+```text
+两个只读守卫并存，消息总数 = 2, 首条 = handshake_init
+最终消息列表: ["handshake_init", "heartbeat_ok", "session_closed"]
+```
+
+---
+
+## `Cell<T>` 与 `RefCell<T>` 工程选型对照
+
+现在，我们已经集齐了在单线程下突破不可变引用的两件武器。在日常工程中，面对「需要在 `&T` 下修改内部字段」的需求时，按下面的标准做裁决：
+
+| 对比维度 | `Cell<T>`（值替换容器） | `RefCell<T>`（运行时借用守卫容器） |
+| --- | --- | --- |
+| **核心安全机制** | **绝不借出内部引用 `&T`**，只允许通过 `.set()` / `.get()` / `.replace()` 整进整出。 | 允许借出守卫 **`Ref<T>` / `RefMut<T>`**，靠内部 `borrow: isize` 状态字在运行时核对读写排他。 |
+| **额外内存成本** | **0 字节**（与裸 `T` 大小完全相同）。 | **8 字节**（额外存放一个 `isize` 借用计数器）。 |
+| **是否可能 `panic!`？** | **绝不 `panic!`**（编译期通过即 100% 安全）。 | **可能 `panic!`**（若同一个作用域内读写守卫同时存活，运行时当场崩溃）。 |
+| **工程选型铁律** | 内部是 `i32`、`bool`、枚举标志位等 **`Copy` 标量或小结构体**时，**永远优先用 `Cell<T>`**。 | 只有当内部是 `Vec<T>`、`HashMap` 或大结构体，**必须拿到 `&T` / `&mut T` 原地调方法**时，才用 `RefCell<T>`。 |
+
+---
+
+## 小结
+
+回看这一节：
+- 内部可变性（Interior Mutability）并不是「关掉借用检查」，而是针对单线程场景提供了两条安全的变通路径；
+- **`Cell<T>`** 通过放弃内部引用借出，换取了零成本、零崩溃风险的值替换；
+- **`RefCell<T>`** 则利用 `Ref<T>` / `RefMut<T>` 守卫的 `Deref` 与 `Drop`，把编译期的「读写排他检查」搬到了运行时计数器上。
+
+现在，把 `12.1` 的 **`Rc<T>`（多所有者共享只读）** 和本节的 **`RefCell<T>`（在只读下获取运行时可变守卫）** 叠在一起，我们就得到了单线程下既能多处共享、又能随时修改内部结构的终极组合——**`Rc<RefCell<T>>`**。
+
+但为什么在工业界 Code Review 中，一旦看到满屏的 `Rc<RefCell<Node>>`，老手就会立刻亮起红灯？下一节（`12.3`），我们就来拆解这套组合拳的威力、它潜藏的运行时崩溃陷阱，以及如何用数组下标图（Arena 模式）彻底替代它。
+
+---
+
+### 附：本节完整可运行实验源码
+
+<details>
+<summary>点击展开完整源码（<code>examples/concurrency/shared-mutability/src/bin/cell-and-refcell.rs</code>）</summary>
+
+<Code
+  code={cellAndRefCellSource.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+  title="examples/concurrency/shared-mutability/src/bin/cell-and-refcell.rs"
+/>
+
+</details>

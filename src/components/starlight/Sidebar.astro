@@ -3,6 +3,7 @@
  * 覆盖 Starlight 的 Sidebar：结构照抄原版（SidebarPersister + 子列表 + 移动端页脚），
  * 只把子列表换成本地 vendored 的 SidebarSublist，实现「篇不进侧栏、章组标题即章描述页链接」。
  * 样式与展开状态持久化全部沿用 Starlight 原组件。
+ * 末尾脚本在恢复滚动位置之后，把当前页链接滚进侧栏视野（已经看得见则不动）。
  */
 import MobileMenuFooter from 'virtual:starlight/components/MobileMenuFooter';
 import SidebarPersister from '@astrojs/starlight/components/SidebarPersister.astro';
@@ -14,6 +15,112 @@ const { sidebar } = Astro.locals.starlightRoute;
 <SidebarPersister>
 	<SidebarSublist sublist={sidebar} />
 </SidebarPersister>
+
+<script is:inline aria-hidden="true">
+	(() => {
+		const scroller = document.getElementById('starlight__sidebar');
+		if (!scroller) return;
+		window.__rrScrolls = [];
+		scroller.addEventListener('scroll', () => {
+			window.__rrScrolls.push(Math.round(scroller.scrollTop));
+		});
+
+		const desktopQuery = matchMedia('(min-width: 50em)');
+
+		// 只滚动侧栏。当前链接已经在可视区域内就不动；只是贴边，就挪出一点空隙；
+		// 整段都在视野外，则尽量把所在章的标题一起露出来，章太长就放在侧栏上方约三分之一处。
+		// 桌面端 Starlight 会在自定义元素里去掉 popover，去掉之前侧栏是 display:none，量不到位置。
+		// 这个回调排在那之后，也排在 SidebarPersister 恢复 scrollTop 之后，绘制前完成。
+		const reveal = (allowRetry) => {
+			try {
+				if (!desktopQuery.matches && !scroller.matches(':popover-open')) return;
+
+				const current = scroller.querySelector('a[aria-current="page"]');
+				if (!(current instanceof HTMLElement)) return;
+
+				let node = current.parentElement;
+				while (node && node !== scroller) {
+					if (node instanceof HTMLDetailsElement && !node.open) node.open = true;
+					node = node.parentElement;
+				}
+
+				const pad = 16;
+				const view = scroller.getBoundingClientRect();
+				const link = current.getBoundingClientRect();
+				if (view.height < 1 || link.height < 1) {
+					if (allowRetry) requestAnimationFrame(() => reveal(false));
+					return;
+				}
+
+				const topLimit = view.top + pad;
+				const bottomLimit = view.bottom - pad;
+				const viewHeight = bottomLimit - topLimit;
+				const onScreen = link.bottom > view.top && link.top < view.bottom;
+				if (onScreen && link.top >= topLimit && link.bottom <= bottomLimit) return;
+
+				let delta = 0;
+				let branch = 'none';
+				if (link.height >= viewHeight) {
+					branch = 'tall';
+					delta = link.top - topLimit;
+				} else if (onScreen) {
+					branch = 'nudge';
+					delta = link.top < topLimit ? link.top - topLimit : link.bottom - bottomLimit;
+				} else {
+					const chapter = current.closest('details');
+					const anchorTop =
+						chapter instanceof HTMLElement ? chapter.getBoundingClientRect().top : link.top;
+					if (link.bottom - anchorTop <= viewHeight) {
+						branch = 'chapter';
+						delta = anchorTop - topLimit;
+					} else {
+						branch = 'third';
+						delta = link.top - (view.top + Math.max(pad, view.height * 0.32));
+						if (link.bottom - delta > bottomLimit) delta += link.bottom - delta - bottomLimit;
+						if (link.top - delta < topLimit) delta -= topLimit - (link.top - delta);
+					}
+				}
+
+				window.__rrReveal = {
+					branch,
+					onScreen,
+					viewH: view.height,
+					viewTop: view.top,
+					linkTop: link.top,
+					linkH: link.height,
+					delta,
+					scrollBefore: scroller.scrollTop,
+				};
+				if (Math.abs(delta) < 1) return;
+				scroller.scrollTop += delta;
+				window.__rrReveal.scrollAfter = scroller.scrollTop;
+
+				// 记下新位置。否则下一次进页仍恢复旧的 scrollTop（Starlight 只在切到后台时保存），
+				// 相邻课会先被拉回开头再纠正。
+				try {
+					const persist = scroller.querySelector('sl-sidebar-state-persist');
+					const hash = persist?.getAttribute('data-hash') || '';
+					const key = 'sl-sidebar-state';
+					const stored = JSON.parse(sessionStorage.getItem(key) || '{}');
+					if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return;
+					if (stored.hash && hash && stored.hash !== hash) return;
+					stored.hash = hash;
+					stored.scroll = scroller.scrollTop;
+					if (!Array.isArray(stored.open)) stored.open = [];
+					sessionStorage.setItem(key, JSON.stringify(stored));
+				} catch {}
+			} catch {}
+		};
+
+		if (customElements.get('sl-sidebar-pane')) reveal(true);
+		else customElements.whenDefined('sl-sidebar-pane').then(() => reveal(true));
+
+		scroller.addEventListener('toggle', (event) => {
+			if (event.newState === 'open') requestAnimationFrame(() => reveal(true));
+		});
+		desktopQuery.addEventListener('change', () => requestAnimationFrame(() => reveal(true)));
+	})();
+</script>
 
 <div class="md:sl-hidden">
 	<MobileMenuFooter />

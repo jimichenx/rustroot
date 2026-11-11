@@ -1,5 +1,5 @@
 ---
-title: 迭代器与闭包——三件套与 Trait 的工程大合流
+title: 迭代器与闭包
 description: 剥开 for 循环与闭包的语法糖外壳，看清极小语言内核如何将迭代与函数式组合完全交由标准库 Trait（IntoIterator、Iterator 与 Fn 家族）及所有权三件套实现，并在编译期消解为零成本机器码。
 id: iterators-and-closures
 ---

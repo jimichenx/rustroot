@@ -5,6 +5,7 @@ import { docsSchema, i18nSchema } from '@astrojs/starlight/schema';
 import { i18nLoader } from '@astrojs/starlight/loaders';
 import { courseHeadings } from './config/course-numbers';
 import { publicSlug } from './config/course-slugs';
+import { isPublished } from './config/release';
 import { CURRENT } from './config/site';
 
 /** 篇、章、课的标题和侧栏标签在加载后补编号。源文件只写名字。 */
@@ -13,6 +14,9 @@ function withCourseNumbers(loader: Loader): Loader {
 		name: 'course-numbered-glob',
 		load: async (context) => {
 			await loader.load(context);
+			for (const [id] of [...context.store.entries()]) {
+				if (!isPublished(id)) context.store.delete(id);
+			}
 			const headings = courseHeadings(CURRENT.contentDir);
 			const prefix = `src/content/docs/${CURRENT.contentDir}/`;
                         for (const [id, entry] of [...context.store.entries()]) {

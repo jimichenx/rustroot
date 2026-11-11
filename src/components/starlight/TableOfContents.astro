@@ -1,0 +1,59 @@
+---
+/**
+ * 覆盖 Starlight 的 TableOfContents。
+ *
+ * 桌面大纲的标题行可以收起。收起后右栏缩成窄轨，正文按 custom.css 里的
+ * `--rr-toc-width` 让出宽度；选择记在 localStorage（键 `rr-toc-collapsed`），
+ * 由 Head.astro 在绘制前写到 `<html data-toc-collapsed>`，避免先展开再跳一下。
+ *
+ * 列表与当前标题高亮仍用 Starlight 内部组件。升级 Starlight 后若大纲高亮错位，
+ * 对照 dist/components/TableOfContents.astro 与 TableOfContentsList.astro 重新合并。
+ */
+import TableOfContentsList from '../../../node_modules/@astrojs/starlight/dist/components-internals/TableOfContents/TableOfContentsList.astro';
+
+const { toc } = Astro.locals.starlightRoute;
+---
+
+{
+	toc && (
+		<nav aria-labelledby="starlight__on-this-page">
+			<details id="rr-toc" class="rr-toc" open>
+				<summary>
+					<h2 id="starlight__on-this-page" class="rr-toc-label">
+						{Astro.locals.t('tableOfContents.onThisPage')}
+					</h2>
+					<svg class="caret" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+						<path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z" />
+					</svg>
+				</summary>
+				{/*
+				  summary 放在 starlight-toc 外面。组件内部用 summary 的高度修正
+				  移动端吸顶大纲的滚动观察线，桌面大纲没有这层吸顶。
+				*/}
+				<starlight-toc data-min-h={toc.minHeadingLevel} data-max-h={toc.maxHeadingLevel}>
+					<TableOfContentsList toc={toc.items} />
+				</starlight-toc>
+			</details>
+		</nav>
+	)
+}
+
+<script src="../../../node_modules/@astrojs/starlight/dist/components-internals/TableOfContents/starlight-toc.js"></script>
+<script is:inline>
+	(() => {
+		const details = document.getElementById('rr-toc');
+		if (!(details instanceof HTMLDetailsElement)) return;
+		const root = document.documentElement;
+		// 先对齐开放状态，再监听。否则这一下会把自己记成一次用户操作。
+		if (root.hasAttribute('data-toc-collapsed')) details.open = false;
+		details.addEventListener('toggle', () => {
+			const collapsed = !details.open;
+			root.toggleAttribute('data-toc-collapsed', collapsed);
+			try {
+				localStorage.setItem('rr-toc-collapsed', collapsed ? '1' : '0');
+			} catch {
+				// 记不住就只在这一页生效。
+			}
+		});
+	})();
+</script>

@@ -1,0 +1,182 @@
+---
+/**
+ * 10.3「解引用两层机制对比与接力图」。
+ * 上路（第一优先级）：原生引用 r: &i32 直接走编译器内建 *，一步落到 Place: i32。
+ * 下路（第二优先级）：MyBox<i32> 先 Deref::deref 脱壳借出 &i32，再交给同一个内建 *。
+ * 写入时第 1 步改走 DerefMut::deref_mut，终点仍是右侧那块位置。
+ * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	lang?: 'zh' | 'en';
+}
+
+const copy = {
+	zh: {
+		caption:
+			'原生引用 r: &i32 沿编译器内建 * 一步落到 Place: i32；智能指针 MyBox<i32> 要先经 Deref::deref 脱壳借出 &i32，再交给同一个内建 *，写入则改走 DerefMut::deref_mut。',
+		title: '解引用的两层机制：内建 * 直接定位，Deref 先脱壳再接力',
+		desc: '图分上下两路，汇入右侧同一块目标内存位置 Place: i32。上路是第一优先级：原生引用 r: &i32 执行 *r 时，编译器内建 * 直接剥掉 &，不查找 Deref Trait，一步定位到该位置；这个位置可读（let v = *r），也可写（*r = 42）。下路是第二优先级：智能指针 custom: MyBox<i32> 执行 *custom 时分两步。第 1 步调用 Deref::deref(&custom)，脱去结构体外壳，借出原生引用 &i32（&Self::Target）；第 2 步把这个引用交给同一个内建 *，汇入右侧 Place。若是写入，第 1 步改为 DerefMut::deref_mut(&mut custom)，得到 &mut i32，再交给内建 *。',
+		upKicker: '① 第一优先级 · 原生引用',
+		upSub: '直接走内建 *，不查 Trait',
+		upKind: '原生引用',
+		upCode: 'r: &i32',
+		upHint: '执行 *r',
+		upArrow: '编译器内建 *',
+		upArrowSub: '剥去 &，不查 Trait',
+		downKicker: '② 第二优先级 · 两步接力',
+		downSub: '先脱壳借出引用，再交给内建 *',
+		spKind: '智能指针',
+		spName: 'custom',
+		spType: 'MyBox<i32>',
+		step1: '第 1 步',
+		step1Sub: '脱壳借出',
+		midKind: '原生引用',
+		midCode: '&i32',
+		midSub: '&Self::Target',
+		step2: '第 2 步',
+		step2Sub: '内建 *',
+		readLabel: '读取',
+		readCode: 'Deref::deref(&custom) → &i32',
+		writeLabel: '写入',
+		writeCode: 'DerefMut::deref_mut(&mut custom)',
+		writeChain: '→ &mut i32 → 内建 *',
+		endKicker: '汇合终点',
+		endName: 'Place: i32',
+		endSub: '目标内存位置',
+		readOp: '可读',
+		readEx: 'let v = *r',
+		readHint: '从该位置读出',
+		slotCode: 'i32',
+		slotSub: '内存槽位',
+		writeOp: '可写',
+		writeEx: '*r = 42',
+		writeHint: '向该位置写入',
+		placeLabel: '位置表达式',
+		placeHint: '可读 · 可写',
+		mergeHint: '两路汇合于此',
+	},
+	en: {
+		caption:
+			'The native reference r: &i32 reaches Place: i32 in one built-in * step. MyBox<i32> first calls Deref::deref to lend &i32, then hands that reference to the same built-in *; a write uses DerefMut::deref_mut instead.',
+		title: 'Two layers of dereference: built-in * locates the place, Deref peels the shell first',
+		desc: 'Two paths meet at the same target memory place, Place: i32, on the right. Top path, first priority: for a native reference r: &i32, the compiler built-in * strips & and does not look up the Deref trait, locating the place in one step. The place can be read (let v = *r) or written (*r = 42). Bottom path, second priority: for the smart pointer custom: MyBox<i32>, *custom takes two steps. Step 1 calls Deref::deref(&custom), peeling the struct shell and lending the native reference &i32 (&Self::Target). Step 2 hands that reference to the same built-in *, which joins the place on the right. A write changes step 1 to DerefMut::deref_mut(&mut custom), yielding &mut i32, then the built-in *.',
+		upKicker: '① priority 1 · native ref',
+		upSub: 'built-in * only, no Trait lookup',
+		upKind: 'native ref',
+		upCode: 'r: &i32',
+		upHint: 'the *r step',
+		upArrow: 'built-in *',
+		upArrowSub: 'strip &, skip Trait',
+		downKicker: '② priority 2 · two-step relay',
+		downSub: 'peel a reference, then built-in *',
+		spKind: 'smart pointer',
+		spName: 'custom',
+		spType: 'MyBox<i32>',
+		step1: 'step 1',
+		step1Sub: 'to &i32',
+		midKind: 'native ref',
+		midCode: '&i32',
+		midSub: '&Self::Target',
+		step2: 'step 2',
+		step2Sub: 'built-in *',
+		readLabel: 'read',
+		readCode: 'Deref::deref(&custom) → &i32',
+		writeLabel: 'write',
+		writeCode: 'DerefMut::deref_mut(&mut custom)',
+		writeChain: '→ &mut i32 → built-in *',
+		endKicker: 'both paths end',
+		endName: 'Place: i32',
+		endSub: 'target memory',
+		readOp: 'read',
+		readEx: 'let v = *r',
+		readHint: 'load this place',
+		slotCode: 'i32',
+		slotSub: 'memory slot',
+		writeOp: 'write',
+		writeEx: '*r = 42',
+		writeHint: 'store into place',
+		placeLabel: 'place expression',
+		placeHint: 'read · write',
+		mergeHint: 'both paths meet',
+	},
+} as const;
+
+const { lang } = Astro.props;
+const locale = lang ?? (SITE_LOCALE === 'en' ? 'en' : 'zh');
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 560" role="img" aria-labelledby="dr-title dr-desc">
+		<title id="dr-title">{t.title}</title>
+		<desc id="dr-desc">{t.desc}</desc>
+
+		{/* 框在下，箭头居中，文字最后画，避免笔画压住标签 */}
+		<rect class="panel" x="12" y="12" width="440" height="236" rx="10"></rect>
+		<rect class="slot" x="24" y="80" width="148" height="100" rx="6"></rect>
+
+		<rect class="panel" x="12" y="264" width="440" height="280" rx="10"></rect>
+		<rect class="slot" x="24" y="338" width="136" height="84" rx="6"></rect>
+		<rect class="slot" x="256" y="338" width="116" height="84" rx="6"></rect>
+
+		<rect class="object" x="476" y="12" width="152" height="532" rx="10"></rect>
+		<rect class="slot" x="492" y="188" width="120" height="100" rx="6"></rect>
+
+		<path class="arrow" d="M 172 130 H 408 V 220 H 490" marker-end="url(#dr-head)"></path>
+		<path class="arrow" d="M 160 380 H 256" marker-end="url(#dr-head)"></path>
+		<path class="arrow" d="M 372 380 H 464 V 268 H 490" marker-end="url(#dr-head)"></path>
+
+		{/* 上路：原生引用直接走内建 * */}
+		<text class="edge-label" x="28" y="38">{t.upKicker}</text>
+		<text class="edge-sub" x="28" y="58">{t.upSub}</text>
+		<text class="edge-label" x="98" y="112" text-anchor="middle">{t.upKind}</text>
+		<text class="code" x="98" y="140" text-anchor="middle">{t.upCode}</text>
+		<text class="edge-sub" x="98" y="164" text-anchor="middle">{t.upHint}</text>
+		<text class="edge-label" x="290" y="112" text-anchor="middle">{t.upArrow}</text>
+		<text class="edge-sub" x="290" y="154" text-anchor="middle">{t.upArrowSub}</text>
+
+		{/* 下路：智能指针两步接力后汇入同一位置 */}
+		<text class="edge-label" x="28" y="292">{t.downKicker}</text>
+		<text class="edge-sub" x="28" y="312">{t.downSub}</text>
+		<text class="edge-label" x="92" y="364" text-anchor="middle">{t.spKind}</text>
+		<text class="code" x="92" y="388" text-anchor="middle">{t.spName}</text>
+		<text class="code" x="92" y="408" text-anchor="middle">{t.spType}</text>
+		<text class="edge-label" x="314" y="364" text-anchor="middle">{t.midKind}</text>
+		<text class="code" x="314" y="388" text-anchor="middle">{t.midCode}</text>
+		<text class="edge-sub" x="314" y="408" text-anchor="middle">{t.midSub}</text>
+		<text class="edge-label" x="208" y="362" text-anchor="middle">{t.step1}</text>
+		<text class="edge-sub" x="208" y="402" text-anchor="middle">{t.step1Sub}</text>
+		<text class="edge-label" x="418" y="362" text-anchor="middle">{t.step2}</text>
+		<text class="edge-sub" x="418" y="402" text-anchor="middle">{t.step2Sub}</text>
+		<text class="edge-label" x="28" y="454">{t.readLabel}</text>
+		<text class="code" x="80" y="454">{t.readCode}</text>
+		<text class="edge-label" x="28" y="478">{t.writeLabel}</text>
+		<text class="code" x="80" y="478">{t.writeCode}</text>
+		<text class="code" x="80" y="502">{t.writeChain}</text>
+
+		{/* 右侧终点：两路都落到这块位置 */}
+		<text class="edge-label" x="552" y="40" text-anchor="middle">{t.endKicker}</text>
+		<text class="name" x="552" y="66" text-anchor="middle">{t.endName}</text>
+		<text class="edge-sub" x="552" y="88" text-anchor="middle">{t.endSub}</text>
+		<text class="edge-label" x="552" y="116" text-anchor="middle">{t.readOp}</text>
+		<text class="code" x="552" y="140" text-anchor="middle">{t.readEx}</text>
+		<text class="edge-sub" x="552" y="162" text-anchor="middle">{t.readHint}</text>
+		<text class="code" x="552" y="232" text-anchor="middle">{t.slotCode}</text>
+		<text class="edge-sub" x="552" y="256" text-anchor="middle">{t.slotSub}</text>
+		<text class="edge-label" x="552" y="320" text-anchor="middle">{t.writeOp}</text>
+		<text class="code" x="552" y="344" text-anchor="middle">{t.writeEx}</text>
+		<text class="edge-sub" x="552" y="366" text-anchor="middle">{t.writeHint}</text>
+		<text class="edge-label" x="552" y="420" text-anchor="middle">{t.placeLabel}</text>
+		<text class="edge-sub" x="552" y="444" text-anchor="middle">{t.placeHint}</text>
+		<text class="edge-sub" x="552" y="508" text-anchor="middle">{t.mergeHint}</text>
+
+		<defs>
+			<marker id="dr-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

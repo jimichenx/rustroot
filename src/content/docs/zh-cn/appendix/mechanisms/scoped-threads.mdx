@@ -1,0 +1,133 @@
+---
+title: "thread::scope 底层揭秘：双生命周期 'env / 'scope 与 Rust 1.0 泄漏危机"
+description: 拆解 std::thread::scope 如何在不修改编译器内核的前提下，用双生命周期参数 'env 与 'scope 放宽 'static 限制，并回顾 2015 年 Rust 1.0 前夕因 Rc 循环引用跳过 Drop 而引发的 Leakpocalypse 历史事件。
+sidebar:
+  label: thread::scope 与 1.0 泄漏危机
+  order: 7
+---
+
+import { Code } from '@astrojs/starlight/components';
+import LeakGuardCycleDiagram from '../../../../../components/diagrams/LeakGuardCycleDiagram.astro';
+import scopedThreadsMechanism from '../../../../../../examples/concurrency/threads-and-concurrency/src/bin/scoped-threads-mechanism.rs?raw';
+
+在[第 13 章 13.1 节](/concurrency/threads-and-scope/)中，我们看到：普通的 `std::thread::spawn` 严禁子线程直接借用父线程栈上的局部变量（报错要求 `'static`）；而一旦改用 `std::thread::scope(|s| { s.spawn(|| ...); })`，编译器就立刻放行，允许多个子线程直接零成本借用父线程的局部 `&shared_logs`。
+
+很多读者第一次见到这个特性时，都会产生两个疑问：
+1. **为什么不用第 10 章 `10.5` 节学过的 RAII `Drop` 守卫来实现自动 `join`，而非要套一层 `thread::scope(|s| { ... })` 闭包回调？**
+2. **编译器到底是怎么知道 `s.spawn` 里的子线程不会活过外部变量的？它的函数签名是怎么写出来的？**
+
+这背后不仅藏着第 10、11、12、13、17 章五大机制的精妙合流，还直接关联着 Rust 语言发展史上最著名的一次安全危机——**2015 年 Rust 1.0 发布前夕的「内存泄漏大灾难（The Leakpocalypse）」**。
+
+---
+
+## 一、历史悬案：为什么 2015 年初代的 `thread::scoped` 在 1.0 发布前夕被紧急枪毙？
+
+时间倒回 2015 年初，距离 Rust 1.0 正式版发布只剩最后几周。
+
+当时的标准库里其实已经有一个允许子线程借用局部变量的函数，名叫 **`thread::scoped`**。它的设计与今天的闭包回调不同，采用的是我们在[第 10 章 10.5 节](/pointers/drop-and-raii/)学过的 **RAII 资源守卫模式**：
+
+```rust
+// 2015 年初（Rust 1.0 alpha）的初代设计示意
+{
+    let local_data = vec![1, 2, 3];
+    // 调用 scoped 直接返回一个 JoinGuard 守卫，子线程借用 &local_data
+    let _guard: JoinGuard<'_> = thread::scoped(|| {
+        println!("{:?}", local_data);
+    });
+} // <- 设计者的算盘：_guard 在这里离开作用域触发 Drop，
+  //    在 Drop::drop(&mut self) 里强制调用 join() 阻塞等待子线程结束！
+```
+
+你看，初代设计者的逻辑听起来天衣无缝：
+1. `JoinGuard<'a>` 携带了局部变量的生命周期 `'a`，保证 `_guard` 不能活过 `local_data`；
+2. 当 `_guard` 在大括号末尾离开作用域（要在 `local_data` 销毁之前，因为局部变量按声明逆序 LIFO 释放）时，编译器会自动执行 `JoinGuard` 的 **`Drop::drop`**；
+3. 而在 `Drop::drop` 内部，标准库写死了阻塞等待子线程结束的代码——所以当 `local_data` 销毁时，子线程一定已经跑完了。
+
+### 致命一击：当第 12 章的 `Rc` 循环引用遇上 `JoinGuard`
+
+就在所有人都以为这个设计万无一失时，社区开发者发现了一个致命漏洞（后来被称为 **Leakpocalypse**）：
+**如果程序员在 100% 安全的 Rust 代码里（不写一行 `unsafe`），利用我们在[第 12 章 12.1 节](/concurrency/rc-and-weak/)学过的 `Rc` + `RefCell` 故意构造一个循环引用，把两个 `JoinGuard` 装进这个循环引用环里，会发生什么？**
+
+顺着物理内存一步步推演这场灾难：
+1. 我们在函数里创建了局部变量 `local_data`；
+2. 启动子线程借用 `&local_data`，拿到守卫 `guard`；
+3. 我们用完全合法的 `Rc<RefCell<...>>` 造出一个互相指向的环，把 `guard` 塞进环里；
+4. 函数执行结束。栈上的 `Rc` 指针退场，但因为堆上的环计数停留在 `1`，**堆内存发生了内存泄漏——装在里面的 `guard` 永远不会触发 `Drop::drop`。**
+5. 既然 `guard` 没有触发 `Drop`，**主线程根本没有阻塞等待子线程，而是直接退出了当前函数。**
+6. 父线程的栈帧连同 `local_data` 被当场销毁；而此时后台的子线程还在继续运行，顺着 `&local_data` 去读写早已销毁的栈内存——**在没有写任何一行 `unsafe` 的纯安全 Rust 代码里，直接引发了跨线程悬垂指针与内存损坏（Undefined Behavior）。**
+
+这几步落到内存上，顺序是这样的。`a`、`b` 还在栈上时，两个堆块的 strong 都是 2；它们离开后，环把 strong 留在 1，`guard` 的 `Drop` 不执行，`local_data` 这才释放。
+
+<LeakGuardCycleDiagram />
+
+### 铁律的诞生：安全抽象不能依赖 `Drop` 一定会被执行
+
+这场危机在 Rust 核心团队引发了广泛讨论。因为只要一门语言允许在安全代码里组合出 `Rc` 循环引用，就**没有任何办法在编译期 100% 阻止内存泄漏**。
+
+最终，Rust 官方立下了贯穿至今的底层安全公理（The Leakpocalypse 裁决）：
+1. **内存泄漏（以及跳过 `Drop`）在安全 Rust 中是合法的**（标准库随后直接把故意跳过 `Drop` 的 `std::mem::forget` 标为了安全函数）；
+2. **因此，任何关乎内存安全（防悬垂、防数据竞争）的底层抽象，不能把安全防线建立在「某个守卫的 `Drop::drop` 一定会被执行」这个假设上。**
+
+初代 `thread::scoped` 因此在 Rust 1.0 发布前夕被紧急移除。
+
+---
+
+## 二、现代破局：闭包回调模式与双生命周期 `'scope` / `'env`
+
+既然不能把等待子线程的 `join()` 放在可能被泄漏跳过的 `Drop` 守卫里，怎么保证父线程在离开当前代码块前**100% 跑不掉**地把所有子线程等完？
+
+首先由社区的 `crossbeam` 库提出、并在 Rust 1.63 正式纳入标准库的 **`std::thread::scope`**，给出了教科书级的解答：
+
+### 1. 用「外层函数末尾强制 `join`」取代 `Drop` 守卫
+
+不再把守卫交给外部调用方持有，而是反过来，让调用方把逻辑写在一个闭包里传给 **`thread::scope(|s| { ... })`**：
+- 你只能在 `thread::scope` 内部通过参数 `s` 派发子线程；
+- 当你的闭包 `{ ... }` 执行完毕、控制流回到 `thread::scope` 函数体自身时，**`thread::scope` 紧接着在自己的函数末尾写死了一个循环，强制把刚才记录下来的所有子线程句柄逐一 `.join()` 等待完毕，然后 `thread::scope` 函数才会返回**（就算内部发生 `panic!` 栈展开，也会在捕获后先 `join` 完所有子线程再继续展开）。
+- 因为你根本拿不到控制 `join` 的守卫所有权，就算你在闭包里搞 `Rc` 循环引用内存泄漏，控制流也必须走完 `thread::scope` 函数末尾的强制 `join` 循环才能离开。
+
+### 2. 用第 11 章的双生命周期参数 `'scope` 与 `'env` 锁定借用边界
+
+解决了运行时的强制汇合，接下来看最精妙的编译期签名：如何在不修改编译器的情况下，让 `s.spawn` 允许借用外面的局部变量 `local_nums`，同时又防止在 `scope` 内部创建的短命临时变量被子线程借走？
+
+标准库在 `Scope<'scope, 'env>` 结构体上设计了**两个生命周期参数**：
+
+1. **`'env`（外部被借用变量的存活范围）**：
+   代表在调用 `thread::scope` **之前就已经存在、且在 `thread::scope` 返回之后依然存活**的外部局部变量（如 `local_nums`）的范围。
+2. **`'scope`（本次 `thread::scope` 闭包执行的范围）**：
+   代表从进入 `|s| { ... }` 闭包开始，到所有子线程 `join` 汇合完毕为止的这一小段范围。显然，外层的 `'env` 必须完全包住内层的 `'scope`（在语法上写作生命周期约束 **`'env: 'scope`**，读作 `'env` 活得至少和 `'scope` 一样长）。
+
+有了这两个参数，`s.spawn` 的函数签名只需写成：
+
+```rust
+impl<'scope, 'env> Scope<'scope, 'env> {
+    pub fn spawn<F, T>(&'scope self, f: F) -> ScopedJoinHandle<'scope, T>
+    where
+        F: FnOnce() -> T + Send + 'env, // 把 'static 替换成了 'env
+}
+```
+
+你看，编译器核对这行签名时，完全走的是我们在[第 11 章](/pointers/lifetimes-and-borrowing/)学过的标准生命周期规则：
+- 当子线程借用外面的 `&local_nums` 时，其借用范围是 `'env`，满足 `F: 'env`，**放行**；
+- 如果你在 `|s| { ... }` 闭包**内部**临时创建了一个变量 `let temp = vec![1];`（它的范围比 `'scope` 还短，活不过子线程汇合点），并试图让子线程借用 `&temp`，编译器会立刻发现 `&temp` 的范围达不到 `'env`，当场报 `E0597` **拦截**。
+
+---
+
+## 三、亲手实现一个 40 行的极简版 `mini_scope`
+
+为了证明这套机制确实没有任何编译器黑魔法，我们可以用 40 行代码亲手写出一个能跑通的极简原型 `mini_scope`：
+
+<small class="code-source">源文件：<code>examples/concurrency/threads-and-concurrency/src/bin/scoped-threads-mechanism.rs</code></small>
+<Code
+  code={scopedThreadsMechanism.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+  title="用双生命周期参数与出口强制 join 实现极简版 mini_scope"
+/>
+
+运行输出：
+
+```text
+[手写 MiniScope 子线程] 直接借用局部变量求和 = 100
+[主线程] mini_scope 已安全汇合，local_nums 依然完好: [10, 20, 30, 40]
+```
+
+这就是 Rust 语言设计最迷人的地方：**内核只提供最基础的所有权、生命周期泛型参数 `'a` 与 `unsafe` 边界，而把复杂的工程需求（哪怕是曾引发 1.0 危机的跨线程栈借用）全部用严谨的库类型签名表达出来。**

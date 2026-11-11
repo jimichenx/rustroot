@@ -2,17 +2,25 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import { satteri } from '@astrojs/markdown-satteri';
 import { CURRENT, REPOSITORY, SITE_LOCALE } from './src/config/site';
+import { isPublished } from './src/config/release';
 import { sidebar } from './src/config/sidebar';
 import { chapterLessonsPlugin } from './src/plugins/chapter-lessons';
 import { exampleSourcePlugin } from './src/plugins/example-source';
 import { cjkEmphasisPlugin } from './src/plugins/cjk-emphasis';
+import { unpublishedLinkPlugin } from './src/plugins/unpublished-links';
 import { wrapTablesPlugin } from './src/plugins/wrap-tables';
+
+function releasedRedirects(map: Record<string, string>): Record<string, string> {
+	return Object.fromEntries(
+		Object.entries(map).filter(([, target]) => isPublished(target.replace(/^\/+|\/+$/g, ''))),
+	);
+}
 
 export default defineConfig({
 	// 每次构建只面向一个域名；canonical、sitemap、og:url 均基于此。
 	site: CURRENT.site,
         // Keep published URLs working after the first part's rename.
-        redirects: {
+        redirects: releasedRedirects({
                 '/ownership/hard-triangle/': '/memory/hard-triangle/',
                 ...(SITE_LOCALE === 'zh'
                         ? {
@@ -25,10 +33,10 @@ export default defineConfig({
                                 '/ownership/summary/': '/memory/summary/',
                         }
                         : {}),
-        },
+        }),
 	markdown: {
 		processor: satteri({
-			mdastPlugins: [cjkEmphasisPlugin],
+			mdastPlugins: [cjkEmphasisPlugin, unpublishedLinkPlugin],
 			hastPlugins: [wrapTablesPlugin, exampleSourcePlugin, chapterLessonsPlugin],
 		}),
 	},
@@ -52,6 +60,8 @@ export default defineConfig({
 				LanguageSelect: './src/components/starlight/LanguageSelect.astro',
 				// 侧栏：vendored SidebarSublist——章组标题即章描述页链接
 				Sidebar: './src/components/starlight/Sidebar.astro',
+				// 右侧大纲：标题行可收起，收起后右栏缩成窄轨
+				TableOfContents: './src/components/starlight/TableOfContents.astro',
 				// 页脚：CC BY-NC-ND 4.0；备案号只在中文站
 				Footer: './src/components/starlight/Footer.astro',
 			},

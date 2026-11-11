@@ -1,5 +1,5 @@
 ---
-title: 多态与架构选型——静态分发、动态分发与 OOP
+title: 静态分发、动态分发与多态选型
 description: 从编译期静态世界与运行时动态世界的全局分水岭出发，触碰静态单态化的两道物理边界，拆解 16 字节虚表胖指针 dyn Trait 的内存真相，并建立无 class 继承时的工程多态选型准则。
 id: dispatch-and-architecture
 ---

@@ -1,0 +1,144 @@
+---
+/**
+ * 12.3「Rc<RefCell<BiNode>> 堆内存三层内联布局」。
+ * 栈上 first 是 8 字节指针，指向一整块 RcBox。
+ * 块内从上到下：Rc 的 strong / weak，RefCell 的 borrow，BiNode 的 val / next / prev。
+ * 三层按偏移排列，中间没有第二次指针跳转。
+ * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	lang?: 'zh' | 'en';
+}
+
+const copy = {
+	zh: {
+		caption:
+			'栈上的 first 是 8 字节指针，指向堆上一整块 RcBox。块内从上到下内联三层：Rc 的 strong 与 weak、RefCell 的 borrow，以及 BiNode 的 val、next、prev。',
+		title: 'Rc<RefCell<BiNode>> 在堆上的三层内联布局',
+		desc: '栈变量 first 是 8 字节指针，指向堆上一整块 RcBox。这块内存从上到下内联三层，中间没有再跳一次指针。第一层是 Rc 的 strong 和 weak，各是一个 usize。第二层是 RefCell 的 borrow: isize。第三层是 BiNode 的 val: i32、next: Option<Rc<_>> 和 prev: Option<Weak<_>>。',
+		stackKicker: '栈变量',
+		stackName: 'first',
+		stackType: 'Rc<RefCell<BiNode>>',
+		stackPtr: '8B 指针',
+		orderKicker: '从上到下读',
+		order1: '① strong，然后 weak',
+		order2: '② 接着 borrow',
+		order3: '③ 最后 val / next / prev',
+		heapKicker: '堆 · 一块 RcBox',
+		heapSub: '三层内联在同一块里',
+		l1: '① 第 1 层 · Rc',
+		l1Sub: '最后一个强引用退场才释放',
+		strong: 'strong',
+		weak: 'weak',
+		usize8: 'usize · 8B',
+		l2: '② 第 2 层 · RefCell',
+		l2Sub: '内联存放，按偏移访问',
+		borrow: 'borrow: isize',
+		borrowSub: '8B 状态字',
+		l3: '③ 第 3 层 · BiNode',
+		l3Sub: '字段紧挨着状态字',
+		val: 'val: i32',
+		next: 'next: Option<Rc<_>>',
+		prev: 'prev: Option<Weak<_>>',
+		foot: '按偏移读字段，指针只跳这一次',
+		arrow: '8B',
+	},
+	en: {
+		caption:
+			'The stack variable first is an 8-byte pointer to one RcBox. Inside it, three layers sit inline: Rc strong and weak, RefCell borrow, then BiNode val, next, and prev.',
+		title: 'Three inline layers of Rc<RefCell<BiNode>> on the heap',
+		desc: 'The stack variable first is an 8-byte pointer to a single RcBox on the heap. Three layers sit in that one block, reached by offset rather than by another pointer. Layer 1 is the Rc counters strong and weak, each a usize. Layer 2 is the RefCell flag borrow: isize. Layer 3 is the BiNode fields val: i32, next: Option<Rc<_>>, and prev: Option<Weak<_>>.',
+		stackKicker: 'stack variable',
+		stackName: 'first',
+		stackType: 'Rc<RefCell<BiNode>>',
+		stackPtr: '8B pointer',
+		orderKicker: 'top to bottom',
+		order1: '① strong, then weak',
+		order2: '② then borrow',
+		order3: '③ then val / next / prev',
+		heapKicker: 'heap · one RcBox',
+		heapSub: 'three layers, one block',
+		l1: '① layer 1 · Rc',
+		l1Sub: 'freed when the last Rc drops',
+		strong: 'strong',
+		weak: 'weak',
+		usize8: 'usize · 8B',
+		l2: '② layer 2 · RefCell',
+		l2Sub: 'inline, read by offset',
+		borrow: 'borrow: isize',
+		borrowSub: '8B flag',
+		l3: '③ layer 3 · BiNode',
+		l3Sub: 'fields sit after the flag',
+		val: 'val: i32',
+		next: 'next: Option<Rc<_>>',
+		prev: 'prev: Option<Weak<_>>',
+		foot: 'one pointer, then field offsets',
+		arrow: '8B',
+	},
+} as const;
+
+const { lang } = Astro.props;
+const locale = lang ?? (SITE_LOCALE === 'en' ? 'en' : 'zh');
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 672" role="img" aria-labelledby="rri-title rri-desc">
+		<title id="rri-title">{t.title}</title>
+		<desc id="rri-desc">{t.desc}</desc>
+
+		{/* 左：栈指针与阅读顺序；右：一整块 RcBox，三层内联 */}
+		<rect class="panel" x="12" y="24" width="200" height="156" rx="10"></rect>
+		<rect class="panel" x="12" y="204" width="200" height="148" rx="10"></rect>
+
+		<rect class="object" x="268" y="12" width="360" height="648" rx="10"></rect>
+		<rect class="panel" x="284" y="76" width="328" height="172" rx="8"></rect>
+		<rect class="slot" x="296" y="140" width="148" height="92" rx="6"></rect>
+		<rect class="slot" x="456" y="140" width="140" height="92" rx="6"></rect>
+		<rect class="panel" x="284" y="264" width="328" height="148" rx="8"></rect>
+		<rect class="slot" x="296" y="324" width="304" height="68" rx="6"></rect>
+		<rect class="panel" x="284" y="428" width="328" height="176" rx="8"></rect>
+		<rect class="slot" x="296" y="490" width="304" height="96" rx="6"></rect>
+
+		<path class="arrow" d="M 212 102 H 266" marker-end="url(#rri-head)"></path>
+
+		<text class="label" x="112" y="48" text-anchor="middle">{t.stackKicker}</text>
+		<text class="name" x="112" y="78" text-anchor="middle">{t.stackName}</text>
+		<text class="code" x="112" y="106" text-anchor="middle">{t.stackType}</text>
+		<text class="edge-sub" x="112" y="130" text-anchor="middle">{t.stackPtr}</text>
+		<text class="label" x="112" y="230" text-anchor="middle">{t.orderKicker}</text>
+		<text class="edge-sub" x="112" y="262" text-anchor="middle">{t.order1}</text>
+		<text class="edge-sub" x="112" y="290" text-anchor="middle">{t.order2}</text>
+		<text class="edge-sub" x="112" y="318" text-anchor="middle">{t.order3}</text>
+
+		<text class="edge-sub" x="240" y="84" text-anchor="middle">{t.arrow}</text>
+
+		<text class="label" x="448" y="40" text-anchor="middle">{t.heapKicker}</text>
+		<text class="edge-sub" x="448" y="60" text-anchor="middle">{t.heapSub}</text>
+		<text class="edge-label" x="448" y="102" text-anchor="middle">{t.l1}</text>
+		<text class="edge-sub" x="448" y="122" text-anchor="middle">{t.l1Sub}</text>
+		<text class="code" x="370" y="176" text-anchor="middle">{t.strong}</text>
+		<text class="edge-sub" x="370" y="200" text-anchor="middle">{t.usize8}</text>
+		<text class="code" x="526" y="176" text-anchor="middle">{t.weak}</text>
+		<text class="edge-sub" x="526" y="200" text-anchor="middle">{t.usize8}</text>
+		<text class="edge-label" x="448" y="290" text-anchor="middle">{t.l2}</text>
+		<text class="edge-sub" x="448" y="310" text-anchor="middle">{t.l2Sub}</text>
+		<text class="code" x="448" y="352" text-anchor="middle">{t.borrow}</text>
+		<text class="edge-sub" x="448" y="374" text-anchor="middle">{t.borrowSub}</text>
+		<text class="edge-label" x="448" y="454" text-anchor="middle">{t.l3}</text>
+		<text class="edge-sub" x="448" y="474" text-anchor="middle">{t.l3Sub}</text>
+		<text class="code" x="448" y="516" text-anchor="middle">{t.val}</text>
+		<text class="code" x="448" y="540" text-anchor="middle">{t.next}</text>
+		<text class="code" x="448" y="564" text-anchor="middle">{t.prev}</text>
+		<text class="edge-sub" x="448" y="632" text-anchor="middle">{t.foot}</text>
+
+		<defs>
+			<marker id="rri-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

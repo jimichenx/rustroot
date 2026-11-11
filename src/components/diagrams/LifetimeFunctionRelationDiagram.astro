@@ -1,0 +1,133 @@
+---
+/**
+ * 11.2「函数签名 'a 关系标签对比」。
+ * 上栏 longer：返回值与 a、b 都用实线连到同一个 'a。
+ * 下栏 pick_first：返回值只与 first 相连；second 停在一旁，不接入这条关系。
+ * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	lang?: 'zh' | 'en';
+}
+
+const copy = {
+	zh: {
+		caption:
+			"longer 把返回值和 a、b 标成同一个 'a；pick_first 只把返回值与 first 连在 'a 上，second 站在关系外面，先销毁也不影响返回值。",
+		title: "'a 标出返回值与哪些参数有关",
+		desc: "上栏是 fn longer<'a>(a: &'a str, b: &'a str) -> &'a str。参数 a 与参数 b 各有一条实线连到返回值 &'a str，两条线都标着同一个关系标签 'a，因为返回值既可能来自 a，也可能来自 b。下栏是 fn pick_first<'a>(first: &'a str, second: &str) -> &'a str。只有 first 用 'a 连到返回值；second 的类型是 &str，旁边没有连线。销毁 second 不会影响返回值还是否有效。",
+		longKicker: "longer · 返回值与 a、b 都有关",
+		longSub: "三个位置贴同一个 'a",
+		longSig: "fn longer<'a>(a: &'a str, b: &'a str) -> &'a str",
+		paramA: '参数 a',
+		paramACode: "a: &'a str",
+		paramB: '参数 b',
+		paramBCode: "b: &'a str",
+		sameTag: "同一 'a",
+		retLabel: '返回值',
+		retCode: "&'a str",
+		retTied: '与 a、b 都有关',
+		pickKicker: "pick_first · 返回值只来自 first",
+		pickSub: 'second 不在这条关系里，先销毁也不影响返回值',
+		pickSig: "fn pick_first<'a>(first: &'a str, second: &str) -> &'a str",
+		firstKind: '来源',
+		firstCode: "first: &'a str",
+		onlyTag: "只连 'a",
+		pickRet: '返回值',
+		pickRetCode: "&'a str",
+		secondKind: '无关',
+		secondCode: 'second: &str',
+		secondNote: '独立在旁',
+		secondHint: '销毁也不影响返回值',
+	},
+	en: {
+		caption:
+			"longer ties the return value to both a and b with one 'a. pick_first ties the return only to first; second stays outside that relation, so dropping it leaves the return valid.",
+		title: "'a records which parameters the return value comes from",
+		desc: "The upper panel is fn longer<'a>(a: &'a str, b: &'a str) -> &'a str. Solid arrows run from parameter a and from parameter b to the returned &'a str, and both arrows carry the same relation tag 'a, because the result may be borrowed from either argument. The lower panel is fn pick_first<'a>(first: &'a str, second: &str) -> &'a str. Only first is linked to the return by 'a. second is typed &str and has no arrow. Dropping second does not change whether the returned reference is still valid.",
+		longKicker: 'longer · return tied to a and b',
+		longSub: "one 'a on a, b, and the return",
+		longSig: "fn longer<'a>(a: &'a str, b: &'a str) -> &'a str",
+		paramA: 'param a',
+		paramACode: "a: &'a str",
+		paramB: 'param b',
+		paramBCode: "b: &'a str",
+		sameTag: "same 'a",
+		retLabel: 'return',
+		retCode: "&'a str",
+		retTied: 'tied to a and b',
+		pickKicker: 'pick_first · return tied to first',
+		pickSub: 'second is unbound, so dropping it leaves the return valid',
+		pickSig: "fn pick_first<'a>(first: &'a str, second: &str) -> &'a str",
+		firstKind: 'source',
+		firstCode: "first: &'a str",
+		onlyTag: "only 'a",
+		pickRet: 'return',
+		pickRetCode: "&'a str",
+		secondKind: 'unbound',
+		secondCode: 'second: &str',
+		secondNote: 'stands alone',
+		secondHint: 'drop leaves the return valid',
+	},
+} as const;
+
+const { lang } = Astro.props;
+const locale = lang ?? (SITE_LOCALE === 'en' ? 'en' : 'zh');
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 640" role="img" aria-labelledby="lfr-title lfr-desc">
+		<title id="lfr-title">{t.title}</title>
+		<desc id="lfr-desc">{t.desc}</desc>
+
+		{/* 框在下，箭头居中，文字最后画，避免笔画压住标签 */}
+		<rect class="panel" x="16" y="12" width="608" height="296" rx="10"></rect>
+		<rect class="slot" x="36" y="108" width="184" height="84" rx="6"></rect>
+		<rect class="slot" x="36" y="208" width="184" height="84" rx="6"></rect>
+		<rect class="object" x="428" y="128" width="172" height="148" rx="6"></rect>
+
+		<rect class="panel" x="16" y="324" width="608" height="300" rx="10"></rect>
+		<rect class="slot" x="36" y="424" width="184" height="84" rx="6"></rect>
+		<rect class="object" x="428" y="424" width="172" height="84" rx="6"></rect>
+		<rect class="slot" x="36" y="524" width="184" height="84" rx="6"></rect>
+
+		<path class="arrow" d="M 228 150 H 420" marker-end="url(#lfr-head)"></path>
+		<path class="arrow" d="M 228 250 H 420" marker-end="url(#lfr-head)"></path>
+		<path class="arrow" d="M 228 466 H 420" marker-end="url(#lfr-head)"></path>
+
+		<text class="edge-label" x="36" y="40">{t.longKicker}</text>
+		<text class="edge-sub" x="36" y="62">{t.longSub}</text>
+		<text class="code" x="36" y="88">{t.longSig}</text>
+		<text class="edge-sub" x="128" y="140" text-anchor="middle">{t.paramA}</text>
+		<text class="code" x="128" y="170" text-anchor="middle">{t.paramACode}</text>
+		<text class="edge-sub" x="128" y="240" text-anchor="middle">{t.paramB}</text>
+		<text class="code" x="128" y="270" text-anchor="middle">{t.paramBCode}</text>
+		<text class="edge-label" x="324" y="134" text-anchor="middle">{t.sameTag}</text>
+		<text class="edge-label" x="324" y="234" text-anchor="middle">{t.sameTag}</text>
+		<text class="edge-label" x="514" y="176" text-anchor="middle">{t.retLabel}</text>
+		<text class="code" x="514" y="206" text-anchor="middle">{t.retCode}</text>
+		<text class="edge-sub" x="514" y="234" text-anchor="middle">{t.retTied}</text>
+
+		<text class="edge-label" x="36" y="352">{t.pickKicker}</text>
+		<text class="edge-sub" x="36" y="374">{t.pickSub}</text>
+		<text class="code" x="36" y="400">{t.pickSig}</text>
+		<text class="edge-sub" x="128" y="456" text-anchor="middle">{t.firstKind}</text>
+		<text class="code" x="128" y="486" text-anchor="middle">{t.firstCode}</text>
+		<text class="edge-label" x="324" y="450" text-anchor="middle">{t.onlyTag}</text>
+		<text class="edge-label" x="514" y="456" text-anchor="middle">{t.pickRet}</text>
+		<text class="code" x="514" y="486" text-anchor="middle">{t.pickRetCode}</text>
+		<text class="edge-sub" x="128" y="556" text-anchor="middle">{t.secondKind}</text>
+		<text class="code" x="128" y="586" text-anchor="middle">{t.secondCode}</text>
+		<text class="edge-label" x="248" y="556">{t.secondNote}</text>
+		<text class="edge-sub" x="248" y="586">{t.secondHint}</text>
+
+		<defs>
+			<marker id="lfr-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

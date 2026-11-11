@@ -1,0 +1,219 @@
+---
+title: "解引用的两层机制：内建 * 位置定位与 Deref / DerefMut Trait"
+description: 厘清 Rust 初学者最容易混淆的「* 解引用操作符」与「Deref Trait」的本质分工：从位置表达式（Place Expression）出发，看清为什么 Deref::deref 返回的是原生引用 &Target 而非值本身，拆解 *(x.deref()) 的两步接力展开，并解开「标准库为 &T 实现 Deref 为什么不会死循环」的底层谜题。
+sidebar:
+  label: "内建 * 与 Deref Trait"
+  order: 3
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import DerefRelayDiagram from '../../../../../../components/diagrams/DerefRelayDiagram.astro';
+import derefMechanism from '../../../../../../../examples/types/box-deref-drop/src/bin/deref-mechanism.rs?raw';
+
+在前两节中，我们知道了一个普通结构体（如 `Box<T>`、`Vec<T>` 或 `String`）之所以能晋升为「智能指针」，首先是因为它实现了标准库的 **`Deref`** Trait，从而让你能对它写 `*boxed` 解引用。
+
+但几乎所有认真思考过底层机制的 Rust 学习者，走到这里都会被一个极其隐蔽的命名陷阱绕晕：
+- 我们在第 1 章对普通引用 `r: &i32` 写的星号 **`*r`**，中文叫**「解引用（Dereference）操作符」**；
+- 到了第 10 章，智能指针实现的 **`Deref` Trait**，中文也常被翻译成**「解引用 Trait」**；
+- 更让人困惑的是：当你打开标准库源码查看 `Deref` 的定义时，会发现它的核心方法 `fn deref(&self) -> &Self::Target` **返回出来的居然还是一个引用 `&Target`，而不是剥掉引用之后的目标值 `Target`**；而且标准库甚至还给普通引用 `&T` 自己也写了一份 `impl<T: ?Sized> Deref for &T`。
+
+你心里一定会冒出一连串问号：**`Deref` Trait 的「解」和 `*` 操作符的「解」到底是不是一回事？如果 `deref()` 方法的作用是「解开引用」，为什么它返回的还是一个引用？既然普通引用 `&T` 也实现了 `Deref`，为什么写 `*r` 时编译器不会陷入无限递归死循环？**
+
+这一节，我们就把这层由同名术语造成的迷雾彻底拨开。
+
+---
+
+## 第一步：回到「位置表达式」——内建 `*` 操作符到底在干什么？
+
+要分清 `*` 操作符和 `Deref` Trait，我们必须先明确一个最底层的物理事实：**语言内建的 `*` 解引用操作符，它的本质作用不是「算出一个值」，而是「在内存里定位一个位置」**。
+
+在 Rust 中，当我们想操作内存里的某份数据时，必须先通过**位置表达式（Place Expression）**指明「要操作哪块内存槽位」。回想你早就熟知的四种定位方式（详见[附录：位置表达式与值表达式](/appendix/mechanisms/place-and-value/)）：
+
+| 位置表达式形式 | 代码示例 | 物理定位动作 |
+| --- | --- | --- |
+| **1. 变量名** | `count = 20;` | 直接定位到当前栈帧上 `count` 绑定的那个栈槽位 |
+| **2. 字段访问** | `point.x = 10;` | 从结构体 `point` 的起始位置，加上字段偏移量定位到 `x` 的槽位 |
+| **3. 下标访问** | `arr[0] = 99;` | 从连续序列首地址出发，按索引偏移定位到第 `0` 号元素的槽位 |
+| **4. 解引用 `*`** | **`*r = 42;`** | **读取引用 `r` 里存放的内存地址，顺着地址跨越到目标数据所在的内存槽位** |
+
+请仔细看第 4 行：为什么 `*r` 既可以放在等号右边读取（`let v = *r;`），也可以放在等号左边写入（`*r = 42;`），还可以跟在 `&mut` 后面重借用（`&mut *r`）？
+因为内建的 **`*` 操作符**干的活，是把手里的**原生引用 `&T`（或 `&mut T`）剥掉那层 `&`，还原成目标数据 `T` 所在的「内存位置（Place）」**。定位到这个位置之后，放在等号右边就是从该位置读出值，放在等号左边就是往该位置写入新值。
+
+但这里有一条编译器内核的硬边界：
+**语言内建的 `*` 操作符是一个只认硬件地址的「原生锚点」——它只认识语言原生的引用类型 `&T` / `&mut T`（以及裸指针 `*const T` / `*mut T`），根本不认识任何用 `struct` 定义出来的智能指针（哪怕是标准库的 `Box<T>` 或你自己写的 `MyBox<T>`）。**
+
+---
+
+## 第二步：正本清源——`Deref` Trait 的「解」与 `*` 操作符的「解」根本不是一回事
+
+既然编译器内建的 `*` 只认识原生引用 `&T`，不认识结构体 `MyBox<T>`，那当我们对一个自定义智能指针写下 `*my_box` 时，怎样才能让内建的 `*` 派上用场？
+
+答案非常干脆：**让智能指针结构体提供一个标准方法，先把里面的数据「借出一个原生引用 `&T`」交给编译器；编译器拿到原生引用 `&T` 后，再用内建的 `*` 操作符去定位内存位置。**
+
+现在，请你用这个视角重新审视标准库里 `Deref` Trait 的真实源码定义（我们已在[第 7 章 7.3 节](/abstraction/associated-types/)学过其中的关联类型 `type Target`）：
+
+```rust
+pub trait Deref {
+    /// 解引用后的目标类型（每个智能指针只能指向唯一确定的 Target）
+    type Target: ?Sized;
+
+    /// 注意返回值：返回的是原生只读引用 &Self::Target，而不是值 Self::Target
+    fn deref(&self) -> &Self::Target;
+}
+```
+
+看清这行签名 `fn deref(&self) -> &Self::Target`，困扰无数读者的术语迷雾就当场散开了：
+
+1. **为什么 `Deref` Trait 和 `*` 操作符虽然英文都带 `Deref`，做的却是完全不同的两件事？**
+   - **`Deref::deref` 方法干的活是「脱壳取引用（Borrow Inner Reference）」**：它的输入是智能指针的借用 `&MyBox<T>`，输出是内部目标数据的**原生引用 `&T`**。它宣告的是：「我这个结构体具备指针的能力，调用我的 `.deref()` 方法，就能拿到指向内部具体数据的原生引用 `&T`。」**注意：调完 `.deref()` 的这一刻，引用还没有被解开，你手里拿到的依然是一个 `&T` 引用。**
+   - **内建 `*` 操作符干的活才是真正的「按址寻位（Dereference to Place）」**：它接过 `.deref()` 返回的那个原生引用 `&T`，剥掉 `&`，真正落到目标数据 `T` 的内存位置上。
+2. **为什么 `deref(&self)` 绝不能设计成直接按值返回 `Self::Target`？**
+   假设 `deref` 直接返回 `Target` 值本身：第一，对于未实现 `Copy` 的类型（如 `String`），你根本无法从只读借用 `&self` 里把所有权移出来（会报 `E0507`）；第二，就算能返回出来，那也只是一个离开原内存槽位的临时值（Value Expression），你永远不可能写出 `*my_box = 99;` 这样修改原堆内存的代码。
+   **唯有让 `deref` 返回原生引用，再交给外层的内建 `*` 变成位置表达式，读取、写入和再借用才能全部跑通。**（这与第 4 章下标访问 `v[0]` 在底层展开为 `*(v.index(0))` 的设计原理完全一致。）
+
+因此，当你自己定义一个智能指针 `MyBox<T>` 并对它写下 `*custom` 时，编译器在背后执行的是**「先调 `Deref` 脱壳拿原生引用，再用内建 `*` 定位」的两步接力**：
+
+```rust
+struct MyBox<T>(T);
+
+impl<T> std::ops::Deref for MyBox<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0 // 第 1 步：从 MyBox 外壳里借出原生引用 &T
+    }
+}
+
+let custom = MyBox(10);
+// 当你写下 *custom 时，编译器自动将它展开为以下两步接力：
+let val = *custom;
+let val = *(std::ops::Deref::deref(&custom));
+//        ^ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//        |               |
+//  第 2 步：内建 *   第 1 步：调 deref(&custom) 返回原生引用 &i32
+```
+
+<DerefRelayDiagram />
+
+---
+
+## 第三步：读写分离契约——为什么修改 `*custom = 99` 必须实现 `DerefMut`？
+
+既然只读的 `*custom` 展开后第 1 步调用的是 `Deref::deref(&custom)`，拿到的只是一个**只读引用 `&T`**，那么当你想通过智能指针修改里面的数据（把 `*custom` 放在赋值号左边写 `*custom = 99;`）时，只读引用 `&T` 显然不够用了。
+
+为此，标准库按照严格的读写权限分离，提供了配套的可变版本 **`DerefMut` Trait**：
+
+```rust
+pub trait DerefMut: Deref {
+    /// 复用父契约 Deref 的 type Target，返回原生可变引用 &mut Self::Target
+    fn deref_mut(&mut self) -> &mut Self::Target;
+}
+```
+
+观察这个定义里的两处精巧约束：
+1. **有序父子契约（`trait DerefMut: Deref`）**：要实现可变脱壳 `DerefMut`，必须先实现只读脱壳 `Deref`；并且 `DerefMut` 没有再定义第二个 `type Target`，而是直接复用 `Deref::Target`——从类型系统上杜绝了「只读解引用指向类型 A，可变解引用却指向类型 B」的荒谬情况。
+2. **上下文按需路由**：
+   - 当 `*custom` 出现在**只读上下文**（如 `let v = *custom;`）时，编译器展开为 **`*(Deref::deref(&custom))`**；
+   - 当 `*custom` 出现在**可变位置上下文**（如 `*custom = 99;` 或 `&mut *custom`）时，编译器要求 `custom` 自身必须声明为 `let mut custom`，并将其展开为 **`*(DerefMut::deref_mut(&mut custom)) = 99;`**。
+
+这也顺便解释了为什么第 10.1 节全景表里的共享引用计数指针 **`Rc<T>`** 和 **`Arc<T>`** 只允许你读、不允许你直接改——因为标准库**只为 `Rc<T>` 和 `Arc<T>` 实现了 `Deref`，而故意没有为它们实现 `DerefMut`**（多个人共享同一块堆内存时，绝不能直接交出独占可变引用 `&mut T`）。
+
+---
+
+## 第四步：破除死循环谜题——为什么标准库给普通引用 `&T` 也实现了 `Deref`？
+
+最后，我们来解开你在翻看标准库文档或编写泛型代码时一定会遇到的那个终极疑惑：
+既然原生引用 `&T` 已经有编译器内建的 `*` 锚点直接支持了，**为什么标准库源码里还要多此一举，专门给 `&T`（和 `&mut T`）也实现一份 `Deref`？而且这样写为什么不会导致死循环？**
+
+我们先看标准库 `core::ops::deref` 里的真实源码：
+
+```rust
+impl<T: ?Sized> Deref for &T {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        *self // 等等：在 deref 方法内部又写了一个 *self，为什么不会无限递归调用自己？
+    }
+}
+```
+
+这里藏着两个极其精彩的底层设计细节：
+
+### 1. 为什么标准库要给 `&T` 实现 `Deref`？（为了泛型与协议的整体协调性）
+
+想象你要写一个通用的泛型辅助函数 `read_via_deref`，希望调用方无论是传普通引用 `&i32`、标准库堆指针 `Box<i32>`、引用计数指针 `Rc<i32>`，还是自定义的 `MyBox<i32>`，这个函数都能统一接收并读取里面的整数：
+
+```rust
+fn read_via_deref<P: Deref<Target = i32>>(ptr: P) -> i32 {
+    *ptr
+}
+```
+
+如果标准库只给 `Box<T>`、`Rc<T>` 等结构体实现 `Deref`，唯独把原生引用 `&T` 排除在 `Deref` 契约之外，那么你的泛型约束 `P: Deref<Target = i32>` 就偏偏传不进最基础的 `&i32`。
+为了整个指针家族在类型系统里的**统一与协调**，标准库为 `&T` 和 `&mut T` 也补上了 `Deref<Target = T>` 实现——它的含义非常纯粹：**普通引用 `&T` 自己就是原生引用，所以对它调用 `deref` 脱壳取引用，返回的就是它自己（`&T`）。**
+
+### 2. 为什么 `*self` 和平时的 `*r` 不会陷入死循环？
+
+仔细核对上面 `impl<T: ?Sized> Deref for &T` 里的类型，你会发现编译器路由规则的严密之处：
+- **看清路由优先级铁律**：当编译器看到 `*expr` 时，它会先看 `expr` 的类型——
+  - **第一优先级（内建引用锚点）**：只要 `expr` 本身是语言原生的引用类型（`&U` 或 `&mut U`，无论套了几层 `&`），编译器**直接执行内建的硬件解引用锚点（剥掉最外层的一个 `&`），根本不会去查 `Deref` Trait**；
+  - **第二优先级（`Deref` 展开）**：**只有**当 `expr` 不是原生引用，而是 `Box<T>`、`MyBox<T>` 这样的复合类型（或受 `P: Deref` 约束的未定泛型参数）时，编译器才会将其展开为 `*(Deref::deref(&expr))`。
+- **核对 `deref(&self)` 内部的 `*self`**：
+  在 `impl<T: ?Sized> Deref for &T` 中，`Self` 的类型本身已经是 `&T` 了。那么方法签名 `fn deref(&self)` 里的参数 `self`（即 `&Self`）是什么类型？是双层原生引用 **`&&T`**。
+  因此，函数体里的 `*self` 作用的 `self` 是一个纯正的原生引用 `&&T`，直接命中**第一优先级（内建引用锚点）**——编译器直接剥掉外层的 `&`，当场返回内层的 `&T`，连半次递归调用都不会发生。
+
+运行下面这份完整的实验代码，亲手验证 `MyBox<T>` 的两步展开、`*custom = 99` 的位置写入，以及泛型函数 `P: Deref` 同时通吃 `&i32`、`Box<i32>` 与 `MyBox<i32>` 的协调效果：
+
+<small class="code-source">源文件：<code>examples/types/box-deref-drop/src/bin/deref-mechanism.rs</code></small>
+<Code code={derefMechanism} lang="rust" />
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+read: *custom = 10, expanded = 10
+after write: *custom = 99
+generic Deref: &i32 -> 42, Box -> 77, MyBox -> 99
+```
+
+<Aside type="caution" title="唯一的特例：Box<T> 的编译期所有权移出特权">
+细心的读者可能会问：既然自定义智能指针 `MyBox<String>` 的 `*custom` 展开后是 `*(Deref::deref(&custom))`（底层经过了只读借用 `&custom`），那我们能写 `let s: String = *custom;` 把里面的 `String` 所有权移出来吗？
+答案是：**对所有自定义智能指针以及 `Rc<T>`、`Vec<T>` 都不能**（编译器会报 `E0507: cannot move out of dereference of MyBox<String>`，因为 `deref(&self)` 只有借用权）。
+唯一能写 `let s = *boxed_string;` 直接把值移出来的智能指针只有 **`Box<T>`**——这是因为编译器内部给 `Box<T>` 开了专属内建特权（知道 `Box` 独占堆所有权，移出内部值后只需释放外层空堆壳即可）。
+</Aside>
+
+---
+
+## 小结
+
+1. **内建 `*` 操作符是定位「位置表达式」的原生锚点**：`*r` 与变量名 `x`、字段 `pt.x`、下标 `arr[i]` 一样，作用是顺着原生引用 `&T` / `&mut T` 的地址定位到目标数据的内存位置（可读、可写、可再借用）；内建 `*` 只认识原生引用与裸指针，不认识任何结构体。
+2. **`Deref` 的「解」与 `*` 的「解」各司其职**：`Deref::deref(&self) -> &Self::Target` 干的活不是剥掉引用，而是**从智能指针结构体外壳里借出原生引用 `&Target`**；对智能指针写 `*x` 时，编译器执行的是 **`*(Deref::deref(&x))`**（可变写入时为 `*(DerefMut::deref_mut(&mut x))`）的两步接力。
+3. **`impl Deref for &T` 的协议协调性与防死循环规则**：标准库为原生引用 `&T` 实现 `Deref`（内部对 `&&T` 执行内建 `*self` 返回 `&T`）是为了让泛型约束 `P: Deref` 能统一接纳普通引用与智能指针；编译器对原生引用永远优先走内建 `*` 锚点，因此绝不会发生递归死循环。
+
+现在我们已经彻底摸清了当你**显式写下星号 `*x`** 时发生的两步接力。
+可是在日常写 Rust 代码时，更神奇的现象往往发生在**你根本没有写 `*` 号**的地方：为什么在 `10.2` 节末尾，我们拿着 `&Box<List>` 连一个星号都没写，就能直接传给要求 `&List` 的函数？为什么拿着 `&Box<String>` 可以直接当成 `&str` 传参？
+
+下一节，我们就来拆解编译器在 `Deref` 底座之上搭建的自动化桥梁——**`Deref Coercion`、方法解析链与接口设计边界**。
+
+[继续：Deref Coercion 与接口设计 →](/pointers/deref-coercion/)
+
+### 动手核对与小练习
+
+1. **还原两步展开式**：假设变量 `mut b` 的类型是我们自定义的 `MyBox<i32>`（已实现 `Deref` 与 `DerefMut`）。请写出编译器在处理下面两行代码时，底层分别将其展开成了什么函数调用与内建操作符组合？
+   ```rust
+   let x = *b + 1;
+   *b = 50;
+   ```
+2. **思考题（为什么 `deref` 返回引用）**：如果有人向 Rust 语言团队提议：「把 `Deref` Trait 改成 `fn deref(&self) -> Self::Target` 直接返回值更直观」，请从**所有权移动（`E0507`）**和**位置表达式赋值（`*b = 50`）**两个角度向他解释为什么这个提议不可行。
+
+<details>
+<summary>点击核对参考答案</summary>
+
+1. **还原两步展开式**：
+   - 第 1 行读取（只读位置上下文）：展开为 `let x = *(std::ops::Deref::deref(&b)) + 1;`——先调用 `Deref::deref(&b)` 拿到原生只读引用 `&i32`，再由外层内建 `*` 定位并读出整数值。
+   - 第 2 行写入（可变位置上下文）：展开为 `*(std::ops::DerefMut::deref_mut(&mut b)) = 50;`——先调用 `DerefMut::deref_mut(&mut b)` 拿到原生可变引用 `&mut i32`，再由外层内建 `*` 定位到内部存储槽位并写入 `50`。
+2. **为什么 `deref` 必须返回 `&Self::Target` 引用**：
+   - **从所有权移动角度**：`deref(&self)` 接收的只是智能指针的只读借用 `&self`。如果返回值类型是按值的 `Self::Target`，一旦目标类型是没有实现 `Copy` 的 `String` 或 `Vec<T>`，函数体根本无法从借用 `&self` 中把内部值的所有权移出来返回（违反借用规则，报 `E0507`）。
+   - **从位置表达式赋值角度**：如果 `deref` 返回的是按值拷贝出来的临时值（值表达式），那么 `*b = 50` 就变成了往一个脱离原结构体的临时副本上写数据，根本无法定位并修改智能指针内部真实的内存槽位。只有返回原生引用 `&Target` / `&mut Target`，再配合内建 `*` 还原为位置表达式，读写原位置才能成立。
+
+</details>

@@ -1,0 +1,133 @@
+---
+/**
+ * 13.1「多线程的物理图景」。
+ *
+ * 上方三列是主线程、子线程 A、子线程 B 各自的调用栈。
+ * 每列上格是不出本栈的局部变量。
+ * 下格：r 用虚线跨栈指向主线程的 n；p 与 q 用实线指向下方同一块堆数据。
+ * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+const copy = {
+	zh: {
+		caption:
+			'三个线程各有独立调用栈，进程只有一块堆。上格的值留在本栈；虚线是跨栈借用，实线是两根地址指向同一块堆数据。',
+		title: '栈各自独立，堆全进程共用',
+		desc: '上方三个面板分别是主线程、子线程 A、子线程 B 的调用栈。每列上格是 i32 局部变量 n、id、seq，值就在本栈。子线程 A 的 r（&i32）用虚线指向主线程的 n。主线程的 p 与子线程 B 的 q 是两根 8 字节地址，实线指向下方同一块堆数据 10、20、30。',
+		main: '主线程',
+		threadA: '子线程 A',
+		threadB: '子线程 B',
+		stackSub: '独立调用栈',
+		stay: '值在本栈',
+		addr: '8 字节地址',
+		toHeap: '指向堆',
+		toN: '指向 n',
+		heapKicker: '堆',
+		heapSub: '全进程只有这一块',
+		heapNote: '来自 p 与 q',
+		objName: '同一块数据',
+		objVals: '10 · 20 · 30',
+		objSub: '拿到地址就能访问',
+	},
+	en: {
+		caption:
+			'Three threads, three call stacks, one heap. The locals on the top row stay on their own stack. The dashed arrow borrows across stacks. The solid arrows are two addresses aimed at one heap block.',
+		title: 'Separate stacks, one shared heap',
+		desc: 'Three panels on top are the call stacks of the main thread, thread A, and thread B. The top cell of each is an i32 local, n, id, or seq, marked as staying on that stack. Thread A’s r (&i32) is a dashed arrow to n on the main thread. p on the main thread and q on thread B are 8-byte addresses; solid arrows run to the same heap block holding 10, 20, and 30.',
+		main: 'main thread',
+		threadA: 'thread A',
+		threadB: 'thread B',
+		stackSub: 'its own call stack',
+		stay: 'lives here',
+		addr: '8-byte address',
+		toHeap: 'to the heap',
+		toN: 'to n',
+		heapKicker: 'heap',
+		heapSub: 'one heap in the process',
+		heapNote: 'from p and q',
+		objName: 'one block',
+		objVals: '10 · 20 · 30',
+		objSub: 'an address is enough to read it',
+	},
+} as const;
+
+const locale = SITE_LOCALE === 'en' ? 'en' : 'zh';
+const t = copy[locale];
+
+const stacks = [
+	{ title: t.main, local: 'n', x: 12 },
+	{ title: t.threadA, local: 'id', x: 228 },
+	{ title: t.threadB, local: 'seq', x: 444 },
+] as const;
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 472" role="img" aria-labelledby="tmm-title tmm-desc">
+		<title id="tmm-title">{t.title}</title>
+		<desc id="tmm-desc">{t.desc}</desc>
+
+		{
+			stacks.map((stack) => (
+				<g>
+					<rect class="panel" x={stack.x} y="12" width="184" height="268" rx="10"></rect>
+					<text class="label" x={stack.x + 92} y="36" text-anchor="middle">
+						{stack.title}
+					</text>
+					<text class="edge-sub" x={stack.x + 92} y="54" text-anchor="middle">
+						{t.stackSub}
+					</text>
+					<rect class="slot" x={stack.x + 14} y="66" width="156" height="86" rx="8"></rect>
+					<text class="name" x={stack.x + 92} y="98" text-anchor="middle">
+						{stack.local}
+					</text>
+					<text class="code" x={stack.x + 92} y="120" text-anchor="middle">
+						i32
+					</text>
+					<text class="edge-sub" x={stack.x + 92} y="140" text-anchor="middle">
+						{t.stay}
+					</text>
+				</g>
+			))
+		}
+
+		{/* 下格：p、r、q。r 跨栈，p 与 q 下到堆 */}
+		<rect class="slot" x="26" y="164" width="156" height="86" rx="8"></rect>
+		<text class="name" x="104" y="196" text-anchor="middle">p</text>
+		<text class="code" x="104" y="218" text-anchor="middle">{t.addr}</text>
+		<text class="edge-sub" x="104" y="238" text-anchor="middle">{t.toHeap}</text>
+
+		<rect class="slot" x="242" y="164" width="156" height="86" rx="8"></rect>
+		<text class="name" x="320" y="196" text-anchor="middle">r</text>
+		<text class="code" x="320" y="218" text-anchor="middle">&amp;i32</text>
+		<text class="edge-sub" x="320" y="238" text-anchor="middle">{t.toN}</text>
+
+		<rect class="slot" x="458" y="164" width="156" height="86" rx="8"></rect>
+		<text class="name" x="536" y="196" text-anchor="middle">q</text>
+		<text class="code" x="536" y="218" text-anchor="middle">{t.addr}</text>
+		<text class="edge-sub" x="536" y="238" text-anchor="middle">{t.toHeap}</text>
+
+		<rect class="panel" x="12" y="300" width="616" height="156" rx="10"></rect>
+		<text class="label" x="28" y="336">{t.heapKicker}</text>
+		<text class="edge-sub" x="28" y="358">{t.heapSub}</text>
+		<text class="edge-sub" x="28" y="380">{t.heapNote}</text>
+		<rect class="object" x="270" y="332" width="220" height="100" rx="10"></rect>
+		<text class="name" x="380" y="368" text-anchor="middle">{t.objName}</text>
+		<text class="code" x="380" y="392" text-anchor="middle">{t.objVals}</text>
+		<text class="edge-sub" x="380" y="414" text-anchor="middle">{t.objSub}</text>
+
+		<path class="arrow" d="M 104 280 V 292 H 300 V 332" marker-end="url(#tmm-head)"></path>
+		<path class="arrow" d="M 536 280 V 292 H 460 V 332" marker-end="url(#tmm-head)"></path>
+		<path class="arrow danger" d="M 242 207 H 212 V 109 H 182" marker-end="url(#tmm-danger)"></path>
+
+		<defs>
+			<marker id="tmm-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+			<marker id="tmm-danger" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line-muted)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

@@ -1,0 +1,241 @@
+---
+title: Rc<T> 与 Weak<T>：把唯一所有者放宽为单线程引用计数
+description: 从构建「Y 字形」共享链表的日常任务出发，排查为什么 Box 与普通引用双双受阻，顺着 Deref 与 Drop 亲手推演出局部按需的引用计数智能指针 Rc<T>，并用弱引用 Weak<T> 化解双向链表的循环引用泄漏。
+sidebar:
+  order: 1
+---
+
+import { Code } from '@astrojs/starlight/components';
+import RcSharedNodeLayoutDiagram from '../../../../../../components/diagrams/RcSharedNodeLayoutDiagram.astro';
+import RcCountProcessDiagram from '../../../../../../components/diagrams/RcCountProcessDiagram.astro';
+import rcAndWeakSource from '../../../../../../../examples/concurrency/shared-mutability/src/bin/rc-and-weak.rs?raw';
+
+假设你今天接到了一个再普通不过的数据结构任务：在内存里构建一条「Y 字形」的汇合链表。
+
+链表节点的定义很简单，每个节点 `Node` 只有两个字段：节点自身的整数值 `val`，以及指向下一个节点的指针 `next`。现在内存里有一个公共的后续节点 `shared_node`（值为 `10`），你想创建两个分支头节点 `node_a`（值为 `3`）和 `node_b`（值为 `4`），让它们的 `next` 字段都指向这个 `shared_node`：
+
+```text
+node_a (val: 3) ──┐
+                  ├──► shared_node (val: 10) ──► None
+node_b (val: 4) ──┘
+```
+
+如果你平时写的是 Python、Java 或 Go，这个任务只需三行代码就能交差：
+
+```python
+shared_node = Node(10, None)
+node_a = Node(3, shared_node)
+node_b = Node(4, shared_node)  # 直接把引用赋过去即可
+```
+
+现在，我们切换到 Rust，试着用前 11 章学过的武器把这个三行任务写出来。你会惊讶地发现：用我们已经掌握的知识，这三行代码竟然怎么写都通不过编译。
+
+---
+
+## 两次碰壁：为什么现有的工具全被拦下了？
+
+在前面的章节里，要在结构体字段里指向另一处节点，我们一共学过两件武器：第 10 章的堆独占智能指针 **`Box<T>`**，以及第 4、11 章的普通引用 **`&'a T`**。我们挨个试一试。
+
+### 第一次尝试：用 `Box<Node>`，第二条分支当场报 `E0382`
+
+我们在第 10 章学过，递归链表节点可以用 `Option<Box<Node>>` 包裹。于是我们自信地写下：
+
+```rust
+struct Node {
+    val: i32,
+    next: Option<Box<Node>>,
+}
+
+let shared_node = Box::new(Node { val: 10, next: None });
+let node_a = Node { val: 3, next: Some(shared_node) };
+// ❌ 编译报错 E0382: use of moved value: `shared_node`
+// let node_b = Node { val: 4, next: Some(shared_node) };
+```
+
+第一条分支 `node_a` 顺利通过；可刚写到第二条分支 `node_b`，编译器立刻报出 `error[E0382]: use of moved value: shared_node`。
+
+先别急着怪编译器死板，我们像侦探一样顺着物理内存推演一下：**如果编译器在这里心软放行了，会发生什么事故？**
+- `Box<Node>` 代表的是**唯一所有权**——谁拿着 `Box`，谁就在离开作用域时负责释放那块堆内存；
+- 把 `shared_node` 塞进 `node_a.next` 时，释放责任已经交给了 `node_a`；如果允许 `node_b.next` 也拿走同一个 `Box`，那么 `node_a` 和 `node_b` 都会认为自己是 `shared_node` 的唯一主人；
+- 等到函数结束、`node_a` 和 `node_b` 先后离开作用域触发 `Drop` 时，堆上的同一个 `shared_node` 就会被连续释放两次（**双重释放 Double Free**）。
+
+所以，编译器拦得非常合理：只要使用独占所有权的 `Box<T>`，一个节点就绝不可能同时挂在两个分支下面。
+
+### 第二次尝试：改用普通引用 `&'a Node`，被动态退场顺序卡死
+
+既然不能抢所有权，我们退一步：把字段改成只读引用 `next: Option<&'a Node<'a>>`，让 `node_a` 和 `node_b` 都不负责释放，只借用地址总行了吧？
+
+```rust
+struct Node<'a> {
+    val: i32,
+    next: Option<&'a Node<'a>>,
+}
+```
+
+在三行代码挤在同一个函数里的玩具例子下，这样写确实能编译通过。但只要放进真实的工程场景——比如你需要写一个函数构建好 `node_a` 和 `node_b` 返回给调用方，或者这两条链表分支是在运行期动态增删的——这套写法立刻全盘崩溃：
+1. **谁来做宿主？** 引用 `&'a Node` 自己不承担释放责任，它要求外部必须另有一个「活得比 `node_a` 和 `node_b` 都长」的变量先持有 `shared_node`；一旦那个外部变量离开函数栈帧，`node_a` 和 `node_b` 手里的引用当场悬垂。
+2. **编译期根本算不出谁活到最后**：在真实的业务逻辑里，`shared_node` 就是归 `node_a` 和 `node_b` **共同持有**的——如果 `node_a` 先被销毁，`shared_node` 必须继续活着供 `node_b` 使用；如果 `node_b` 先被销毁，`shared_node` 必须继续活着供 `node_a` 使用；只有当 `node_a` 和 `node_b` **全部退场**的那一刻，`shared_node` 才应该被释放。
+
+而在编写代码的编译期，**没有任何人能未卜先知地算出 `node_a` 和 `node_b` 在运行时到底谁先退场、谁活到最后**。
+
+---
+
+## 动手发明：用 `Deref` + `Drop` 构建局部的「按需引用计数回收器」
+
+排查到这里，案情已经非常清楚了：
+- 编译期的「唯一所有者（`Box<T>`）」行不通，因为确实有两个分支共同拥有它；
+- 编译期的「借用引用（`&'a T`）」也行不通，因为没有外部宿主，谁最后退场只有到了**运行时**才知道。
+
+既然编译期算不出谁是最后一个退场的人，如果我们自己就是标准库的设计者，怎么利用第 10 章刚学过的 **`Deref` 和 `Drop` 两大智能指针机制**，亲手造一个新工具来破局？
+
+顺着「怎么在运行时知道谁是最后一个退场」往下想，方案呼之欲出——我们可以在堆上存放 `Node` 的时候，在它正前方顺手开辟一个**整数计数器（Reference Counter）**：
+
+1. **创建时计数置为 `1`**：当创建 `shared_node` 时，堆内存块里除了存放 `Node`，开头的计数器记为 `1`；
+2. **共享时只复制地址并将计数 `+ 1`**：当 `node_a` 和 `node_b` 都要指向它时，我们不拷贝底层的 `Node`，只复制栈上的 8 字节指针，同时去堆上把计数器 **`+ 1`**（此时计数器变为 `3`）；
+3. **利用 `Deref` 透明读取**：我们为这个新指针实现 **`Deref<Target = Node>`**，让它平时读取字段时和普通引用 `&Node` 一模一样；
+4. **利用 `Drop` 在退场时自动将计数 `- 1`**：这是最关键的一步——我们为这个新指针实现 **`Drop` Trait**。每当其中一个持有者（比如 `node_b`）离开作用域触发 `drop(&mut self)` 时，它先去把堆上的计数器 **`- 1`**：
+   - 如果减完后计数器仍然 `> 0`，说明外面还有别的分支（如 `node_a`）在用，自己只需静默退场，绝不释放堆内存；
+   - 如果减完后计数器恰好归 **`0`**，说明自己是全场最后一个退场的持有者，当场销毁 `Node` 并释放整块堆内存。
+
+推演到这里，你大概会产生一种强烈的似曾相识感：
+**「等等，我们刚刚用 Rust 现有的 `struct` + `Deref` + `Drop` 拼出来的这套东西，不就是在 Rust 内部自己手搓了一个非常小型的、类似 Python（CPython）的引用计数内存回收机制吗？」**
+
+一点没错。这就是第 1 章 `1.6` 节留下的第三个未解缺口的答案，也是标准库 `std::rc` 模块为我们提供的单线程引用计数智能指针——**`Rc<T>`（Reference Counted）**。
+
+更妙的地方在于，Rust 并没有为了支持共享所有权去修改编译器内核，也没有像 Python 那样给所有变量强行塞入全局引用计数开销，而是用库类型构造器做到了**局部按需开启（Opt-in）**：
+
+| 对比维度 | Python（CPython 全局引用计数） | Rust 的 `Rc<T>`（局部按需引用计数智能指针） |
+| --- | --- | --- |
+| **作用范围** | **全局强制**。哪怕是一个局部整数或短命对象，对象头里也始终背着 `ob_refcnt` 引用计数器。 | **局部按需（Opt-in）**。全程序绝大多数变量依然走零成本的编译期唯一所有权；只有当你显式套上 `Rc<T>` 类型构造器时，那一块数据才开启引用计数。 |
+| **计数增减靠什么驱动？** | 靠解释器虚拟机在每次赋值、传参、出栈时隐式插入计数加减指令。 | 直接复用第 10 章机制：**调用 `Rc::clone` 时计数 `+1`，变量离开作用域触发 `Drop::drop` 时计数 `-1`**。 |
+| **如何访问内部数据？** | 虚拟机自动解引用。 | 直接复用第 10 章机制：**实现 `Deref<Target = T>`**，让 `Rc<T>` 可以像普通引用 `&T` 一样调方法、走 `Deref Coercion`。 |
+
+---
+
+## `Rc<T>` 的物理内存布局与 `Rc::clone`
+
+我们来看看 `Rc<Node>` 在物理内存中长什么样，以及它如何拿下开头的「Y 字形」链表任务。
+
+当你调用 `let shared_node = Rc::new(Node { val: 10, next: None });` 时：
+- **在栈上**：`shared_node` 和 `Box<Node>` 一样，只是一个占 **8 字节**的结构体（内部包裹着指向堆内存的非空指针）；
+- **在堆上**：`Rc::new` 分配的堆内存块（内部称为 `RcBox<Node>`）不仅存放了你的业务数据 `Node`，还在数据正前方紧挨着放置了两个 `usize` 计数器（64 位下各占 8 字节）：
+  1. **`strong`（强引用计数）**：记录当前有多少个存活的 `Rc<Node>` 共同拥有这个节点（初始为 `1`）；
+  2. **`weak`（弱引用计数）**：记录当前有多少个不持有所有权的 `Weak<Node>` 正在观察这块内存（下一小节拆解）。
+
+<RcSharedNodeLayoutDiagram />
+
+上面是 `strong` 为 3 的布局。下面从创建走到最后一次 `Drop`，看这个计数如何加减，以及堆内存何时释放。
+
+<RcCountProcessDiagram />
+
+我们把 `Node` 定义里的 `next` 换成 `Option<Rc<Node>>`，跑通 `node_a` 和 `node_b` 共享 `shared_node` 的全过程：
+
+<small class="code-source">源文件：<code>examples/concurrency/shared-mutability/src/bin/rc-and-weak.rs</code></small>
+<Code
+  code={rcAndWeakSource.split('// ANCHOR: list_node\n')[1].split('\n// ANCHOR_END: list_node')[0] + '\n\n' + rcAndWeakSource.split('// ANCHOR: rc_share\n')[1].split('\n    // ANCHOR_END: rc_share')[0]}
+  lang="rust"
+  title="两个链表分支通过 Rc<Node> 共享同一个 next 节点"
+/>
+
+运行这段代码，控制台依次输出：
+
+```text
+创建 shared_node 后，强引用计数 = 1
+node_a 接入后，强引用计数 = 2
+node_b 接入后，强引用计数 = 3
+通过 node_b 读取后续节点值: 10
+node_b 退场后，强引用计数 = 2
+node_a (val=3) 的后续节点依然完好: val=10
+```
+
+观察这段代码，有两个核心的工程细节：
+
+### 为什么推荐写 `Rc::clone(&shared_node)` 而不写 `shared_node.clone()`
+
+在语法上，写 `shared_node.clone()` 和 `Rc::clone(&shared_node)` 的执行结果完全相同。但为什么 Rust 官方文档与工业界 Clippy 规范都推荐写成关联函数调用 `Rc::clone(&shared_node)`？
+
+因为在 Rust 里，普通类型（如 `String`、`Vec<T>`）调用 `.clone()` 意味着**在堆上重新分配内存并深拷贝全部元素**，成本较高；而 `Rc::clone(&shared_node)` 只是**复制栈上的 8 字节地址，并把堆上的 `strong` 整数加 `1`**，耗时只有几个 CPU 时钟周期。显式写出 `Rc::clone(&x)`，是为了在 Code Review 时让审阅者一眼看清：「这里只是增加了一次 8 字节指针的引用计数，没有发生节点深拷贝。」
+
+### 为什么 `Rc<T>` 只允许共享只读（`&T`）
+
+哪怕你把变量声明成 `let mut shared_node = Rc::new(...)`，你也无法通过 `shared_node` 直接拿到可变引用 `&mut Node` 去修改里面的 `val` 或 `next` 字段——因为 `Rc<T>` **只实现了只读的 `Deref`，故意没有实现 `DerefMut`**。
+
+原因很明确：既然同一时刻已经有 `shared_node`、`node_a.next`、`node_b.next` 三个持有者同时指着堆上同一块内存，如果允许你通过其中一个 `Rc` 直接拿到 `&mut Node`，就会直接违反「共享不可变、可变不共享」的读写排他规则，引发别名冲突。（至于确实需要在多个 `Rc` 之间修改节点字段时该怎么处理，正是下一节 `12.2` 内部可变性 `RefCell<T>` 的任务。）
+
+---
+
+## 新的隐患：当双向链表遇上循环引用
+
+既然我们用 `Rc<T>` 构建出了一个微型的「Python 式引用计数回收器」，那么顺着引用计数的物理逻辑往下想，一个经典的隐患马上就会浮出水面：**如果两个链表节点互相持有对方的 `Rc`，形成了一个环（Reference Cycle），会发生什么？**
+
+比如我们要把刚才的单向链表升级成**双向链表**：第 1 个节点的 `next` 指向第 2 个节点，第 2 个节点的 `prev` 又指回第 1 个节点。
+
+在 Python 里，CPython 为了对付这种环，被迫在引用计数之外又挂载了一套定期扫描全内存的「分代循环垃圾回收器（Cycle GC）」。而 Rust 绝不会在后台运行扫描式 GC 线程——这意味着，如果你让 `next` 和 `prev` 全都使用 `Rc` 互相指向对方：
+- 第 1 个节点的 `next` 拿着指向第 2 个节点的 `Rc`（令第 2 个节点的 `strong` 计数为 `2`）；
+- 第 2 个节点的 `prev` 又拿着指回第 1 个节点的 `Rc`（令第 1 个节点的 `strong` 计数也为 `2`）；
+- 当栈上的变量离开作用域时，各自的 `Drop` 把计数减 `1`，堆上两个节点的 `strong` 计数双双停留在 **`1`**。谁都在等对方先销毁来释放自己，结果两个节点直到程序结束都无法释放，造成**内存泄漏（Memory Leak）**。
+
+*(注：这里顺带厘清一个安全边界——在 Rust 中，循环引用导致的内存泄漏在工程上属于 Bug，但它**不是未定义行为（Undefined Behavior）**。因为泄漏的内存既然永远不会被释放，也就不会产生悬垂引用或双重释放，因此借用检查器不会在编译期拦截循环引用。)*
+
+### 拆环工具：不声明所有权的观察者指针 `Weak<T>`
+
+既然没有后台扫描器替我们拆环，怎么在设计双向链表或树节点时，从源头上避免循环引用？
+
+我们再来审视一下双向链表中 `next` 与 `prev` 的真实关系：
+- **向后的 `next` 指针（单向所有权）**：前驱节点拥有后继节点。如果整条链表的头节点销毁了，后面的节点理应顺着 `next` 依次销毁——这应该用增加 `strong` 计数的 **`Rc<BiNode>`**；
+- **向前的 `prev` 指针（非拥有观察关系）**：后继节点有时需要顺着 `prev` 找到自己的前驱节点，但**后继节点并不「拥有」前驱节点**，绝不能因为后继节点还指着前驱，就阻止前驱节点被释放。
+
+为了表达这种**「我需要指向你，但我没有所有权、也不阻止你被释放」**的关联，标准库与 `Rc<T>` 成对提供了**弱引用智能指针 `Weak<T>`**：
+
+1. **如何创建 `Weak<T>`**：对一个已有的 `Rc<T>` 调用 **`Rc::downgrade(&rc)`**。它不会增加 `strong` 强引用计数，而是把堆块头部的 **`weak` 弱引用计数 `+ 1`**。
+2. **为什么不会造成循环泄漏**：因为 `Rc<T>` 决定何时销毁底层数据 `T` 的唯一判据是 **`strong == 0`**，不看 `weak` 计数是多少。只要所有强引用 `Rc<T>` 都退场了（`strong` 归零），底层数据 `T` 的释放逻辑就会立刻执行。
+3. **如何保证访问不悬垂**：既然前驱节点随时可能已经销毁，拿着 `Weak<T>` 直接解引用岂不是会悬垂？为此，**`Weak<T>` 故意没有实现 `Deref` Trait**。每当你想通过 `Weak<T>` 访问前驱节点时，编译器强制你必须先调用 **`.upgrade()`** 方法，它的返回值类型是 **`Option<Rc<T>>`**：
+   - 如果此时堆上的 `strong` 计数仍然 `> 0`（说明前驱节点还存活），`.upgrade()` 就会临时把 `strong` 加 `1`，给你返回 **`Some(Rc<T>)`**——在你拿着这个临时 `Rc<T>` 操作期间，前驱节点绝对不会被销毁；
+   - 如果此时 `strong` 早已归 `0`（说明前驱节点已经被销毁了），`.upgrade()` 就会安全地返回 **`None`**，从类型层面杜绝了悬垂引用。
+
+我们通过一段可运行代码，核验后继节点 `second_node` 通过 `prev: Option<Weak<BiNode>>` 在前驱节点 `first_node` 存活与销毁前后的表现：
+
+<small class="code-source">源文件：<code>examples/concurrency/shared-mutability/src/bin/rc-and-weak.rs</code></small>
+<Code
+  code={rcAndWeakSource.split('// ANCHOR: tree_weak\n')[1].split('\n// ANCHOR_END: tree_weak')[0] + '\n\n' + rcAndWeakSource.split('// ANCHOR: weak_demo\n')[1].split('\n    // ANCHOR_END: weak_demo')[0]}
+  lang="rust"
+  title="链表后继节点用 Weak<BiNode> 与 .upgrade() 安全指回前驱节点"
+/>
+
+运行结果展示了 `strong` 与 `weak` 的变化以及前驱节点退场后的安全探测：
+
+```text
+作用域内: strong = 1, weak = 1
+节点 2 成功找到前驱节点: val = 1
+first_node 退场后，节点 2 尝试 upgrade 前驱结果: None
+```
+
+*(补充一个底层细节：当内层代码块结束、`first_node` 退场令 `strong` 归零时，`BiNode` 结构体本身的字段会被**立即销毁释放**；但由于外部的 `second_node.prev` 还持有一个 `Weak` 指针（`weak == 1`），为了防止 `upgrade()` 去读一块已被操作系统收回的地址，包裹层 `RcBox` 的头部外壳会暂时保留，直到最后一个 `Weak` 指针也离开作用域令 `weak` 归零时，才最终释放 `RcBox` 外壳。)*
+
+---
+
+## 小结
+
+回看这一节的探案过程，我们从一个三行代码的「Y 字形」链表任务出发，在 `Box<T>` 和 `&'a T` 双双受阻后，利用第 10 章的 `Deref` 与 `Drop` 机制推演出了单线程多所有者共享方案：
+- **`Rc<T>`**：通过堆上 `strong` 计数器、显式轻量复制 `Rc::clone(&x)` 以及 `Drop` 自动减一，按需为局部数据开启引用计数共享；
+- **`Weak<T>`**：通过 `Rc::downgrade(&x)` 创建不阻止释放的弱观察指针，并强制用 `.upgrade() -> Option<Rc<T>>` 在类型层面避免悬垂访问与循环引用泄漏。
+
+但细心的你一定注意到了一个还没有解开的疙瘩：
+在刚才的例子里，我们先创建了 `first_node`，再创建 `second_node` 并让 `second_node.prev` 指回 `first_node`。**如果我们现在想回头把已经包在 `Rc` 里的 `first_node.next` 修改为指向 `second_node`，或者想修改 `shared_node` 里的 `val` 字段，纯靠只读的 `Rc<T>` 根本改不动。**
+
+当一份数据已经被包装在不可变的共享引用或 `Rc<T>` 之后，我们怎么在不违背读写排他安全的前提下修改它的内部字段？这就要请出下一节的主角——把编译期借用检查搬到运行时的**内部可变性（`Cell<T>` 与 `RefCell<T>`）**。
+
+---
+
+### 附：本节完整可运行实验源码
+
+<details>
+<summary>点击展开完整源码（<code>examples/concurrency/shared-mutability/src/bin/rc-and-weak.rs</code>）</summary>
+
+<Code
+  code={rcAndWeakSource.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+  title="examples/concurrency/shared-mutability/src/bin/rc-and-weak.rs"
+/>
+
+</details>

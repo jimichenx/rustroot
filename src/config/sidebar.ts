@@ -1,5 +1,6 @@
 import { compareLessons, courseHeadings } from './course-numbers';
 import { loadCourse } from './course-slugs';
+import { isPublished } from './release';
 import { CURRENT } from './site';
 
 // 侧栏只看当前语言的 course/。公开地址由 course-slugs 计算，这里只排顺序：
@@ -9,7 +10,7 @@ import { CURRENT } from './site';
 //   渲染成指向章页的链接。
 //   课在章内按 sidebar.order 排序。篇、章、课的编号在这里和内容加载时补上，源文件不写。
 // 当前语言还没有的页面不出现。草稿与 autogenerate 一致：dev 留在侧栏，
-// 生产构建排除。章文件夹还在时，组保留。
+// 生产构建排除。正式构建里，发布指针之后的页也不出现。章组里没有任何可列出的项时，组不保留。
 //
 // Unnumbered parts follow numbered parts; the appendix has its own chapter sequence.
 // 「开始」不在 course/ 下，仍用 autogenerate。Starlight 用相对
@@ -22,8 +23,9 @@ const auto = (directory: string) => ({
 	autogenerate: { directory: `${CURRENT.contentDir}/${directory}` },
 });
 
-function isListed(draft: boolean): boolean {
-	return isDev || !draft;
+function isListed(draft: boolean, slug: string): boolean {
+	if (!isDev && draft) return false;
+	return isPublished(slug);
 }
 
 function chapterFallback(num: number): string {
@@ -45,12 +47,12 @@ function scanCourse(): Array<CourseLink | CourseGroup> {
 	const course = loadCourse(CURRENT.contentDir);
 	const headings = courseHeadings(CURRENT.contentDir);
 	const items: Array<CourseLink | CourseGroup> = [];
-	if (course.contents && isListed(course.contents.draft)) {
+	if (course.contents && isListed(course.contents.draft, course.contents.slug)) {
 		items.push({ label: course.contents.label, slug: course.contents.slug });
 	}
 
 	for (const part of course.parts.filter(part => !part.unnumbered)) {
-		if (part.hasIndex && part.label && part.entry && isListed(part.draft)) {
+		if (part.hasIndex && part.label && part.entry && isListed(part.draft, part.slug)) {
 			items.push({
 				label: headings.get(part.entry)?.(part.label) ?? part.label,
 				slug: part.slug,
@@ -58,23 +60,25 @@ function scanCourse(): Array<CourseLink | CourseGroup> {
 			});
 		}
 		for (const chapter of part.chapters) {
-			const lessons = chapter.lessons.filter(lesson => isListed(lesson.draft)).sort(compareLessons);
+			const lessons = chapter.lessons.filter(lesson => isListed(lesson.draft, lesson.slug)).sort(compareLessons);
 			const heading = chapter.entry ? headings.get(chapter.entry) : undefined;
+			const group = [
+				...(chapter.slug && chapter.hasIndex && isListed(chapter.draft, chapter.slug)
+					? [{ slug: chapter.slug, attrs: { 'data-chapter-page': true as const } }]
+					: []),
+				...lessons.map(lesson => ({ slug: lesson.slug })),
+			];
+			if (group.length === 0) continue;
 			items.push({
 				label: (chapter.label && heading ? heading(chapter.label) : undefined) ?? chapterFallback(chapter.num),
-				items: [
-					...(chapter.slug && chapter.hasIndex && isListed(chapter.draft)
-						? [{ slug: chapter.slug, attrs: { 'data-chapter-page': true as const } }]
-						: []),
-					...lessons.map(lesson => ({ slug: lesson.slug })),
-				],
+				items: group,
 			});
 		}
 	}
 
 	for (const part of course.parts.filter(part => part.unnumbered)) {
-		if (!part.hasIndex || !part.label || !part.entry || !isListed(part.draft)) continue;
-		const lessons = part.lessons.filter(lesson => isListed(lesson.draft)).sort(compareLessons);
+		if (!part.hasIndex || !part.label || !part.entry || !isListed(part.draft, part.slug)) continue;
+		const lessons = part.lessons.filter(lesson => isListed(lesson.draft, lesson.slug)).sort(compareLessons);
 		items.push({
 			label: part.label,
 			items: [
@@ -84,27 +88,29 @@ function scanCourse(): Array<CourseLink | CourseGroup> {
 		});
 	}
 
-        const appendix = course.appendix;
-        if (appendix?.hasIndex && appendix.label && isListed(appendix.draft)) {
-                items.push({
-                        label: appendix.label,
-                        slug: appendix.slug,
-                        attrs: { 'data-part-page': true as const },
-                });
-                for (const chapter of appendix.chapters) {
-                        const heading = chapter.entry ? headings.get(chapter.entry) : undefined;
-                        const lessons = chapter.lessons.filter(lesson => isListed(lesson.draft)).sort(compareLessons);
-                        items.push({
-                                label: chapter.label && heading ? heading(chapter.label) : chapter.label ?? chapter.folder,
-                                items: [
-                                        ...(chapter.slug && isListed(chapter.draft)
-                                                ? [{ slug: chapter.slug, attrs: { 'data-chapter-page': true as const } }]
-                                                : []),
-                                        ...lessons.map(lesson => ({ slug: lesson.slug })),
-                                ],
-                        });
-                }
-        }
+	const appendix = course.appendix;
+	if (appendix?.hasIndex && appendix.label && isListed(appendix.draft, appendix.slug)) {
+		items.push({
+			label: appendix.label,
+			slug: appendix.slug,
+			attrs: { 'data-part-page': true as const },
+		});
+	}
+	for (const chapter of appendix?.chapters ?? []) {
+		const heading = chapter.entry ? headings.get(chapter.entry) : undefined;
+		const lessons = chapter.lessons.filter(lesson => isListed(lesson.draft, lesson.slug)).sort(compareLessons);
+		const group = [
+			...(chapter.slug && isListed(chapter.draft, chapter.slug)
+				? [{ slug: chapter.slug, attrs: { 'data-chapter-page': true as const } }]
+				: []),
+			...lessons.map(lesson => ({ slug: lesson.slug })),
+		];
+		if (group.length === 0) continue;
+		items.push({
+			label: chapter.label && heading ? heading(chapter.label) : chapter.label ?? chapter.folder,
+			items: group,
+		});
+	}
 
 	return items;
 }

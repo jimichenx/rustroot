@@ -1,0 +1,115 @@
+---
+/**
+ * 11.5「自引用结构体按位移动后，内部指针悬垂」。
+ * 左：旧栈帧 0x1000 上，ptr 指向同一结构体里的 data。
+ * 右：按位 Move 到 0x2000 后，data 在新地址，ptr 仍保存已销毁的 0x1000。
+ * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	lang?: 'zh' | 'en';
+}
+
+const copy = {
+	zh: {
+		caption:
+			'移动前，结构体在旧栈帧 0x1000，字段 ptr 指向同一结构体里的 data。按位移动到新栈帧 0x2000 后，data 到了 0x2000，ptr 里复制过来的仍是旧地址 0x1000，指向已经销毁的栈帧，成为悬垂指针。',
+		title: '自引用结构体按位移动后，内部指针仍指着旧地址',
+		desc: '左边是移动前的旧栈帧 0x1000。结构体里的 data 就在 0x1000，ptr 保存的地址也是 0x1000，箭头指回同一结构体的 data。右边按位移动到新栈帧 0x2000 之后，data 位于 0x2000，ptr 里的数字仍是 0x1000，虚线指向已经销毁的旧栈帧，变成悬垂指针。',
+		before: '① 移动前',
+		beforeSub: '旧栈帧 0x1000',
+		after: '② 移动之后',
+		afterSub: '新栈帧 0x2000',
+		move: '按位 Move',
+		data: 'data',
+		ptr: 'ptr',
+		oldAddr: '0x1000',
+		newAddr: '0x2000',
+		points: '指向 data',
+		holds: 'ptr 里是 data 的地址',
+		same: '还在这一帧里',
+		moved: '已在 0x2000',
+		dangling: '悬垂',
+		gone: '旧栈帧已销毁',
+	},
+	en: {
+		caption:
+			'Before the move, the struct sits in the old frame at 0x1000, and ptr points at data in that same struct. After a bitwise move to 0x2000, data lives at 0x2000, but the copied ptr still stores 0x1000 and points at the destroyed frame.',
+		title: 'A bitwise move leaves a self-reference pointing at the old address',
+		desc: 'On the left, before the move, the old frame is 0x1000. The data field lives at 0x1000, and ptr stores 0x1000, so the arrow points back at data in the same struct. On the right, after a bitwise move into the new frame at 0x2000, data is at 0x2000. The number in ptr is still 0x1000. The dashed arrow points at the destroyed old frame, so ptr is dangling.',
+		before: '① before the move',
+		beforeSub: 'old frame 0x1000',
+		after: '② after the move',
+		afterSub: 'new frame 0x2000',
+		move: 'bitwise Move',
+		data: 'data',
+		ptr: 'ptr',
+		oldAddr: '0x1000',
+		newAddr: '0x2000',
+		points: 'points at data',
+		holds: "ptr holds data's address",
+		same: 'still in this frame',
+		moved: 'now at 0x2000',
+		dangling: 'dangling',
+		gone: 'old frame is gone',
+	},
+} as const;
+
+const { lang } = Astro.props;
+const locale = lang ?? (SITE_LOCALE === 'en' ? 'en' : 'zh');
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 520" role="img" aria-labelledby="srm-title srm-desc">
+		<title id="srm-title">{t.title}</title>
+		<desc id="srm-desc">{t.desc}</desc>
+
+		<rect class="panel" x="12" y="100" width="300" height="400" rx="10"></rect>
+		<rect class="slot" x="32" y="124" width="216" height="80" rx="6"></rect>
+		<rect class="slot" x="32" y="260" width="216" height="80" rx="6"></rect>
+
+		<rect class="panel" x="328" y="100" width="300" height="400" rx="10"></rect>
+		<rect class="slot" x="348" y="124" width="216" height="80" rx="6"></rect>
+		<rect class="slot" x="348" y="260" width="216" height="80" rx="6"></rect>
+		<rect class="freed" x="348" y="400" width="216" height="76" rx="6"></rect>
+
+		<path class="arrow" d="M 200 48 H 344" marker-end="url(#srm-head)"></path>
+		<path class="arrow" d="M 248 300 H 276 V 164 H 248" marker-end="url(#srm-head)"></path>
+		<path class="arrow danger" d="M 456 340 V 400" marker-end="url(#srm-head-muted)"></path>
+
+		<text class="edge-label" x="28" y="28">{t.before}</text>
+		<text class="edge-sub" x="28" y="74">{t.beforeSub}</text>
+		<text class="edge-label" x="264" y="28" text-anchor="middle">{t.move}</text>
+		<text class="edge-label" x="360" y="28">{t.after}</text>
+		<text class="edge-sub" x="360" y="74">{t.afterSub}</text>
+
+		<text class="name" x="140" y="158" text-anchor="middle">{t.data}</text>
+		<text class="code" x="140" y="182" text-anchor="middle">{t.oldAddr}</text>
+		<text class="edge-label" x="140" y="238" text-anchor="middle">{t.points}</text>
+		<text class="name" x="140" y="294" text-anchor="middle">{t.ptr}</text>
+		<text class="code" x="140" y="318" text-anchor="middle">{t.oldAddr}</text>
+		<text class="edge-sub" x="140" y="432" text-anchor="middle">{t.holds}</text>
+		<text class="edge-sub" x="140" y="456" text-anchor="middle">{t.same}</text>
+
+		<text class="name" x="456" y="158" text-anchor="middle">{t.data}</text>
+		<text class="code" x="456" y="182" text-anchor="middle">{t.newAddr}</text>
+		<text class="edge-label" x="456" y="238" text-anchor="middle">{t.moved}</text>
+		<text class="name" x="456" y="294" text-anchor="middle">{t.ptr}</text>
+		<text class="code" x="456" y="318" text-anchor="middle">{t.oldAddr}</text>
+		<text class="edge-label" x="472" y="376">{t.dangling}</text>
+		<text class="node-name" x="456" y="432" text-anchor="middle">{t.oldAddr}</text>
+		<text class="edge-sub" x="456" y="456" text-anchor="middle">{t.gone}</text>
+
+		<defs>
+			<marker id="srm-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+			<marker id="srm-head-muted" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line-muted)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

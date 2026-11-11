@@ -1,5 +1,5 @@
 ---
-title: 智能指针、Box<T>、解引用（Deref）与清理（Drop）
+title: 智能指针：Box<T>、Deref 与 Drop
 description: 从广义指针三大家族（引用、智能指针与裸指针）出发，看清单一所有权堆智能指针 Box<T> 的内存表示与三大工程使命，并拆解支撑所有智能指针的两大底层系统契约——控制解引用与自动脱壳的 Deref Trait，以及控制确定性资源释放的 Drop Trait。
 id: box-deref-and-drop
 ---

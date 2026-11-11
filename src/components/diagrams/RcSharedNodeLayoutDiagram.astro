@@ -1,0 +1,165 @@
+---
+/**
+ * 12.1「Rc<Node> 链表节点共享内存布局」。
+ * 左侧三根 8 字节指针 shared_node、node_a.next、node_b.next
+ * 指向右侧同一块 RcBox：strong: 3、weak: 0，后面紧接 Node { val: 10, next: None }。
+ * 底部：node_b 离开作用域，Drop 把 strong 从 3 减到 2，堆块仍在。
+ * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	lang?: 'zh' | 'en';
+}
+
+const copy = {
+	zh: {
+		caption:
+			'三根 8 字节指针指向同一块 RcBox：头部是 strong: 3 和 weak: 0，后面紧接 Node { val: 10, next: None }；node_b 离开作用域时，Drop 把 strong 减 1。',
+		title: 'Rc<Node> 的共享布局：三根指针，一块 RcBox',
+		desc: '左侧三个 8 字节指针 shared_node、node_a.next 和 node_b.next 指向右侧同一块堆内存 RcBox<Node>。RcBox 先放 strong: 3 和 weak: 0 两个 usize，后面紧接 Node，val 为 10，next 为 None。底部表示 node_b 离开作用域时，Drop 把 strong 从 3 减到 2；计数仍大于 0，这块堆内存保留。',
+		stackKicker: '栈上的指针',
+		stackSub: '各占 8 字节',
+		sharedName: 'shared_node',
+		sharedType: 'Rc<Node>',
+		ptr8: '8B 指针',
+		nextA: 'node_a.next',
+		nextB: 'node_b.next',
+		nextType: 'Option<Rc<Node>>',
+		heapKicker: '堆 · RcBox<Node>',
+		heapSub: '计数器在数据之前',
+		strong: 'strong: 3',
+		weak: 'weak: 0',
+		usize8: 'usize · 8B',
+		nodeName: 'Node',
+		nodeVal: 'val: 10',
+		nodeNext: 'next: None',
+		nodeSub: '紧接在计数器之后',
+		shareLabel: '指向同一块',
+		shareSub: '只复制 8B 地址',
+		cloneLabel: 'Rc::clone',
+		cloneSub: 'strong 加 1',
+		dropKicker: 'node_b 离开作用域',
+		dropSub: 'Drop 把 strong 从 3 减到 2，堆块仍在',
+		dropWho: 'node_b',
+		dropWhoSub: '离开作用域',
+		dropFn: 'Drop::drop',
+		dropFnSub: 'strong - 1',
+		dropAfter: 'strong: 2',
+		dropAfterSub: '堆块仍保留',
+	},
+	en: {
+		caption:
+			'Three 8-byte pointers share one RcBox: strong is 3 and weak is 0, then Node { val: 10, next: None }. When node_b leaves scope, Drop decrements strong.',
+		title: 'Shared Rc<Node> layout: three pointers, one RcBox',
+		desc: 'On the left, three 8-byte pointers — shared_node, node_a.next, and node_b.next — aim at one heap block, RcBox<Node>. The block stores strong: 3 and weak: 0, two usizes, then the Node with val 10 and next None. At the bottom, node_b leaving scope runs Drop and strong goes from 3 to 2. The count is still above zero, so the heap block stays.',
+		stackKicker: 'pointers on the stack',
+		stackSub: '8 bytes each',
+		sharedName: 'shared_node',
+		sharedType: 'Rc<Node>',
+		ptr8: '8B pointer',
+		nextA: 'node_a.next',
+		nextB: 'node_b.next',
+		nextType: 'Option<Rc<Node>>',
+		heapKicker: 'heap · RcBox<Node>',
+		heapSub: 'counters, then the Node',
+		strong: 'strong: 3',
+		weak: 'weak: 0',
+		usize8: 'usize · 8B',
+		nodeName: 'Node',
+		nodeVal: 'val: 10',
+		nodeNext: 'next: None',
+		nodeSub: 'right after the counters',
+		shareLabel: 'one shared block',
+		shareSub: 'copy the 8B address',
+		cloneLabel: 'Rc::clone',
+		cloneSub: 'strong + 1',
+		dropKicker: 'node_b leaves scope',
+		dropSub: 'Drop takes strong from 3 to 2; the block stays',
+		dropWho: 'node_b',
+		dropWhoSub: 'leaves scope',
+		dropFn: 'Drop::drop',
+		dropFnSub: 'strong - 1',
+		dropAfter: 'strong: 2',
+		dropAfterSub: 'heap block stays',
+	},
+} as const;
+
+const { lang } = Astro.props;
+const locale = lang ?? (SITE_LOCALE === 'en' ? 'en' : 'zh');
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 568" role="img" aria-labelledby="rsn-title rsn-desc">
+		<title id="rsn-title">{t.title}</title>
+		<desc id="rsn-desc">{t.desc}</desc>
+
+		{/* 框在下：左栈、右堆、底栏退场 */}
+		<rect class="panel" x="12" y="12" width="228" height="376" rx="10"></rect>
+		<rect class="slot" x="26" y="68" width="200" height="92" rx="6"></rect>
+		<rect class="slot" x="26" y="172" width="200" height="92" rx="6"></rect>
+		<rect class="slot" x="26" y="276" width="200" height="92" rx="6"></rect>
+
+		<rect class="object" x="400" y="12" width="228" height="376" rx="10"></rect>
+		<rect class="slot" x="414" y="68" width="200" height="78" rx="6"></rect>
+		<rect class="slot" x="414" y="158" width="200" height="78" rx="6"></rect>
+		<rect class="slot" x="414" y="256" width="200" height="116" rx="6"></rect>
+
+		<rect class="panel" x="12" y="400" width="616" height="156" rx="10"></rect>
+		<rect class="slot" x="28" y="466" width="170" height="74" rx="6"></rect>
+		<rect class="slot" x="236" y="466" width="170" height="74" rx="6"></rect>
+		<rect class="slot" x="444" y="466" width="170" height="74" rx="6"></rect>
+
+		{/* 三根指针汇入同一块；底栏是退场之后的计数变化 */}
+		<path class="arrow" d="M 226 114 H 398" marker-end="url(#rsn-head)"></path>
+		<path class="arrow" d="M 226 218 H 398" marker-end="url(#rsn-head)"></path>
+		<path class="arrow" d="M 226 322 H 398" marker-end="url(#rsn-head)"></path>
+		<path class="arrow" d="M 198 503 H 234" marker-end="url(#rsn-head)"></path>
+		<path class="arrow" d="M 406 503 H 442" marker-end="url(#rsn-head)"></path>
+
+		<text class="label" x="126" y="36" text-anchor="middle">{t.stackKicker}</text>
+		<text class="edge-sub" x="126" y="54" text-anchor="middle">{t.stackSub}</text>
+		<text class="name" x="126" y="100" text-anchor="middle">{t.sharedName}</text>
+		<text class="code" x="126" y="122" text-anchor="middle">{t.sharedType}</text>
+		<text class="edge-sub" x="126" y="144" text-anchor="middle">{t.ptr8}</text>
+		<text class="name" x="126" y="204" text-anchor="middle">{t.nextA}</text>
+		<text class="code" x="126" y="226" text-anchor="middle">{t.nextType}</text>
+		<text class="edge-sub" x="126" y="248" text-anchor="middle">{t.ptr8}</text>
+		<text class="name" x="126" y="308" text-anchor="middle">{t.nextB}</text>
+		<text class="code" x="126" y="330" text-anchor="middle">{t.nextType}</text>
+		<text class="edge-sub" x="126" y="352" text-anchor="middle">{t.ptr8}</text>
+
+		<text class="label" x="514" y="36" text-anchor="middle">{t.heapKicker}</text>
+		<text class="edge-sub" x="514" y="54" text-anchor="middle">{t.heapSub}</text>
+		<text class="code" x="514" y="100" text-anchor="middle">{t.strong}</text>
+		<text class="edge-sub" x="514" y="124" text-anchor="middle">{t.usize8}</text>
+		<text class="code" x="514" y="190" text-anchor="middle">{t.weak}</text>
+		<text class="edge-sub" x="514" y="214" text-anchor="middle">{t.usize8}</text>
+		<text class="edge-label" x="514" y="280" text-anchor="middle">{t.nodeName}</text>
+		<text class="code" x="514" y="304" text-anchor="middle">{t.nodeVal}</text>
+		<text class="code" x="514" y="326" text-anchor="middle">{t.nodeNext}</text>
+		<text class="edge-sub" x="514" y="348" text-anchor="middle">{t.nodeSub}</text>
+
+		<text class="edge-label" x="312" y="156" text-anchor="middle">{t.shareLabel}</text>
+		<text class="edge-sub" x="312" y="176" text-anchor="middle">{t.shareSub}</text>
+		<text class="edge-label" x="312" y="260" text-anchor="middle">{t.cloneLabel}</text>
+		<text class="edge-sub" x="312" y="280" text-anchor="middle">{t.cloneSub}</text>
+
+		<text class="edge-label" x="320" y="426" text-anchor="middle">{t.dropKicker}</text>
+		<text class="edge-sub" x="320" y="446" text-anchor="middle">{t.dropSub}</text>
+		<text class="name" x="113" y="496" text-anchor="middle">{t.dropWho}</text>
+		<text class="edge-sub" x="113" y="518" text-anchor="middle">{t.dropWhoSub}</text>
+		<text class="name" x="321" y="496" text-anchor="middle">{t.dropFn}</text>
+		<text class="edge-sub" x="321" y="518" text-anchor="middle">{t.dropFnSub}</text>
+		<text class="name" x="529" y="496" text-anchor="middle">{t.dropAfter}</text>
+		<text class="edge-sub" x="529" y="518" text-anchor="middle">{t.dropAfterSub}</text>
+
+		<defs>
+			<marker id="rsn-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

@@ -1,6 +1,7 @@
 ---
 import { loadCourse } from '../config/course-slugs';
 import { compareLessons } from '../config/course-numbers';
+import { isPublished } from '../config/release';
 
 interface Props {
         locale?: 'zh' | 'en';
@@ -30,12 +31,13 @@ const chineseParts = [
 		slug: 'pointers',
 	},
         {
-                title: '共享与并发',
-                description: '理解共享所有权、内部可变性与跨线程安全。',
+                title: '共享、并发与异步',
+                description: '理解共享所有权、内部可变性、多线程并发与 async / Pin 异步状态机。',
+                slug: 'concurrency',
         },
         {
-                title: '工程组织与系统边界',
-                description: '组织工程，并探索 unsafe 和异步机制。',
+                title: '工程架构、设计模式与系统边界',
+                description: '掌握模块与测试工具链、Rust 设计模式（Newtype / Typestate）以及 unsafe 安全抽象地基。',
         },
 ];
 const englishParts = [
@@ -68,7 +70,7 @@ const parts = (locale === 'en' ? englishParts : chineseParts).map((part, index) 
                 ? published.chapters
                         .filter(chapter => !chapter.draft && chapter.slug && chapter.label)
                         .map(chapter => {
-                                const lessons = chapter.lessons.filter(lesson => !lesson.draft).sort(compareLessons);
+                                const lessons = chapter.lessons.filter(lesson => !lesson.draft && isPublished(lesson.slug)).sort(compareLessons);
                                 // The chapter introduction is still a placeholder.
                                 const slug = locale === 'zh' && chapter.id === 'references-and-slices'
                                         ? lessons[0]?.slug

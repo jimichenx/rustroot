@@ -1,0 +1,265 @@
+---
+/**
+ * 附录 B「thread::scope」：2015 年 JoinGuard 被 Rc 环留住。
+ *
+ * 四步可跳，外加回到起点的第 0 步（只有 local_data）：
+ * 1. 子线程借用 local_data，guard 还在栈上；
+ * 2. guard 移进互相指向的两个 Rc，a、b 仍在，strong = 2；
+ * 3. a、b 退场，strong 停在 1，Drop 不执行，local_data 还在；
+ * 4. local_data 释放，子线程仍在运行，借用悬垂。
+ *
+ * 关掉 JS 时停在第 4 步。样式见 src/styles/diagrams.css，组件里不写 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+import FigureControls from '../course/FigureControls.astro';
+
+const copy = {
+	zh: {
+		caption:
+			'guard 移进互相指向的两个 Rc。a、b 还在栈上时 strong 是 2；它们离开后环把 strong 留在 1，guard 的 Drop 不执行。随后 local_data 释放，子线程仍在运行，借用已经悬垂。',
+		title: 'strong 停在 1 之后，local_data 仍会释放',
+		desc: '起点只有 local_data。第 1 步子线程借用它，guard 在父线程栈上。第 2 步 guard 移进互相指向的两个 Rc，a 与 b 还在栈上，两边 strong 都是 2。第 3 步 a 与 b 离开，环把 strong 留在 1，guard 的 Drop 不执行，也没有 join，local_data 仍在。第 4 步 local_data 释放，子线程仍在运行，它的借用指向已释放的栈内存。',
+		stackKicker: '父线程栈',
+		stackSub: '后声明的先释放',
+		childKicker: '子线程',
+		childSub: '另一条调用栈',
+		heapKicker: '堆',
+		empty: '空位',
+		moved: '已移出',
+		left: '已离开',
+		freed: '已释放',
+		idle: '还没启动',
+		running: '仍在运行',
+		reading: '沿借用读取',
+		readingFreed: '父线程栈已释放',
+		borrowOk: '有效借用',
+		borrowBad: '悬垂引用',
+		noCycle: '还没有环',
+		pointsBack: '指回 a',
+		skip: 'Drop 被跳过',
+		dataVal: 'vec![1, 2, 3]',
+		guardTy: 'JoinGuard',
+		rcTy: 'Rc',
+		strong2: 'strong = 2',
+		strong1: 'strong = 1',
+		notes: [
+			'栈上只有 local_data。',
+			'子线程借用 local_data，guard 还在栈上。',
+			'guard 移进环里。a、b 仍在栈上，strong 是 2。',
+			'a、b 退场，strong 停在 1，guard 的 Drop 没执行。',
+			'local_data 被释放，子线程仍在运行，借用已经悬垂。',
+		],
+		stepper: 'JoinGuard 被环留住',
+		steps: [
+			'子线程借用 local_data，guard 在栈上',
+			'guard 移进环，strong 是 2',
+			'a 与 b 退场，strong 停在 1，Drop 没执行',
+			'local_data 释放，借用悬垂',
+		],
+	},
+	en: {
+		caption:
+			'guard moves into two Rc values that point at each other. While a and b are on the stack, strong is 2. After they leave, the cycle keeps strong at 1, so the Drop of guard does not run. local_data is then freed. The child is still running, and its borrow dangles.',
+		title: 'local_data is still freed after strong stays at 1',
+		desc: 'The start shows only local_data. In step 1 the child borrows it and guard sits on the parent stack. In step 2 guard moves into two Rc values that point at each other; a and b are still on the stack and both strong counts are 2. In step 3 a and b leave, the cycle keeps strong at 1, the Drop of guard does not run, and there is no join, while local_data remains. In step 4 local_data is freed. The child is still running, and its borrow aims at freed stack memory.',
+		stackKicker: 'parent stack',
+		stackSub: 'later names drop first',
+		childKicker: 'child thread',
+		childSub: 'a separate call stack',
+		heapKicker: 'heap',
+		empty: 'empty',
+		moved: 'moved out',
+		left: 'left',
+		freed: 'freed',
+		idle: 'not started',
+		running: 'still running',
+		reading: 'reads through the borrow',
+		readingFreed: 'parent stack already freed',
+		borrowOk: 'borrow holds',
+		borrowBad: 'dangling reference',
+		noCycle: 'no cycle yet',
+		pointsBack: 'points at a',
+		skip: 'Drop skipped',
+		dataVal: 'vec![1, 2, 3]',
+		guardTy: 'JoinGuard',
+		rcTy: 'Rc',
+		strong2: 'strong = 2',
+		strong1: 'strong = 1',
+		notes: [
+			'Only local_data is on the stack.',
+			'The child borrows local_data. guard is still on the stack.',
+			'guard moves into the cycle. a and b remain, so strong is 2.',
+			'a and b leave. strong stays at 1. The Drop of guard does not run.',
+			'local_data is freed. The child is still running, and the borrow dangles.',
+		],
+		stepper: 'The cycle keeps JoinGuard',
+		steps: [
+			'The child borrows local_data; guard is on the stack',
+			'guard enters the cycle; strong is 2',
+			'a and b leave; strong stays at 1; Drop does not run',
+			'local_data is freed; the borrow dangles',
+		],
+	},
+} as const;
+
+const locale = SITE_LOCALE === 'en' ? 'en' : 'zh';
+const t = copy[locale];
+---
+
+<figure class="diagram guard-leak-figure" data-stepper>
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 560" role="img" aria-labelledby="glk-title glk-desc">
+		<title id="glk-title">{t.title}</title>
+		<desc id="glk-desc">{t.desc}</desc>
+
+		<rect class="panel" x="16" y="16" width="268" height="316" rx="10"></rect>
+		<rect class="panel" x="356" y="16" width="268" height="316" rx="10"></rect>
+		<text class="label" x="150" y="42" text-anchor="middle">{t.stackKicker}</text>
+		<text class="edge-sub" x="150" y="60" text-anchor="middle">{t.stackSub}</text>
+		<text class="label" x="490" y="42" text-anchor="middle">{t.childKicker}</text>
+		<text class="edge-sub" x="490" y="60" text-anchor="middle">{t.childSub}</text>
+
+		<g class="gl-phase gl-data-live">
+			<rect class="slot" x="32" y="74" width="236" height="68" rx="8"></rect>
+			<text class="name" x="150" y="102" text-anchor="middle">local_data</text>
+			<text class="code" x="150" y="124" text-anchor="middle">{t.dataVal}</text>
+		</g>
+		<g class="gl-phase gl-data-dead gl-end">
+			<rect class="freed" x="32" y="74" width="236" height="68" rx="8"></rect>
+			<text class="name" x="150" y="102" text-anchor="middle">local_data</text>
+			<text class="edge-sub" x="150" y="124" text-anchor="middle">{t.freed}</text>
+		</g>
+
+		<g class="gl-phase gl-guard-empty">
+			<rect class="freed" x="32" y="154" width="236" height="68" rx="8"></rect>
+			<text class="edge-sub" x="150" y="194" text-anchor="middle">{t.empty}</text>
+		</g>
+		<g class="gl-phase gl-guard-live">
+			<rect class="slot" x="32" y="154" width="236" height="68" rx="8"></rect>
+			<text class="name" x="150" y="182" text-anchor="middle">guard</text>
+			<text class="code" x="150" y="204" text-anchor="middle">{t.guardTy}</text>
+		</g>
+		<g class="gl-phase gl-guard-moved gl-end">
+			<rect class="freed" x="32" y="154" width="236" height="68" rx="8"></rect>
+			<text class="name" x="150" y="182" text-anchor="middle">guard</text>
+			<text class="edge-sub" x="150" y="204" text-anchor="middle">{t.moved}</text>
+		</g>
+
+		<g class="gl-phase gl-rc-empty">
+			<rect class="freed" x="32" y="234" width="110" height="66" rx="8"></rect>
+			<rect class="freed" x="158" y="234" width="110" height="66" rx="8"></rect>
+			<text class="edge-sub" x="87" y="272" text-anchor="middle">{t.empty}</text>
+			<text class="edge-sub" x="213" y="272" text-anchor="middle">{t.empty}</text>
+		</g>
+		<g class="gl-phase gl-rc-live">
+			<rect class="slot" x="32" y="234" width="110" height="66" rx="8"></rect>
+			<rect class="slot" x="158" y="234" width="110" height="66" rx="8"></rect>
+			<text class="name" x="87" y="260" text-anchor="middle">a</text>
+			<text class="code" x="87" y="280" text-anchor="middle">{t.rcTy}</text>
+			<text class="name" x="213" y="260" text-anchor="middle">b</text>
+			<text class="code" x="213" y="280" text-anchor="middle">{t.rcTy}</text>
+		</g>
+		<g class="gl-phase gl-rc-late gl-end">
+			<rect class="freed" x="32" y="234" width="110" height="66" rx="8"></rect>
+			<rect class="freed" x="158" y="234" width="110" height="66" rx="8"></rect>
+			<text class="name" x="87" y="260" text-anchor="middle">a</text>
+			<text class="edge-sub" x="87" y="280" text-anchor="middle">{t.left}</text>
+			<text class="name" x="213" y="260" text-anchor="middle">b</text>
+			<text class="edge-sub" x="213" y="280" text-anchor="middle">{t.left}</text>
+		</g>
+
+		<g class="gl-phase gl-ref-empty">
+			<rect class="freed" x="372" y="74" width="236" height="68" rx="8"></rect>
+			<text class="edge-sub" x="490" y="114" text-anchor="middle">{t.empty}</text>
+		</g>
+		<g class="gl-phase gl-ref-ok">
+			<rect class="slot" x="372" y="74" width="236" height="68" rx="8"></rect>
+			<text class="code" x="490" y="102" text-anchor="middle">&amp;local_data</text>
+			<text class="edge-sub" x="490" y="124" text-anchor="middle">{t.borrowOk}</text>
+		</g>
+		<g class="gl-phase gl-ref-bad gl-end">
+			<rect class="slot" x="372" y="74" width="236" height="68" rx="8"></rect>
+			<text class="code" x="490" y="102" text-anchor="middle">&amp;local_data</text>
+			<text class="edge-sub" x="490" y="124" text-anchor="middle">{t.borrowBad}</text>
+		</g>
+
+		<g class="gl-phase gl-child-idle">
+			<rect class="freed" x="372" y="154" width="236" height="146" rx="8"></rect>
+			<text class="node-name" x="490" y="234" text-anchor="middle">{t.idle}</text>
+		</g>
+		<g class="gl-phase gl-child-run">
+			<rect class="slot" x="372" y="154" width="236" height="146" rx="8"></rect>
+			<text class="node-name" x="490" y="220" text-anchor="middle">{t.running}</text>
+			<text class="edge-sub" x="490" y="248" text-anchor="middle">{t.reading}</text>
+		</g>
+		<g class="gl-phase gl-child-bad gl-end">
+			<rect class="slot" x="372" y="154" width="236" height="146" rx="8"></rect>
+			<text class="node-name" x="490" y="220" text-anchor="middle">{t.running}</text>
+			<text class="edge-sub" x="490" y="248" text-anchor="middle">{t.readingFreed}</text>
+		</g>
+
+		<path
+			class="arrow gl-phase gl-borrow-ok"
+			d="M 370 108 H 270"
+			marker-end="url(#glk-head)"
+		></path>
+		<path
+			class="arrow danger gl-phase gl-borrow-bad gl-end"
+			d="M 370 108 H 270"
+			marker-end="url(#glk-head-muted)"
+		></path>
+
+		<rect class="panel" x="16" y="348" width="608" height="148" rx="10"></rect>
+		<text class="label" x="32" y="372">{t.heapKicker}</text>
+		<text class="edge-label gl-phase gl-heap-empty" x="320" y="430" text-anchor="middle">
+			{t.noCycle}
+		</text>
+
+		<g class="gl-phase gl-heap-live gl-end">
+			<rect class="object" x="156" y="386" width="148" height="92" rx="8"></rect>
+			<rect class="object" x="392" y="386" width="148" height="92" rx="8"></rect>
+			<text class="name" x="230" y="414" text-anchor="middle">a</text>
+			<text class="code" x="230" y="436" text-anchor="middle">{t.guardTy}</text>
+			<text class="name" x="466" y="414" text-anchor="middle">b</text>
+			<text class="edge-label" x="466" y="436" text-anchor="middle">{t.pointsBack}</text>
+			<path class="arrow" d="M 304 410 H 392" marker-end="url(#glk-head)"></path>
+			<path class="arrow" d="M 392 454 H 304" marker-end="url(#glk-head)"></path>
+		</g>
+		<text class="code gl-phase gl-strong-2" x="230" y="458" text-anchor="middle">{t.strong2}</text>
+		<text class="code gl-phase gl-strong-2" x="466" y="458" text-anchor="middle">{t.strong2}</text>
+		<text class="code gl-phase gl-strong-1 gl-end" x="230" y="458" text-anchor="middle">{t.strong1}</text>
+		<text class="code gl-phase gl-strong-1 gl-end" x="466" y="458" text-anchor="middle">{t.strong1}</text>
+		<text class="edge-label gl-phase gl-skip gl-end" x="608" y="372" text-anchor="end">{t.skip}</text>
+
+		<rect class="panel" x="16" y="512" width="608" height="36" rx="10"></rect>
+		{
+			t.notes.map((line, index) => (
+				<text
+					class:list={['edge-label', 'gl-only', `gl-only-${index}`, index === 4 && 'gl-end']}
+					data-step={index === 0 ? undefined : index}
+					x="320"
+					y="535"
+					text-anchor="middle"
+				>
+					{line}
+				</text>
+			))
+		}
+
+		<defs>
+			<marker id="glk-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+			<marker id="glk-head-muted" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line-muted)"></path>
+			</marker>
+		</defs>
+	</svg>
+
+	<FigureControls controls="stepper" label={t.stepper} steps={[...t.steps]} />
+</figure>
+
+<script>
+	import { initFigures } from '../../scripts/motion';
+	initFigures();
+</script>

@@ -1,0 +1,200 @@
+---
+/**
+ * 12.2「RefCell<T> 内存布局与守卫生命周期」。
+ * 左：RefCell<Vec<String>> 内联 borrow: isize 与 Vec 的 24B 控制头。
+ * 中：.borrow() 使计数 0 → +1 → +2，交出 Ref<T>；.borrow_mut() 使 0 → -1，交出 RefMut<T>。
+ * 右：守卫离开作用域时 Drop 归还计数；读写重叠则运行时 panic。
+ * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	lang?: 'zh' | 'en';
+}
+
+const copy = {
+	zh: {
+		caption:
+			'RefCell<Vec<String>> 把 borrow 状态字和 Vec 的 24 字节控制头内联在一起。.borrow() 使计数走 0 → +1 → +2 并交出 Ref，.borrow_mut() 使计数走 0 → -1 并交出 RefMut；守卫离开作用域时 Drop 归还计数，读写重叠则运行时 panic。',
+		title: 'RefCell 的内联布局，以及守卫如何归还 borrow 计数',
+		desc: '左侧 RefCell<Vec<String>> 内联存放 8 字节的 borrow: isize，旁边是 Vec 控制头的 ptr、len、cap，共 24 字节；String 元素在堆上。中间调用 .borrow() 时，只要当前没有可变借用，计数从 0 加到 +1、再加到 +2，并交出只读守卫 Ref<T>。调用 .borrow_mut() 时，只有计数为 0 才把计数写成 -1，并交出可变守卫 RefMut<T>。右侧守卫离开作用域时 Drop 归还计数：Ref 减 1，RefMut 从 -1 回到 0。若读和写重叠，运行时 panic，错误是 BorrowMutError。',
+		layoutKicker: '内联布局',
+		layoutName: 'RefCell',
+		layoutType: 'Vec<String>',
+		borrowRole: '状态字',
+		borrowCode: 'borrow: isize',
+		borrowIdle: '8B · 空闲为 0',
+		vecHead: 'Vec 控制头 · 24B',
+		ptrRow: 'ptr · 8B',
+		lenRow: 'len · 8B',
+		capRow: 'cap · 8B',
+		inlineTitle: '和数据头放在一起',
+		inlineSub: 'RefCell 不单独分配',
+		elemSub: 'String 元素在堆上',
+		countKicker: '运行时计数',
+		countSub: '在 borrow 上检查',
+		borrowCall: '.borrow()',
+		c0: '0',
+		cPlus1: '+1',
+		cPlus2: '+2',
+		cMinus1: '-1',
+		refName: 'Ref<T>',
+		refRole: '只读守卫',
+		refShare: '多个可以并存',
+		mutCall: '.borrow_mut()',
+		refMutName: 'RefMut<T>',
+		refMutRole: '可变守卫',
+		refMutOnly: '同时只能一个',
+		mutRule: '只有 0 才能独占',
+		mutPanic: '重叠则 panic',
+		exitKicker: '守卫退场',
+		exitSub: 'Drop 自动归还',
+		leave: '离开作用域',
+		refDelta: 'borrow - 1',
+		mutBack: '-1 → 0',
+		overlap: '若读写重叠',
+		panicTitle: '运行时 panic!',
+		panicRead: '已读时再写',
+		panicWrite: '或已写时再读',
+		panicErr: 'BorrowMutError',
+	},
+	en: {
+		caption:
+			'RefCell<Vec<String>> inlines the borrow flag beside the Vec header, 24 bytes. .borrow() walks the count 0 → +1 → +2 and returns Ref; .borrow_mut() walks 0 → -1 and returns RefMut. Drop gives the count back; overlapping borrows panic at runtime.',
+		title: 'RefCell layout, and how guards return the borrow count',
+		desc: 'On the left, RefCell<Vec<String>> stores an 8-byte borrow: isize beside the Vec header fields ptr, len, and cap, 24 bytes in all. The String elements live on the heap. In the middle, .borrow() adds 1 while no writer is active, so the count goes 0 → +1 → +2, and hands back the shared guard Ref<T>. .borrow_mut() runs only when the count is 0, writes -1, and hands back RefMut<T>. On the right, Drop returns the count when a guard leaves scope: Ref subtracts 1, RefMut restores -1 to 0. If a read and a write overlap, the program panics at runtime with BorrowMutError.',
+		layoutKicker: 'inline layout',
+		layoutName: 'RefCell',
+		layoutType: 'Vec<String>',
+		borrowRole: 'status word',
+		borrowCode: 'borrow: isize',
+		borrowIdle: '8B · 0 means idle',
+		vecHead: 'Vec header · 24B',
+		ptrRow: 'ptr · 8B',
+		lenRow: 'len · 8B',
+		capRow: 'cap · 8B',
+		inlineTitle: 'beside the header',
+		inlineSub: 'no separate allocation',
+		elemSub: 'String elements on the heap',
+		countKicker: 'runtime count',
+		countSub: 'checked on borrow',
+		borrowCall: '.borrow()',
+		c0: '0',
+		cPlus1: '+1',
+		cPlus2: '+2',
+		cMinus1: '-1',
+		refName: 'Ref<T>',
+		refRole: 'shared guard',
+		refShare: 'several may coexist',
+		mutCall: '.borrow_mut()',
+		refMutName: 'RefMut<T>',
+		refMutRole: 'exclusive guard',
+		refMutOnly: 'only one at a time',
+		mutRule: 'exclusive only from 0',
+		mutPanic: 'overlap panics',
+		exitKicker: 'guard leaves',
+		exitSub: 'Drop returns the count',
+		leave: 'leaves scope',
+		refDelta: 'borrow - 1',
+		mutBack: '-1 → 0',
+		overlap: 'if read/write overlap',
+		panicTitle: 'runtime panic!',
+		panicRead: 'write while reading',
+		panicWrite: 'or read while writing',
+		panicErr: 'BorrowMutError',
+	},
+} as const;
+
+const { lang } = Astro.props;
+const locale = lang ?? (SITE_LOCALE === 'en' ? 'en' : 'zh');
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 548" role="img" aria-labelledby="rgl-title rgl-desc">
+		<title id="rgl-title">{t.title}</title>
+		<desc id="rgl-desc">{t.desc}</desc>
+
+		{/* 左：RefCell 本体；中：两次借用；右：退场与重叠 */}
+		<rect class="object" x="10" y="10" width="196" height="528" rx="10"></rect>
+		<rect class="slot" x="22" y="100" width="172" height="104" rx="6"></rect>
+		<rect class="panel" x="22" y="248" width="172" height="46" rx="6"></rect>
+		<rect class="panel" x="22" y="302" width="172" height="46" rx="6"></rect>
+		<rect class="panel" x="22" y="356" width="172" height="46" rx="6"></rect>
+
+		<rect class="panel" x="222" y="10" width="196" height="528" rx="10"></rect>
+		<rect class="slot" x="235" y="100" width="42" height="44" rx="6"></rect>
+		<rect class="slot" x="299" y="100" width="42" height="44" rx="6"></rect>
+		<rect class="slot" x="363" y="100" width="42" height="44" rx="6"></rect>
+		<rect class="slot" x="235" y="160" width="170" height="96" rx="6"></rect>
+		<rect class="slot" x="252" y="300" width="56" height="44" rx="6"></rect>
+		<rect class="slot" x="330" y="300" width="56" height="44" rx="6"></rect>
+		<rect class="slot" x="235" y="360" width="170" height="96" rx="6"></rect>
+
+		<rect class="panel" x="434" y="10" width="196" height="528" rx="10"></rect>
+		<rect class="slot" x="446" y="76" width="172" height="104" rx="6"></rect>
+		<rect class="slot" x="446" y="196" width="172" height="104" rx="6"></rect>
+		<rect class="freed" x="446" y="378" width="172" height="140" rx="6"></rect>
+
+		<path class="arrow" d="M 277 122 H 297" marker-end="url(#rgl-head)"></path>
+		<path class="arrow" d="M 341 122 H 361" marker-end="url(#rgl-head)"></path>
+		<path class="arrow" d="M 308 322 H 328" marker-end="url(#rgl-head)"></path>
+		<path class="arrow danger" d="M 532 344 V 370" marker-end="url(#rgl-head-muted)"></path>
+
+		<text class="label" x="108" y="36" text-anchor="middle">{t.layoutKicker}</text>
+		<text class="name" x="108" y="60" text-anchor="middle">{t.layoutName}</text>
+		<text class="code" x="108" y="80" text-anchor="middle">{t.layoutType}</text>
+		<text class="edge-label" x="108" y="128" text-anchor="middle">{t.borrowRole}</text>
+		<text class="code" x="108" y="154" text-anchor="middle">{t.borrowCode}</text>
+		<text class="edge-sub" x="108" y="178" text-anchor="middle">{t.borrowIdle}</text>
+		<text class="edge-label" x="108" y="232" text-anchor="middle">{t.vecHead}</text>
+		<text class="code" x="108" y="276" text-anchor="middle">{t.ptrRow}</text>
+		<text class="code" x="108" y="330" text-anchor="middle">{t.lenRow}</text>
+		<text class="code" x="108" y="384" text-anchor="middle">{t.capRow}</text>
+		<text class="edge-label" x="108" y="436" text-anchor="middle">{t.inlineTitle}</text>
+		<text class="edge-sub" x="108" y="458" text-anchor="middle">{t.inlineSub}</text>
+		<text class="edge-sub" x="108" y="480" text-anchor="middle">{t.elemSub}</text>
+
+		<text class="label" x="320" y="36" text-anchor="middle">{t.countKicker}</text>
+		<text class="edge-sub" x="320" y="54" text-anchor="middle">{t.countSub}</text>
+		<text class="edge-label" x="320" y="84" text-anchor="middle">{t.borrowCall}</text>
+		<text class="code" x="256" y="128" text-anchor="middle">{t.c0}</text>
+		<text class="code" x="320" y="128" text-anchor="middle">{t.cPlus1}</text>
+		<text class="code" x="384" y="128" text-anchor="middle">{t.cPlus2}</text>
+		<text class="name" x="320" y="196" text-anchor="middle">{t.refName}</text>
+		<text class="edge-sub" x="320" y="218" text-anchor="middle">{t.refRole}</text>
+		<text class="edge-sub" x="320" y="238" text-anchor="middle">{t.refShare}</text>
+		<text class="edge-label" x="320" y="284" text-anchor="middle">{t.mutCall}</text>
+		<text class="code" x="280" y="328" text-anchor="middle">{t.c0}</text>
+		<text class="code" x="358" y="328" text-anchor="middle">{t.cMinus1}</text>
+		<text class="name" x="320" y="396" text-anchor="middle">{t.refMutName}</text>
+		<text class="edge-sub" x="320" y="418" text-anchor="middle">{t.refMutRole}</text>
+		<text class="edge-sub" x="320" y="438" text-anchor="middle">{t.refMutOnly}</text>
+		<text class="edge-sub" x="320" y="484" text-anchor="middle">{t.mutRule}</text>
+		<text class="edge-sub" x="320" y="506" text-anchor="middle">{t.mutPanic}</text>
+
+		<text class="label" x="532" y="36" text-anchor="middle">{t.exitKicker}</text>
+		<text class="edge-sub" x="532" y="54" text-anchor="middle">{t.exitSub}</text>
+		<text class="name" x="532" y="108" text-anchor="middle">{t.refName}</text>
+		<text class="edge-sub" x="532" y="132" text-anchor="middle">{t.leave}</text>
+		<text class="code" x="532" y="156" text-anchor="middle">{t.refDelta}</text>
+		<text class="name" x="532" y="228" text-anchor="middle">{t.refMutName}</text>
+		<text class="edge-sub" x="532" y="252" text-anchor="middle">{t.leave}</text>
+		<text class="code" x="532" y="276" text-anchor="middle">{t.mutBack}</text>
+		<text class="edge-label" x="532" y="328" text-anchor="middle">{t.overlap}</text>
+		<text class="edge-label" x="532" y="410" text-anchor="middle">{t.panicTitle}</text>
+		<text class="edge-sub" x="532" y="436" text-anchor="middle">{t.panicRead}</text>
+		<text class="edge-sub" x="532" y="460" text-anchor="middle">{t.panicWrite}</text>
+		<text class="code" x="532" y="488" text-anchor="middle">{t.panicErr}</text>
+
+		<defs>
+			<marker id="rgl-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+			<marker id="rgl-head-muted" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line-muted)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

@@ -232,7 +232,9 @@ sum of list = 6
 现在，请翻回刚才的 `box-recursive.rs` 第 17 行，观察那行模式匹配代码：
 在 `List::Cons(val, next) => val + sum_list(next)` 中，`next` 的类型明明是 **`&Box<List>`**，而函数 `sum_list(list: &List)` 签名要求的参数类型却是 **`&List`**——为什么编译器允许我们把 `&Box<List>` 直接当成 `&List` 传进去？为什么拿着 `boxed_pt: Box<Point>` 可以直接写 `*boxed_pt` 解引用？
 
-下一节，我们就掀开支撑这一切的底层系统契约——**解引用的两层底座：内建 `*` 锚点与 `Deref` / `DerefMut` Trait**。
+下一节，我们就掀开支撑这一切的底层系统契约——**解引用的两层机制：内建 `*` 位置定位与 `Deref` / `DerefMut` Trait**。
+
+[继续：内建 * 与 Deref Trait →](/pointers/deref-mechanism/)
 
 ### 动手核对与小练习
 

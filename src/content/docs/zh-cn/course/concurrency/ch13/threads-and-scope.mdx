@@ -1,0 +1,253 @@
+---
+title: 创建线程与数据传递：thread::spawn、join、move 与 thread::scope
+description: 对比传统 OOP 语言的并发风险与 Rust 的编译期防线，从零建立「每个线程独占调用栈、共享同一个堆」的物理模型，掌握 thread::spawn 与 join 的基础用法，并打通 move 所有权转移与 thread::scope 局部借用两条数据传递路径。
+sidebar:
+  order: 1
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import ThreadMemoryModelDiagram from '../../../../../../components/diagrams/ThreadMemoryModelDiagram.astro';
+import threadsAndScopeSource from '../../../../../../../examples/concurrency/threads-and-concurrency/src/bin/threads-and-scope.rs?raw';
+
+在正式写下第一行多线程代码之前，我们先来做一次坦诚的心理建设。
+
+如果你之前写过 Java、Python、C# 或 Go，你一定会觉得在这些语言里启动一个线程、把外面的变量传进去是一件再轻松不过的事。比如在 Java 里：
+
+```java
+List<String> list = new ArrayList<>();
+list.add("init");
+// 随手启动一个新线程，直接读写外面的 list
+new Thread(() -> {
+    list.add("from child thread");
+}).start();
+// 主线程同时也在读写同一个 list
+list.add("from main thread");
+```
+
+这段 Java 代码编译起来没有任何阻碍，1 秒钟就能跑起来。但只要你把它放到高并发生产环境里，它就成了一颗随时引爆的定时炸弹：主线程和子线程在没有任何同步保护的情况下同时修改同一个 `ArrayList`，轻则数据丢失、数组越界报错，重则内部数组扩容时发生内存错乱。这种多线程并发 Bug 最让人头疼的地方在于：**编译期完全不报错，本地测试跑 999 次都正常，偏偏在线上大促的第 1000 次请求时诡异崩溃，且事后极难复现。**
+
+为什么 Java、Go 等语言允许你这么轻松地写出带有隐患的多线程代码，而当你来到 Rust 时，哪怕只是想往子线程里传一个最普通的变量，编译器都会立刻竖起层层关卡？
+
+答案就藏在我们在前两篇建立的底层内存模型里：
+1. **没有后台垃圾回收器（GC）兜底**：在 Java 或 Go 中，所有共享对象都扔在堆上由 GC 托管，只要子线程还拿着对象的引用，GC 就保证这块内存不会被回收（所以不会悬垂，但依然会发生数据竞争）；而在 Rust 中，变量随着所属栈帧的结束当场确定性释放——如果父线程的函数先退出了，子线程还在读父线程栈上的数据，就会直接酿成**跨线程悬垂指针**；
+2. **「共享不可变、可变不共享」规则向多线程的延伸**：Rust 的设计取舍是宁可在写代码的编译期把所有潜在的**数据竞争（Data Race）**和**悬垂引用**全部拦下来，也绝不让并发隐患溜进线上运行期。
+
+这也正是 Rust 官方提出**「无畏并发（Fearless Concurrency）」**这个说法的真实用意：
+很多初学者第一次听到这个词，会误以为是「写并发代码毫无阻碍」。恰恰相反，它的真正意思是——**在传统语言里写并发，是「写代码时畅通无阻，上线运行后整天提心吊胆（Fear）」；而在 Rust 里，编译器在编译期竖起了严格的安全护栏，虽然写代码时限制多了一点、需要先把所有权和生命周期交代清楚，但一旦代码通过编译，你在运行期和重构代码时就可以大可放心、毫无后顾之忧（Fearless）。**
+
+*(注：当然，我们要客观厘清编译器的能力边界——Rust 在编译期 100% 杜绝的是底层内存级别的「数据竞争」与「悬垂引用」；至于业务逻辑层面的「两把锁互相等待导致的死锁」或「任务执行先后顺序引发的逻辑竞态」，依然需要我们在工程设计上保持审慎。)*
+
+因此，当你在本章刚开始写 Rust 线程遇到编译器报错时，请不要觉得「Rust 的线程怎么这么麻烦」——**每一次编译报错，都是编译器在替你挡下一次在 C++ 或 Java 里需要熬夜排查三天的线上事故。**
+
+带着这份合理的预期，我们从零开始，一步步看清多线程在内存里到底是怎么跑的。
+
+---
+
+## 多线程的物理图景：独立的调用栈，共享的堆
+
+在前 12 章里，我们的程序只有一个 `main` 主线程。当时内存里只有**一个调用栈（Stack）**和**一个堆（Heap）**。
+
+当我们在程序里创建出多个操作系统线程（比如 1 个主线程 + 2 个子线程）时，物理内存的结构发生了一个极其关键的变化：
+
+- **每个线程都拥有自己完全独立的调用栈（Independent Stack）**：
+  主线程有主线程的栈，子线程 A 有子线程 A 的栈，子线程 B 有子线程 B 的栈。你在子线程 A 里声明的局部变量，住在子线程 A 自己的栈帧上，其他线程根本碰不到它；
+- **所有线程共享同一个堆内存（Shared Heap）**：
+  整个进程只有一块公共的堆内存。无论哪个线程在堆上分配了数据（如 `Vec`、`String`、`Box`），只要其他线程拿到了指向这块堆内存的地址，大家就能在同一个堆里访问它。
+
+<ThreadMemoryModelDiagram />
+
+- 记住**「栈各自独立，堆共同使用」**，接下来多线程里的所有规则都会变得清清楚楚。
+
+---
+
+## 如何启动一个线程，并等待它执行完毕？
+
+我们先不往子线程里传任何外部数据，先看怎么在 Rust 里启动一个最基础的线程。
+
+标准库在 `std::thread` 模块里提供了 **`thread::spawn`** 函数。你只需要传给它一个无参闭包 `|| { ... }`，操作系统就会立刻为你开辟一个新的子线程，并在新线程的独立栈上并行执行闭包里的代码：
+
+```rust
+use std::thread;
+
+fn main() {
+    thread::spawn(|| {
+        println!("你好，我是子线程");
+    });
+    println!("你好，我是主线程");
+}
+```
+
+但如果你运行上面这段代码，你会发现一个奇怪的现象：有时候控制台只打印了 `你好，我是主线程`，子线程那句话还没来得及打印，整个程序就直接结束了。
+
+原因很简单：**在操作系统里，一旦 `main` 主线程执行完最后一行代码退场，整个进程就会直接关闭，不管其他子线程是不是还在半路上。**
+
+如果我们希望主线程停下来，耐心地等子线程把活干完，甚至还要拿到子线程计算出的返回值，该怎么办？
+
+答案是接住 `thread::spawn` 返回的把手——**`JoinHandle<T>`**，并在需要汇合的地方调用它的 **`.join()`** 方法：
+
+<small class="code-source">源文件：<code>examples/concurrency/threads-and-concurrency/src/bin/threads-and-scope.rs</code></small>
+<Code
+  code={threadsAndScopeSource.split('// ANCHOR: basic_spawn\n')[1].split('\n    // ANCHOR_END: basic_spawn')[0]}
+  lang="rust"
+  title="用 thread::spawn 启动子线程，并用 handle.join() 等待结果"
+/>
+
+运行输出：
+
+```text
+[主线程] 已派发子线程，正在等待其汇合...
+[子线程] 计算完成，准备返回结果
+[主线程] 收到子线程计算结果: 15
+```
+
+这里有两个实用的细节：
+1. **`.join()` 的作用是「阻塞等待」**：当主线程执行到 `handle.join()` 时，如果子线程还没跑完，主线程就会原地暂停等待，直到子线程执行完毕退场；
+2. **为什么 `.join()` 返回的是 `Result<T, ...>`（需要 `.unwrap()`）？** 因为万一子线程在运行过程中触发了 `panic!` 崩溃，在 Rust 里子线程崩溃默认不会直接把主线程也炸掉，而是会把崩溃信息打包成 `Err` 通过 `handle.join()` 汇报给主线程，让主线程决定如何处理。
+
+---
+
+## 主线程想把数据交给子线程处理，为什么直接借用会报错？
+
+学会了启动和等待线程后，我们马上进入第一个真实业务场景：
+**主线程在栈上准备好了一个待处理的任务数组 `let task_batch = vec![10, 20, 30];`，想启动一个子线程去把它的总和算出来。**
+
+如果我们按第 9 章写普通闭包的习惯，直接让子线程闭包读取外面的 `task_batch`：
+
+```rust
+let task_batch = vec![10, 20, 30];
+
+// ❌ 编译报错 E0373: closure may outlive the current function,
+// but it borrows `task_batch`, which is owned by the current function
+let worker = thread::spawn(|| {
+    println!("{:?}", task_batch);
+});
+```
+
+编译器当场拦住了我们，报出 `error[E0373]: closure may outlive the current function`（闭包可能活得比当前函数更长，但它借用了归当前函数所有的 `task_batch`）。
+
+### 侦探诊断：为什么编译器死活不让子线程借用主线程的局部变量？
+
+回想我们在第 9 章 `9.2` 节学过的闭包捕获规则：当你写 `println!("{:?}", task_batch)` 时，因为打印只需要只读权限，闭包默认只会捕获一个指向主线程栈变量的**只读引用 `&task_batch`**。
+
+现在，用刚才建立的「多线程独立栈」模型推演一下：
+- `task_batch` 这个变量住在**当前函数（父线程）的栈帧**上；
+- 而 `thread::spawn` 启动的子线程是由操作系统独立调度的——编译器在检查 `thread::spawn` 这一行时，**根本无法保证父线程后面一定会老老实实调用 `worker.join()`**（比如你完全可以把 `worker` 扔掉不管，让父线程函数立刻 `return`）；
+- 一旦父线程的函数先 `return` 返回了，父线程的栈帧連同它持有的 `task_batch` 堆内存就会被**当场销毁释放**；此时还在后台运行的子线程顺着 `&task_batch` 去读内存，就会直接撞上**跨线程悬垂引用**。
+
+这就是为什么 `thread::spawn` 在函数签名上立下了一条铁规矩：传入的闭包必须满足我们在 `11.4` 节学过的 **`'static` 约束**——即**闭包内部绝不允许携带任何指向父线程局部栈变量的短暂借用**。
+
+既然直接借用会被拦下，我们怎么把 `task_batch` 安全地交给子线程？根据主线程后续是不是还要继续用这份数据，Rust 为我们提供了两条清晰的解决路径。
+
+---
+
+## 路径一：用 `move` 闭包把唯一所有权打包搬进子线程
+
+如果这份 `task_batch` 本来就是专门准备给这个子线程一个人处理的，主线程派发完任务后自己根本不再需要用它——那最干脆的办法就是：**别借用了，直接把 `task_batch` 的唯一所有权打包搬家（Move）到子线程自己的栈帧上去。**
+
+怎么做？只需在闭包参数 `||` 前面加上我们在第 9 章学过的 **`move` 关键字**（写成 `move || { ... }`）：
+
+<small class="code-source">源文件：<code>examples/concurrency/threads-and-concurrency/src/bin/threads-and-scope.rs</code></small>
+<Code
+  code={threadsAndScopeSource.split('// ANCHOR: move_spawn\n')[1].split('\n    // ANCHOR_END: move_spawn')[0]}
+  lang="rust"
+  title="用 move 关键字将主线程变量的所有权整体移入子线程"
+/>
+
+运行输出：
+
+```text
+[move 子线程] 独占接手批次数据: [10, 20, 30]
+[主线程] 批次汇总 = 60
+```
+
+加上 `move` 之后，整个物理过程变得极其干净：
+1. 在创建子线程的那一刻，`task_batch` 在栈上的 24 字节控制头（`ptr` / `len` / `cap`）直接按位移动到子线程闭包的结构体里，随子线程一起搬进了子线程自己的栈帧；
+2. 主线程里的原变量 `task_batch` 当场记为已移出失效（主线程再也不能碰它，从根源上杜绝了主线程和子线程同时访问它的可能）；
+3. 既然子线程自己成了 `task_batch` 的唯一主人，哪怕父线程函数提前退出了，这份数据也稳稳地活在子线程手里，直到子线程跑完离开作用域时由子线程亲自释放。
+
+---
+
+## 路径二：用作用域线程 `thread::scope` 零成本借用父线程栈变量
+
+`move` 闭包解决了「独占移交」的问题。但在实际工程里，你马上会遇到第二种高频场景：
+**主线程手里有一份很大的日志列表 `shared_logs`，我想同时启动两个子线程（子线程 A 统计总行数，子线程 B 统计告警数）并行去读它，而且等这两个子线程算完后，主线程自己还要接着用这份 `shared_logs`。**
+
+如果用刚才的 `move` 闭包，第一个子线程就把 `shared_logs` 移走了，第二个子线程和主线程全都用不了。
+
+这时候你可能会觉得委屈：**「编译器刚才之所以不让我直接借用 `&shared_logs`，不就是担心父线程不调 `join()` 先溜了吗？可是在我这个场景里，我 100% 确定父线程会乖乖站在原地等这两个子线程全都跑完再往下走啊，怎么向编译器证明这一点？」**
+
+为了解决这个限制，Rust 标准库提供了**作用域线程 `std::thread::scope`**。
+
+它的原理非常直观：你给 `thread::scope(|s| { ... })` 传入一个代码块，通过里面的参数 `s` 调用 `s.spawn(|| ...)` 启动子线程。**`thread::scope` 向编译器签下了一份死契约：在走出这个 `{ ... }` 代码块之前，标准库底层会自动帮我们把里面创建的所有子线程全部 `.join()` 等待完毕，一个都不许跑出这个大括号。**
+
+既然所有子线程都绝对不可能活过这个大括号，那么大括号外面的局部变量 `shared_logs` 就一定比所有子线程活得更长。于是，编译器立刻放宽了 `'static` 限制——**不用加 `move`，不用深拷贝 `.clone()`，也不用套任何智能指针，多个子线程可以直接零成本借用主线程栈上的 `&shared_logs`**：
+
+<small class="code-source">源文件：<code>examples/concurrency/threads-and-concurrency/src/bin/threads-and-scope.rs</code></small>
+<Code
+  code={threadsAndScopeSource.split('// ANCHOR: scoped_threads\n')[1].split('\n    // ANCHOR_END: scoped_threads')[0]}
+  lang="rust"
+  title="用 thread::scope 让多个子线程直接借用主线程局部变量"
+/>
+
+运行输出：
+
+```text
+[Scope 子线程 A] 日志总条数 = 3
+[Scope 子线程 B] 告警条数 = 1
+[主线程] Scope 结束后继续读取首条日志: INFO: server started
+```
+
+<Aside type="note" title="选读：thread::scope 是编译器开的后门特例，还是纯标准库实现？">
+你可能会好奇：编译器是怎么知道 `thread::scope` 会等所有子线程跑完、从而允许借用局部变量的？难道编译器专门为 `thread::scope` 开了特例后门吗？
+
+**完全没有特例，它是 100% 用第 11 章的生命周期参数写出来的纯标准库代码。**
+
+对比一下两者的函数签名就能看清奥秘：
+- 普通 `thread::spawn` 的签名写死了 **`F: 'static`**，所以任何携带局部借用的闭包都会被编译器拒之门外；
+- 而 `thread::scope` 引入了代表外部变量存活范围的生命周期参数 **`'env`**（如 `shared_logs` 的范围），并把内部 `s.spawn` 的签名约束写成了 **`F: 'env`**（只要闭包借用的变量活得比本次 `scope` 调用长即可）。
+
+至于底层实现，标准库在 `thread::scope` 函数体的最后一行用循环强制 `.join()` 阻塞等待所有子线程结束；正因为有了这条跑不掉的运行时汇合保证，标准库才敢在内部用极小范围的 `unsafe` 跨越操作系统线程接口，并对外暴露这个带着 `'env` 生命周期约束的安全签名。想深入了解其双生命周期签名源码与 2015 年 Rust 1.0 前夕著名的「内存泄漏危机（Leakpocalypse）」历史故事，请参阅[附录 B.7：`thread::scope` 底层揭秘](/appendix/mechanisms/scoped-threads/)。
+</Aside>
+
+### 工程裁决：审查 AI 生成的冗余并发代码
+
+在日常工程与审查 AI 生成的多线程代码时，`thread::scope` 是一把非常实用的重构标尺。
+
+由于大语言模型的训练语料中包含大量 Rust 1.63（2022 年推出 `thread::scope`）之前的历史代码，当你让 AI 编写「在当前函数内启动几个线程并行处理一份列表」时，AI 极易生成以下两类退化代码：
+1. **防御性深拷贝（`.clone()`）**：为了绕过 `thread::spawn` 的 `'static` 报错，在进入每个子线程前直接调用 `shared_logs.clone()` 把整份列表深拷贝好几份，然后再 `move` 进子线程，平白浪费成倍的堆内存与分配时间；
+2. **过度包装引用计数（`Arc` + 手动 `join`）**：大费周章地把局部变量装进下一节才要讲的 `Arc::new(shared_logs)`，在循环里克隆多份 `Arc` 移入 `thread::spawn`，最后还得手动维护一个 `Vec<JoinHandle>` 去逐个调用 `.join()`。
+
+在 Code Review 中遇到这类代码时，只需用一条准则裁决：**父线程是不是本来就要在当前位置等待这批子线程全部算完？**
+只要答案是肯定的（例如并行批处理、分片统计、并行文件解析），就应当果断要求将其重构为 **`std::thread::scope` 直接借用 `&shared_logs`**——既消除了深拷贝与堆引用计数成本，又由标准库自动兜底了所有子线程的汇合等待。
+
+---
+
+## 小结与新问题
+
+在这一节里，我们跨出了单线程温室，掌握了多线程的物理模型与两套数据传递工具：
+- 当数据只需交给单个子线程独占处理时，用 **`thread::spawn(move || ...)`** 转移所有权；
+- 当多个子线程在当前代码块内并行处理、且父线程原地等待它们全部汇合时，用 **`std::thread::scope`** 直接零成本借用局部变量。
+
+但现在，假设我们遇到了第三种场景：
+**我们要启动两个在后台常驻运行的监控子线程，主线程派发完它们之后必须立刻返回去干别的事（所以绝不能用 `thread::scope` 把主线程卡死在原地等待）；而这两个后台常驻线程又必须共同持有一份全局配置数据 `config`，直到最后一个线程退场时才释放。**
+
+听到「多个持有者共同持有一份数据、谁最后退场谁释放」，你一定会立刻掏出上一章 `12.1` 节刚学的单线程引用计数智能指针 **`Rc<T>`**。
+
+可当你信心满满地把 `Rc::clone(&config)` 塞进 `thread::spawn(move || ...)` 时，编译器却报出了一条全新的错误：`Rc<Config> cannot be sent between threads safely`。
+
+**为什么在单线程里好端端的 `Rc<T>`，一进多线程就会闯下大祸？** 下一节（`13.2`），我们就用慢镜头揭开并发编程头号杀手——「数据竞争」的物理真相，并请出 `Rc<T>` 的多线程孪生兄弟 **`Arc<T>`**。
+
+---
+
+### 附：本节完整可运行实验源码
+
+<details>
+<summary>点击展开完整源码（<code>examples/concurrency/threads-and-concurrency/src/bin/threads-and-scope.rs</code>）</summary>
+
+<Code
+  code={threadsAndScopeSource.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+  title="examples/concurrency/threads-and-concurrency/src/bin/threads-and-scope.rs"
+/>
+
+</details>

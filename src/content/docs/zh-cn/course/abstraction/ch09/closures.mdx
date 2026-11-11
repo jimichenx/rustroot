@@ -1,8 +1,8 @@
 ---
-title: "祛魅闭包：匿名捕获 struct 与 FnOnce / FnMut / Fn 三大 Trait"
+title: "闭包：捕获环境、匿名 struct 与 Fn 家族"
 description: 从闭包捕获外部变量的物理存储追问出发，看清编译器如何将每个闭包表达式自动合成为匿名 struct 类型实体，并由方法接收者三件套（&self / &mut self / self）推导出 Fn、FnMut、FnOnce 与捕获方式的正交选型规则。
 sidebar:
-  label: 闭包：匿名 struct 与 Fn 家族
+  label: 闭包与 Fn 家族
   order: 2
 ---
 

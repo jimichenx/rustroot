@@ -1,8 +1,8 @@
 ---
-title: "剥开 for 循环语法糖：IntoIterator、Iterator 与遍历三件套"
+title: "for 循环与迭代器：IntoIterator 与遍历三件套"
 description: 从 for 循环的基础语法与初学者的三大困惑出发，认识标准库 IntoIterator 与 Iterator 契约，看清极小语言内核如何靠 4 行机械展开与三个独立类型打通遍历三件套。
 sidebar:
-  label: for 循环与迭代器三件套
+  label: for 循环与迭代器
   order: 1
 ---
 
@@ -366,7 +366,7 @@ after loop: [1, 2, 3, 4]
 
 那个用两条竖线写出来的 `|x| ...` 到底是什么类型？为什么编译器又为它准备了 `FnOnce`、`FnMut`、`Fn` 三个不同的 Trait？下一节，我们用同样的第一性原理视角，把闭包的语法糖外壳也彻底剥开。
 
-[继续：祛魅闭包 · 匿名捕获 struct 与 Fn 家族 →](/abstraction/closures/)
+[继续：闭包 · 捕获环境、匿名 struct 与 Fn 家族 →](/abstraction/closures/)
 
 ### 动手核对与小练习
 

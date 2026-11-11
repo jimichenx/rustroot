@@ -1,0 +1,135 @@
+---
+/**
+ * 11.3「结构体 KvView<'a> 的参数穿透与依附关系」。
+ * 左栏：定义蓝图时字段 &'a str 还没有具体范围，空缺向上穿透，结构体声明为构造器 struct KvView<'a>。
+ * 右栏：实例化时把 config_line: String 的范围填进 'a，view 的存活上限落在这份源数据之内。
+ * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	lang?: 'zh' | 'en';
+}
+
+const copy = {
+	zh: {
+		caption:
+			"定义蓝图时字段 &'a str 没有具体范围，空缺向上穿透，结构体必须写成构造器 KvView<'a>；实例化时填入 config_line 的范围，view 的存活上限依附于这份源数据。",
+		title: "KvView<'a> 把字段缺的范围收到构造器上，实例再依附源数据",
+		desc: "左栏是定义蓝图。字段写成 key: &'a str 与 value: &'a str，此时还没有具体范围可以填。这个空缺沿箭头向上穿透，结构体不能裸写成 KvView，必须声明为构造器 struct KvView<'a>。右栏是实例化。外框是源数据 config_line: String 的具体范围，箭头把这份范围填进 'a。内框是 view 实例 KvView<'a>，它落在外框里面：view 的存活上限严格依附 config_line，不能活过这份源数据。",
+		defKicker: '① 定义蓝图',
+		defSub: '还没有具体字符串可借用',
+		ctorHint: '穿透之后的构造器',
+		ctorCode: "struct KvView<'a>",
+		ctorRole: '范围参数写在名字上',
+		riseLabel: '向上穿透',
+		fieldKicker: '字段还缺具体范围',
+		fieldKey: "key: &'a str",
+		fieldValue: "value: &'a str",
+		fieldGap: '定义时没有具体范围',
+		fieldParam: "'a 只是待填的形参名",
+		foot1: '此时 KvView 还不是完整类型',
+		foot2: "必须先声明成构造器 KvView<'a>",
+		useKicker: '② 实例化',
+		useSub: "把 config_line 的范围填进 'a",
+		srcKicker: '源数据的范围',
+		srcCode: 'config_line: String',
+		srcHint: '外部变量的具体范围',
+		fillLabel: "填入 'a",
+		viewKicker: 'view 实例',
+		viewCode: "KvView<'a>",
+		viewFrom: "'a 取自 config_line",
+		viewCap: '存活上限在源数据内',
+		tieKicker: '依附关系',
+		tieLimit: '不能活过 config_line',
+	},
+	en: {
+		caption:
+			"In the blueprint, &'a str has no concrete scope, so the gap rises and the struct must be declared as the constructor KvView<'a>. At the use site, config_line's scope fills 'a, and view cannot outlive that source.",
+		title: "KvView<'a> lifts the missing field scope onto the struct; the value stays inside its source",
+		desc: "The left panel is the blueprint. The fields are key: &'a str and value: &'a str, and no concrete scope exists yet to fill them. That gap rises along the arrow, so the struct cannot be a bare KvView; it has to be declared as the constructor struct KvView<'a>. The right panel is instantiation. The outer block is the concrete scope of the source config_line: String, and the arrow fills that scope into 'a. The inner block is the view value, KvView<'a>, drawn inside the outer block: its lifetime is capped by config_line and cannot outlive that source.",
+		defKicker: '① blueprint',
+		defSub: 'no string has been borrowed yet',
+		ctorHint: 'constructor after the rise',
+		ctorCode: "struct KvView<'a>",
+		ctorRole: 'scope sits on the name',
+		riseLabel: 'penetrates',
+		fieldKicker: 'fields still lack a scope',
+		fieldKey: "key: &'a str",
+		fieldValue: "value: &'a str",
+		fieldGap: 'no concrete scope yet',
+		fieldParam: "'a names the open slot",
+		foot1: 'KvView is not a full type yet',
+		foot2: "KvView<'a> is that constructor",
+		useKicker: '② use site',
+		useSub: "fill 'a from config_line's scope",
+		srcKicker: 'scope of the source',
+		srcCode: 'config_line: String',
+		srcHint: "this variable's own scope",
+		fillLabel: "fills 'a",
+		viewKicker: 'the view value',
+		viewCode: "KvView<'a>",
+		viewFrom: "'a from config_line",
+		viewCap: 'stays inside the source',
+		tieKicker: 'attachment',
+		tieLimit: 'cannot outlive config_line',
+	},
+} as const;
+
+const { lang } = Astro.props;
+const locale = lang ?? (SITE_LOCALE === 'en' ? 'en' : 'zh');
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 564" role="img" aria-labelledby="lsv-title lsv-desc">
+		<title id="lsv-title">{t.title}</title>
+		<desc id="lsv-desc">{t.desc}</desc>
+
+		{/* 框在下，箭头居中，文字最后画，避免笔画压住标签 */}
+		<rect class="panel" x="16" y="16" width="300" height="532" rx="10"></rect>
+		<rect class="object" x="36" y="92" width="260" height="120" rx="6"></rect>
+		<rect class="slot" x="36" y="276" width="260" height="180" rx="6"></rect>
+
+		<rect class="panel" x="332" y="16" width="292" height="532" rx="10"></rect>
+		<rect class="object" x="348" y="96" width="260" height="424" rx="10"></rect>
+		<rect class="slot" x="368" y="268" width="220" height="160" rx="6"></rect>
+
+		<path class="arrow" d="M 166 264 V 220" marker-end="url(#lsv-head)"></path>
+		<path class="arrow" d="M 478 204 V 252" marker-end="url(#lsv-head)"></path>
+
+		<text class="edge-label" x="36" y="44">{t.defKicker}</text>
+		<text class="edge-sub" x="36" y="66">{t.defSub}</text>
+		<text class="edge-sub" x="166" y="122" text-anchor="middle">{t.ctorHint}</text>
+		<text class="code" x="166" y="154" text-anchor="middle">{t.ctorCode}</text>
+		<text class="edge-label" x="166" y="186" text-anchor="middle">{t.ctorRole}</text>
+		<text class="edge-label" x="182" y="248">{t.riseLabel}</text>
+		<text class="edge-label" x="166" y="306" text-anchor="middle">{t.fieldKicker}</text>
+		<text class="code" x="166" y="336" text-anchor="middle">{t.fieldKey}</text>
+		<text class="code" x="166" y="364" text-anchor="middle">{t.fieldValue}</text>
+		<text class="edge-sub" x="166" y="394" text-anchor="middle">{t.fieldGap}</text>
+		<text class="edge-sub" x="166" y="422" text-anchor="middle">{t.fieldParam}</text>
+		<text class="edge-sub" x="36" y="488">{t.foot1}</text>
+		<text class="edge-sub" x="36" y="516">{t.foot2}</text>
+
+		<text class="edge-label" x="348" y="44">{t.useKicker}</text>
+		<text class="edge-sub" x="348" y="66">{t.useSub}</text>
+		<text class="edge-label" x="478" y="128" text-anchor="middle">{t.srcKicker}</text>
+		<text class="code" x="478" y="158" text-anchor="middle">{t.srcCode}</text>
+		<text class="edge-sub" x="478" y="184" text-anchor="middle">{t.srcHint}</text>
+		<text class="edge-label" x="494" y="232">{t.fillLabel}</text>
+		<text class="edge-label" x="478" y="300" text-anchor="middle">{t.viewKicker}</text>
+		<text class="code" x="478" y="332" text-anchor="middle">{t.viewCode}</text>
+		<text class="edge-sub" x="478" y="360" text-anchor="middle">{t.viewFrom}</text>
+		<text class="edge-sub" x="478" y="388" text-anchor="middle">{t.viewCap}</text>
+		<text class="edge-label" x="478" y="468" text-anchor="middle">{t.tieKicker}</text>
+		<text class="edge-sub" x="478" y="494" text-anchor="middle">{t.tieLimit}</text>
+
+		<defs>
+			<marker id="lsv-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

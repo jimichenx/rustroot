@@ -1,0 +1,206 @@
+---
+/**
+ * 10.5「Drop 释放顺序与 std::mem::drop 全景」。
+ * 左栏：s1.drop() 被 E0040 封死；drop(s1) 按值移进空函数，
+ * 原绑定标成已移走，形参 _x 在 {} 处做唯一一次清理。
+ * 右栏：块末尾先释放 s3 再释放 s2；Session 先跑 drop 钩子，
+ * 再由 Drop Glue 按定义顺序释放 first_field、second_field。
+ * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	lang?: 'zh' | 'en';
+}
+
+const copy = {
+	zh: {
+		caption:
+			'drop(s1) 把值移进空函数，只在那个 {} 里清理一次；块末尾先释放 s3 再释放 s2，每个 Session 先执行自己的 drop，再按字段顺序释放字段。',
+		title: '提前释放 drop(s1)，以及作用域末尾的两级顺序',
+		desc: '左栏有两条路。直接写 s1.drop() 只拿到 &mut self，并不移走所有权，作用域末尾还会再释放一次，编译器以 E0040 拒绝。正确的 drop(s1) 把值按值移入空函数 pub fn drop<T>(_x: T) {}：原绑定 s1 标记为已移走，末尾不再清理；形参 _x 在空函数结束的 {} 处做唯一一次清理。右栏是块末尾 } 的两级顺序。局部变量后进先出，先释放 s3 再释放 s2，已经移走的 s1 跳过，这样后声明、可能还借着先声明变量的那个绑定会先消失。每个 Session 先调用 Session::drop(&mut self)，再由 Drop Glue 按定义顺序释放 first_field，然后 second_field。',
+		leftTitle: '提前释放',
+		leftSub: 'std::mem::drop(s1)',
+		banKicker: '禁止直接调用',
+		banCode: 's1.drop()',
+		banWhy: '&mut self 并不移走所有权',
+		banTwice: '末尾还会再释放一次',
+		banErr: 'error[E0040]',
+		okKicker: '正确写法',
+		okCode: 'drop(s1)',
+		okHint: '把 s1 按值交出去',
+		arrowLabel: '按值 Move',
+		fnCode: 'pub fn drop<T>(_x: T) {}',
+		fnHint: '标准库里的空函数',
+		movedName: 's1',
+		movedState: '已移走',
+		movedHint: '末尾不再清理',
+		paramName: '_x',
+		paramState: '{} 结束',
+		paramHint: '唯一一次清理',
+		foot: 's1 已失效，只有 _x 在 {} 里清理',
+		rightTitle: '作用域末尾 }',
+		rightSub: '局部变量逆序，字段正序',
+		lifoKicker: '局部变量 · LIFO 逆序',
+		lifoSub: '声明越晚，释放越早',
+		decl: 'let s1; let s2; let s3;',
+		s3name: 's3',
+		s3ord: '① 先释放',
+		s2name: 's2',
+		s2ord: '② 接着释放',
+		s1name: 's1',
+		s1ord: '已移走，跳过',
+		why: '先放掉可能还借着前面变量的后来者',
+		structKicker: 'Session 内部',
+		structSub: '先跑 drop，再按字段往下释放',
+		p1k: '阶段 1 · 前置钩子',
+		p1code: 'Session::drop(&mut self)',
+		p1hint: '这时字段都还在',
+		p2k: '阶段 2 · Drop Glue',
+		p2sub: '按定义从上往下',
+		f1: '1. first_field',
+		f2: '2. second_field',
+	},
+	en: {
+		caption:
+			'drop(s1) moves the value into an empty function and drops it once inside {}; at the block end, s3 drops before s2, and each Session runs its drop hook before its fields, in definition order.',
+		title: 'Early drop(s1), and the two orders at scope end',
+		desc: 'Left side, two paths. Writing s1.drop() only gets &mut self and does not move the value, so the scope end would drop it again; the compiler rejects that with E0040. The working call drop(s1) moves the value into the empty function pub fn drop<T>(_x: T) {}. The original binding s1 is marked moved and is not dropped at the outer end. The parameter _x is dropped once, at the closing brace of that empty function. Right side, two orders at the block’s closing brace. Locals are last in, first out: s3 drops before s2, and s1 is skipped because it was already moved. That way a later binding, which may still borrow an earlier one, is gone first. Each Session first runs Session::drop(&mut self), then Drop Glue drops first_field and then second_field, in definition order.',
+		leftTitle: 'early drop',
+		leftSub: 'std::mem::drop(s1)',
+		banKicker: 'do not call this',
+		banCode: 's1.drop()',
+		banWhy: '&mut self does not move it',
+		banTwice: 'scope end drops it again',
+		banErr: 'error[E0040]',
+		okKicker: 'the call that works',
+		okCode: 'drop(s1)',
+		okHint: 'hands s1 off by value',
+		arrowLabel: 'by value',
+		fnCode: 'pub fn drop<T>(_x: T) {}',
+		fnHint: 'empty, in the standard library',
+		movedName: 's1',
+		movedState: 'moved out',
+		movedHint: 'skipped later',
+		paramName: '_x',
+		paramState: 'end of {}',
+		paramHint: 'only this once',
+		foot: 's1 is gone; only _x drops in {}',
+		rightTitle: 'at scope end }',
+		rightSub: 'locals reversed, fields in order',
+		lifoKicker: 'locals · LIFO, last first',
+		lifoSub: 'later let drops sooner',
+		decl: 'let s1; let s2; let s3;',
+		s3name: 's3',
+		s3ord: '① first',
+		s2name: 's2',
+		s2ord: '② next',
+		s1name: 's1',
+		s1ord: 'moved, skip',
+		why: 'so a later borrow cannot dangle',
+		structKicker: 'inside Session',
+		structSub: 'hook first, then fields downward',
+		p1k: 'phase 1 · your hook',
+		p1code: 'Session::drop(&mut self)',
+		p1hint: 'fields are still intact',
+		p2k: 'phase 2 · Drop Glue',
+		p2sub: 'definition order, downward',
+		f1: '1. first_field',
+		f2: '2. second_field',
+	},
+} as const;
+
+const { lang } = Astro.props;
+const locale = lang ?? (SITE_LOCALE === 'en' ? 'en' : 'zh');
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 748" role="img" aria-labelledby="dod-title dod-desc">
+		<title id="dod-title">{t.title}</title>
+		<desc id="dod-desc">{t.desc}</desc>
+
+		{/* 框在下，箭头居中，文字最后画，避免笔画压住标签 */}
+		<rect class="panel" x="8" y="8" width="308" height="732" rx="10"></rect>
+		<rect class="freed" x="20" y="74" width="284" height="160" rx="8"></rect>
+		<rect class="slot" x="20" y="274" width="284" height="70" rx="6"></rect>
+		<rect class="object" x="20" y="380" width="284" height="72" rx="6"></rect>
+		<rect class="freed" x="20" y="528" width="136" height="132" rx="6"></rect>
+		<rect class="slot" x="168" y="528" width="136" height="132" rx="6"></rect>
+
+		<rect class="panel" x="324" y="8" width="308" height="732" rx="10"></rect>
+		<rect class="slot" x="336" y="146" width="284" height="52" rx="6"></rect>
+		<rect class="slot" x="336" y="226" width="284" height="52" rx="6"></rect>
+		<rect class="freed" x="336" y="306" width="284" height="52" rx="6"></rect>
+		<rect class="panel" x="336" y="396" width="284" height="332" rx="8"></rect>
+		<rect class="slot" x="348" y="454" width="260" height="76" rx="6"></rect>
+		<rect class="panel" x="348" y="558" width="260" height="158" rx="6"></rect>
+		<rect class="slot" x="360" y="608" width="236" height="30" rx="4"></rect>
+		<rect class="slot" x="360" y="674" width="236" height="30" rx="4"></rect>
+
+		<path class="arrow" d="M 162 350 V 374" marker-end="url(#dod-head)"></path>
+		<path class="arrow" d="M 162 458 V 488"></path>
+		<path class="arrow danger" d="M 162 488 H 88 V 522" marker-end="url(#dod-head-muted)"></path>
+		<path class="arrow" d="M 162 488 H 236 V 522" marker-end="url(#dod-head)"></path>
+
+		<path class="arrow" d="M 478 204 V 220" marker-end="url(#dod-head)"></path>
+		<path class="arrow danger" d="M 478 284 V 300" marker-end="url(#dod-head-muted)"></path>
+		<path class="arrow" d="M 478 536 V 552" marker-end="url(#dod-head)"></path>
+		<path class="arrow" d="M 478 644 V 668" marker-end="url(#dod-head)"></path>
+
+		{/* 左栏：提前 drop。上面那条路不移走所有权，下面才是唯一一次清理 */}
+		<text class="edge-label" x="162" y="36" text-anchor="middle">{t.leftTitle}</text>
+		<text class="node-en" x="162" y="56" text-anchor="middle">{t.leftSub}</text>
+		<text class="edge-label" x="162" y="104" text-anchor="middle">{t.banKicker}</text>
+		<text class="code" x="162" y="130" text-anchor="middle">{t.banCode}</text>
+		<text class="edge-sub" x="162" y="156" text-anchor="middle">{t.banWhy}</text>
+		<text class="edge-sub" x="162" y="182" text-anchor="middle">{t.banTwice}</text>
+		<text class="code" x="162" y="208" text-anchor="middle">{t.banErr}</text>
+		<text class="edge-label" x="162" y="262" text-anchor="middle">{t.okKicker}</text>
+		<text class="code" x="162" y="302" text-anchor="middle">{t.okCode}</text>
+		<text class="edge-sub" x="162" y="328" text-anchor="middle">{t.okHint}</text>
+		<text class="edge-label" x="178" y="364" text-anchor="start">{t.arrowLabel}</text>
+		<text class="code" x="162" y="410" text-anchor="middle">{t.fnCode}</text>
+		<text class="edge-sub" x="162" y="434" text-anchor="middle">{t.fnHint}</text>
+		<text class="name" x="88" y="574" text-anchor="middle">{t.movedName}</text>
+		<text class="edge-label" x="88" y="602" text-anchor="middle">{t.movedState}</text>
+		<text class="edge-sub" x="88" y="630" text-anchor="middle">{t.movedHint}</text>
+		<text class="name" x="236" y="574" text-anchor="middle">{t.paramName}</text>
+		<text class="edge-label" x="236" y="602" text-anchor="middle">{t.paramState}</text>
+		<text class="edge-sub" x="236" y="630" text-anchor="middle">{t.paramHint}</text>
+		<text class="edge-sub" x="162" y="708" text-anchor="middle">{t.foot}</text>
+
+		{/* 右栏：块末尾先放局部变量，再放大每一个 Session */}
+		<text class="edge-label" x="478" y="36" text-anchor="middle">{t.rightTitle}</text>
+		<text class="node-en" x="478" y="56" text-anchor="middle">{t.rightSub}</text>
+		<text class="edge-label" x="478" y="86" text-anchor="middle">{t.lifoKicker}</text>
+		<text class="edge-sub" x="478" y="106" text-anchor="middle">{t.lifoSub}</text>
+		<text class="code" x="478" y="132" text-anchor="middle">{t.decl}</text>
+		<text class="code" x="478" y="166" text-anchor="middle">{t.s3name}</text>
+		<text class="edge-sub" x="478" y="186" text-anchor="middle">{t.s3ord}</text>
+		<text class="code" x="478" y="246" text-anchor="middle">{t.s2name}</text>
+		<text class="edge-sub" x="478" y="266" text-anchor="middle">{t.s2ord}</text>
+		<text class="code" x="478" y="326" text-anchor="middle">{t.s1name}</text>
+		<text class="edge-sub" x="478" y="346" text-anchor="middle">{t.s1ord}</text>
+		<text class="edge-sub" x="478" y="380" text-anchor="middle">{t.why}</text>
+		<text class="edge-label" x="478" y="420" text-anchor="middle">{t.structKicker}</text>
+		<text class="edge-sub" x="478" y="440" text-anchor="middle">{t.structSub}</text>
+		<text class="edge-label" x="478" y="476" text-anchor="middle">{t.p1k}</text>
+		<text class="code" x="478" y="500" text-anchor="middle">{t.p1code}</text>
+		<text class="edge-sub" x="478" y="520" text-anchor="middle">{t.p1hint}</text>
+		<text class="edge-label" x="478" y="578" text-anchor="middle">{t.p2k}</text>
+		<text class="edge-sub" x="478" y="596" text-anchor="middle">{t.p2sub}</text>
+		<text class="code" x="478" y="628" text-anchor="middle">{t.f1}</text>
+		<text class="code" x="478" y="694" text-anchor="middle">{t.f2}</text>
+
+		<defs>
+			<marker id="dod-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+			<marker id="dod-head-muted" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line-muted)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

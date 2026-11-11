@@ -5,6 +5,12 @@ import type { APIRoute } from 'astro';
  * Starlight 在设置了 `site` 时会自动生成 sitemap-index.xml。
  */
 export const GET: APIRoute = ({ site }) => {
+	if (site?.hostname === 'preview.rustroot.cn') {
+		const body = ['User-agent: *', 'Disallow: /', ''].join('\n');
+		return new Response(body, {
+			headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+		});
+	}
 	const sitemapURL = new URL('sitemap-index.xml', site);
 	const body = ['User-agent: *', 'Allow: /', '', `Sitemap: ${sitemapURL.href}`, ''].join('\n');
 	return new Response(body, {

@@ -43,6 +43,10 @@ name = "lifetime-parameters"
 version = "0.1.0"
 
 [[package]]
+name = "lifetimes"
+version = "0.1.0"
+
+[[package]]
 name = "methods"
 version = "0.1.0"
 
@@ -79,6 +83,10 @@ name = "result-and-panic"
 version = "0.1.0"
 
 [[package]]
+name = "shared-mutability"
+version = "0.1.0"
+
+[[package]]
 name = "slices"
 version = "0.1.0"
 
@@ -88,6 +96,10 @@ version = "0.1.0"
 
 [[package]]
 name = "sum-types"
+version = "0.1.0"
+
+[[package]]
+name = "threads-and-concurrency"
 version = "0.1.0"
 
 [[package]]

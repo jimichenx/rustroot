@@ -1,0 +1,142 @@
+---
+/**
+ * 11.5「Copy 并存 vs 重借用的时间嵌套」。
+ * 上栏：若 &mut T 允许 Copy，r1 与 r2 在同一时段并行可写，独占性被破坏。
+ * 下栏：重借用 &mut *r1 只在第 8 行切出一小段交给 target，其间 r1 冻结，调用结束即恢复。
+ * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	lang?: 'zh' | 'en';
+}
+
+const copy = {
+	zh: {
+		caption:
+			'如果 &mut T 允许 Copy，r1 与 r2 会在同一时段一起可写，独占性被破坏。重借用 &mut *r1 只把第 8 行这一小段交给形参 target，这段时间 r1 冻结，这一行结束 r1 就恢复。',
+		title: 'Copy 会让两份可变引用并行活着；重借用只在子范围内临时接手',
+		desc: '上栏假设 &mut T 允许 Copy：r1 与 r2 的可写区间都盖住第 6 行到第 10 行，同一时段有两份可变引用。下栏是重借用 &mut *r1：r1 的范围仍是 [6..10]，只在第 8 行切出一小段交给形参 target，这段时间 r1 冻结；第 8 行结束，target 消失，r1 恢复可写。',
+		topKicker: '① 若 &mut T 允许 Copy',
+		topSub: '复制出来的第二份会和原来的引用同时可写',
+		r1: 'r1',
+		r2: 'r2',
+		writable: '可写',
+		conflict: '同一时段并行，独占性被破坏',
+		botKicker: '② 重借用 &mut *r1',
+		botSub: 'r1 的范围是 [6..10]，只把第 8 行借给 target',
+		t6: '6',
+		t7: '7',
+		t8: '8',
+		t9: '9',
+		t10: '10',
+		live: '活跃',
+		frozen: '冻结',
+		back: '恢复',
+		lend: '临时借出',
+		param: '形参',
+		target: 'target',
+		targetSub: '只在第 8 行',
+		foot: '第 8 行只有 target 可写；这一行结束，r1 恢复',
+	},
+	en: {
+		caption:
+			'If &mut T were Copy, r1 and r2 would both be writable over the same stretch, and exclusivity would fail. Reborrowing &mut *r1 lends only line 8 to the parameter target; r1 stays frozen there, then becomes writable again.',
+		title: 'Copy would keep two mutable references live; a reborrow lends only a nested span',
+		desc: 'Top: if &mut T allowed Copy, both r1 and r2 would stay writable from line 6 through line 10, so two mutable references would be live together. Bottom: the reborrow &mut *r1 keeps r1’s range as [6..10] and lends only line 8 to the parameter target. r1 is frozen for that line. When line 8 ends, target is gone and r1 can write again.',
+		topKicker: '① if &mut T were Copy',
+		topSub: 'the copied reference would stay writable too',
+		r1: 'r1',
+		r2: 'r2',
+		writable: 'writable',
+		conflict: 'both live at once; exclusivity breaks',
+		botKicker: '② reborrow &mut *r1',
+		botSub: 'r1 spans [6..10]; only line 8 goes to target',
+		t6: '6',
+		t7: '7',
+		t8: '8',
+		t9: '9',
+		t10: '10',
+		live: 'live',
+		frozen: 'frozen',
+		back: 'back',
+		lend: 'lends',
+		param: 'param',
+		target: 'target',
+		targetSub: 'line 8 only',
+		foot: 'On line 8 only target writes. After that line, r1 is live again.',
+	},
+} as const;
+
+const { lang } = Astro.props;
+const locale = lang ?? (SITE_LOCALE === 'en' ? 'en' : 'zh');
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 720" role="img" aria-labelledby="rb-title rb-desc">
+		<title id="rb-title">{t.title}</title>
+		<desc id="rb-desc">{t.desc}</desc>
+
+		<rect class="panel" x="12" y="12" width="616" height="312" rx="10"></rect>
+		<rect class="object" x="160" y="128" width="432" height="52" rx="6"></rect>
+		<rect class="object" x="160" y="248" width="432" height="52" rx="6"></rect>
+
+		<rect class="panel" x="12" y="340" width="616" height="364" rx="10"></rect>
+		<rect class="slot" x="160" y="460" width="164" height="48" rx="6"></rect>
+		<rect class="freed" x="332" y="460" width="88" height="48" rx="6"></rect>
+		<rect class="slot" x="428" y="460" width="164" height="48" rx="6"></rect>
+		<rect class="object" x="292" y="564" width="168" height="68" rx="6"></rect>
+
+		<path class="edge" d="M 160 108 H 592"></path>
+		<path class="edge" d="M 160 104 V 112"></path>
+		<path class="edge" d="M 268 104 V 112"></path>
+		<path class="edge" d="M 376 104 V 112"></path>
+		<path class="edge" d="M 484 104 V 112"></path>
+		<path class="edge" d="M 592 104 V 112"></path>
+		<path class="edge" d="M 160 436 H 592"></path>
+		<path class="edge" d="M 160 432 V 440"></path>
+		<path class="edge" d="M 268 432 V 440"></path>
+		<path class="edge" d="M 376 432 V 440"></path>
+		<path class="edge" d="M 484 432 V 440"></path>
+		<path class="edge" d="M 592 432 V 440"></path>
+		<path class="arrow" d="M 376 508 V 564" marker-end="url(#rb-head)"></path>
+
+		<text class="edge-label" x="28" y="40">{t.topKicker}</text>
+		<text class="edge-sub" x="28" y="60">{t.topSub}</text>
+		<text class="edge-sub" x="160" y="92" text-anchor="middle">{t.t6}</text>
+		<text class="edge-sub" x="268" y="92" text-anchor="middle">{t.t7}</text>
+		<text class="edge-sub" x="376" y="92" text-anchor="middle">{t.t8}</text>
+		<text class="edge-sub" x="484" y="92" text-anchor="middle">{t.t9}</text>
+		<text class="edge-sub" x="592" y="92" text-anchor="middle">{t.t10}</text>
+		<text class="code" x="88" y="160" text-anchor="middle">{t.r1}</text>
+		<text class="name" x="376" y="160" text-anchor="middle">{t.writable}</text>
+		<text class="edge-label" x="376" y="220" text-anchor="middle">{t.conflict}</text>
+		<text class="code" x="88" y="280" text-anchor="middle">{t.r2}</text>
+		<text class="name" x="376" y="280" text-anchor="middle">{t.writable}</text>
+
+		<text class="edge-label" x="28" y="368">{t.botKicker}</text>
+		<text class="edge-sub" x="28" y="388">{t.botSub}</text>
+		<text class="edge-sub" x="160" y="420" text-anchor="middle">{t.t6}</text>
+		<text class="edge-sub" x="268" y="420" text-anchor="middle">{t.t7}</text>
+		<text class="edge-sub" x="376" y="420" text-anchor="middle">{t.t8}</text>
+		<text class="edge-sub" x="484" y="420" text-anchor="middle">{t.t9}</text>
+		<text class="edge-sub" x="592" y="420" text-anchor="middle">{t.t10}</text>
+		<text class="code" x="88" y="490" text-anchor="middle">{t.r1}</text>
+		<text class="name" x="242" y="490" text-anchor="middle">{t.live}</text>
+		<text class="edge-label" x="376" y="490" text-anchor="middle">{t.frozen}</text>
+		<text class="name" x="510" y="490" text-anchor="middle">{t.back}</text>
+		<text class="edge-label" x="392" y="542">{t.lend}</text>
+		<text class="edge-sub" x="88" y="604" text-anchor="middle">{t.param}</text>
+		<text class="code" x="376" y="594" text-anchor="middle">{t.target}</text>
+		<text class="edge-sub" x="376" y="616" text-anchor="middle">{t.targetSub}</text>
+		<text class="edge-label" x="28" y="676">{t.foot}</text>
+
+		<defs>
+			<marker id="rb-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

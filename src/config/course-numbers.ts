@@ -1,4 +1,5 @@
 import { loadCourse, type LessonNode } from './course-slugs';
+import { isPublished } from './release';
 
 // 篇、章、课的标题和侧栏标签不在源文件里写编号。
 // 章号来自 chNN。课号是「章号.章内序号」，序号按 sidebar.order 排好后从 1 起，草稿也占号。
@@ -80,7 +81,7 @@ export function chapterLessonLinks(
 		for (const chapter of part.chapters) {
 			if (chapter.entry !== chapterEntry) continue;
 			return [...chapter.lessons].sort(compareLessons).flatMap((lesson) => {
-				if (!showDrafts && lesson.draft) return [];
+				if ((!showDrafts && lesson.draft) || !isPublished(lesson.slug)) return [];
 				const label = headings.get(lesson.entry)?.(lesson.title) ?? lesson.title;
 				return [{ href: `/${lesson.slug}/`, label }];
 			});

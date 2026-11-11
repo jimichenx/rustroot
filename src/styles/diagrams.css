@@ -789,6 +789,165 @@
 	opacity: 1;
 }
 
+/* ---------- 12.1 strong 加减过程 ----------
+   同一张图上换状态，不把六步叠成六张。
+   关掉 JS：终态（第 6 步）直接可见——三根指针都已离开，strong 为 0，堆块虚线。
+   武装后全部熄灭，再按 figure[data-step] 点亮当前这一拍。
+   .rc-only-n 可以叠在同一个元素上（例如数字 1 同时属于第 1 步和第 5 步）。 */
+
+.diagram.rc-count-figure .rc-phase,
+.diagram.rc-count-figure .rc-only {
+	opacity: 0;
+	transition: opacity 0.35s ease;
+}
+
+.diagram.rc-count-figure .rc-late,
+.diagram.rc-count-figure .rc-only-6 {
+	opacity: 1;
+}
+
+.diagram.rc-count-figure.is-armed .rc-phase,
+.diagram.rc-count-figure.is-armed .rc-only {
+	opacity: 0;
+}
+
+.diagram.rc-count-figure .rc-num {
+	font-family: var(--sl-font-mono, ui-monospace, SFMono-Regular, monospace);
+	font-size: 44px;
+	font-weight: 600;
+	fill: var(--dg-text);
+}
+
+.diagram.rc-count-figure .rc-trail {
+	font-family: var(--sl-font-mono, ui-monospace, SFMono-Regular, monospace);
+	font-size: 13px;
+}
+
+.diagram.rc-count-figure.is-resetting :is(.rc-phase, .rc-only) {
+	transition: none;
+}
+
+/* 第 0 步：三只空位，堆上还没有 RcBox */
+.diagram.rc-count-figure.is-armed[data-step='0'] .rc-shared-early,
+
+/* shared_node：1–5 活着，6 离开 */
+.diagram.rc-count-figure.is-armed:is(
+	[data-step='1'],
+	[data-step='2'],
+	[data-step='3'],
+	[data-step='4'],
+	[data-step='5']
+) .rc-shared-live,
+.diagram.rc-count-figure.is-armed[data-step='6'] .rc-shared-late,
+
+/* node_a：0–1 空位，2–4 活着，5–6 离开 */
+.diagram.rc-count-figure.is-armed:is([data-step='0'], [data-step='1']) .rc-a-early,
+.diagram.rc-count-figure.is-armed:is(
+	[data-step='2'],
+	[data-step='3'],
+	[data-step='4']
+) .rc-a-live,
+.diagram.rc-count-figure.is-armed:is([data-step='5'], [data-step='6']) .rc-a-late,
+
+/* node_b：0–2 空位，3 活着，4–6 离开 */
+.diagram.rc-count-figure.is-armed:is(
+	[data-step='0'],
+	[data-step='1'],
+	[data-step='2']
+) .rc-b-early,
+.diagram.rc-count-figure.is-armed[data-step='3'] .rc-b-live,
+.diagram.rc-count-figure.is-armed:is(
+	[data-step='4'],
+	[data-step='5'],
+	[data-step='6']
+) .rc-b-late,
+
+/* 堆块：1–5 实线，6 虚线 */
+.diagram.rc-count-figure.is-armed:is(
+	[data-step='1'],
+	[data-step='2'],
+	[data-step='3'],
+	[data-step='4'],
+	[data-step='5']
+) .rc-heap-live,
+.diagram.rc-count-figure.is-armed[data-step='6'] .rc-heap-late,
+
+/* 数字、运算、底部说明、轨迹：只显示当前步 */
+.diagram.rc-count-figure.is-armed[data-step='1'] .rc-only-1,
+.diagram.rc-count-figure.is-armed[data-step='2'] .rc-only-2,
+.diagram.rc-count-figure.is-armed[data-step='3'] .rc-only-3,
+.diagram.rc-count-figure.is-armed[data-step='4'] .rc-only-4,
+.diagram.rc-count-figure.is-armed[data-step='5'] .rc-only-5,
+.diagram.rc-count-figure.is-armed[data-step='6'] .rc-only-6 {
+	opacity: 1;
+}
+
+/* ---------- 附录 B thread::scope：JoinGuard 被 Rc 环留住 ----------
+   同一张图换四步，不把四步叠成四张。
+   关掉 JS：终态（第 4 步）直接可见——local_data 已释放，子线程仍在，
+   借用是虚线，堆上的环还在，strong 为 1。
+   武装后全部熄灭，再按 figure[data-step] 点亮当前这一拍。
+   第 0 步是回到起点：栈上只有 local_data。 */
+
+.diagram.guard-leak-figure .gl-phase,
+.diagram.guard-leak-figure .gl-only {
+	opacity: 0;
+	transition: opacity 0.35s ease;
+}
+
+.diagram.guard-leak-figure .gl-end {
+	opacity: 1;
+}
+
+.diagram.guard-leak-figure.is-armed .gl-phase,
+.diagram.guard-leak-figure.is-armed .gl-only {
+	opacity: 0;
+}
+
+.diagram.guard-leak-figure.is-resetting :is(.gl-phase, .gl-only) {
+	transition: none;
+}
+
+.diagram.guard-leak-figure.is-armed:is(
+		[data-step='0'],
+		[data-step='1'],
+		[data-step='2'],
+		[data-step='3']
+	)
+	.gl-data-live,
+.diagram.guard-leak-figure.is-armed[data-step='4'] .gl-data-dead,
+.diagram.guard-leak-figure.is-armed[data-step='0'] .gl-guard-empty,
+.diagram.guard-leak-figure.is-armed[data-step='1'] .gl-guard-live,
+.diagram.guard-leak-figure.is-armed:is([data-step='2'], [data-step='3'], [data-step='4'])
+	.gl-guard-moved,
+.diagram.guard-leak-figure.is-armed:is([data-step='0'], [data-step='1']) .gl-rc-empty,
+.diagram.guard-leak-figure.is-armed[data-step='2'] .gl-rc-live,
+.diagram.guard-leak-figure.is-armed:is([data-step='3'], [data-step='4']) .gl-rc-late,
+.diagram.guard-leak-figure.is-armed[data-step='0'] .gl-ref-empty,
+.diagram.guard-leak-figure.is-armed:is([data-step='1'], [data-step='2'], [data-step='3'])
+	.gl-ref-ok,
+.diagram.guard-leak-figure.is-armed[data-step='4'] .gl-ref-bad,
+.diagram.guard-leak-figure.is-armed[data-step='0'] .gl-child-idle,
+.diagram.guard-leak-figure.is-armed:is([data-step='1'], [data-step='2'], [data-step='3'])
+	.gl-child-run,
+.diagram.guard-leak-figure.is-armed[data-step='4'] .gl-child-bad,
+.diagram.guard-leak-figure.is-armed:is([data-step='1'], [data-step='2'], [data-step='3'])
+	.gl-borrow-ok,
+.diagram.guard-leak-figure.is-armed[data-step='4'] .gl-borrow-bad,
+.diagram.guard-leak-figure.is-armed:is([data-step='0'], [data-step='1']) .gl-heap-empty,
+.diagram.guard-leak-figure.is-armed:is([data-step='2'], [data-step='3'], [data-step='4'])
+	.gl-heap-live,
+.diagram.guard-leak-figure.is-armed[data-step='2'] .gl-strong-2,
+.diagram.guard-leak-figure.is-armed:is([data-step='3'], [data-step='4']) .gl-strong-1,
+.diagram.guard-leak-figure.is-armed:is([data-step='3'], [data-step='4']) .gl-skip,
+.diagram.guard-leak-figure.is-armed[data-step='0'] .gl-only-0,
+.diagram.guard-leak-figure.is-armed[data-step='1'] .gl-only-1,
+.diagram.guard-leak-figure.is-armed[data-step='2'] .gl-only-2,
+.diagram.guard-leak-figure.is-armed[data-step='3'] .gl-only-3,
+.diagram.guard-leak-figure.is-armed[data-step='4'] .gl-only-4 {
+	opacity: 1;
+}
+
 /* 尊重系统的减弱动态设置：直接落到终态，不做补间 */
 @media (prefers-reduced-motion: reduce) {
 	.diagram.grow-figure .grow-chips > g,
@@ -817,7 +976,11 @@
 	.diagram.partial-figure .partial-source,
 	.diagram.partial-figure .partial-alive,
 	.diagram.borrow-figure .bc-before,
-	.diagram.borrow-figure .bc-shared-arrow {
+	.diagram.borrow-figure .bc-shared-arrow,
+	.diagram.rc-count-figure .rc-phase,
+	.diagram.rc-count-figure .rc-only,
+	.diagram.guard-leak-figure .gl-phase,
+	.diagram.guard-leak-figure .gl-only {
 		transition-duration: 0.001s;
 		transition-delay: 0s;
 	}

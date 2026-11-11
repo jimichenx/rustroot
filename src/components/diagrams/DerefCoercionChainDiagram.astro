@@ -1,0 +1,202 @@
+---
+/**
+ * 10.4「Deref Coercion 多层自动脱壳链条」。
+ * 上排两张步骤卡片对齐列间箭头：第 1 步 Box::deref，第 2 步 String::deref。
+ * 下排三列从左到右是同一次调用的三个阶段：
+ *   ① 调用处实参 &boxed_name: &Box<String> —— 栈上 8B 瘦指针，指向堆上的 String
+ *   ② 中间态 step1: &String —— 指向 24B 控制头 (ptr, len, cap)
+ *   ③ 形参目标 name: &str —— 栈上 16B 胖指针 (ptr, len)，匹配 fn greet(name: &str)
+ * 右列用 .object 强调。底部横幅说明编译期静态展开与可变性方向。
+ * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	lang?: 'zh' | 'en';
+}
+
+const copy = {
+	zh: {
+		caption:
+			'调用 greet(&boxed_name) 时，编译器看见形参要 &str，就在编译期把 8 字节的 &Box<String> 经 Box::deref 变成指向 24 字节控制头的 &String，再经 String::deref 收成 16 字节的 &str；&mut T 可以降成 &U，&T 不能升成 &mut U。',
+		title: 'Deref Coercion：从 &Box<String> 到 &str 的两步脱壳',
+		desc: '上排是两步自动脱壳。第 1 步调用 Box::deref(&boxed_name)，Target 是 String。第 2 步调用 String::deref(step1)，Target 是 str，只取出 ptr 和 len。下排从左到右三列。左列是调用处实参 &boxed_name: &Box<String>，栈上 8 字节瘦指针 ptr，指向堆上的 String。中列是中间态 step1: &String，指向 24 字节控制头 (ptr, len, cap)。右列是形参目标 name: &str，栈上 16 字节切片胖指针 (ptr, len)，与 fn greet(name: &str) 一致。底部说明：因为目标类型 &str 已知，编译器在编译期自动插入这两次 deref，运行时没有额外负担；允许 &mut T 降级为 &U，禁止 &T 升级为 &mut U。',
+		step1: '第 1 步',
+		step1Code: 'Box::deref(&boxed_name)',
+		step1Sub: 'Target = String',
+		step2: '第 2 步',
+		step2Code: 'String::deref(step1)',
+		step2Sub: 'Target = str · 取出 ptr+len',
+		col1Kicker: '① 调用处实参',
+		col1Name: '&boxed_name',
+		col1Type: '&Box<String>',
+		col1Stack: 'ptr',
+		col1StackSub: '栈上 · 8B 瘦指针',
+		col1Heap: 'String',
+		col1HeapSub: '指向堆上的值',
+		col1HeapNote: 'Box 的那块数据',
+		col1Foot: '源码调用',
+		col1FootCode: 'greet(&boxed_name)',
+		col2Kicker: '② 中间态',
+		col2Name: 'step1',
+		col2Type: '&String',
+		col2Stack: 'ptr',
+		col2StackSub: '栈上 · 8B 瘦指针',
+		col2Heap: '(ptr, len, cap)',
+		col2HeapSub: '24B 控制头',
+		col2HeapNote: '比 &str 多一个 cap',
+		col2Foot: '第 1 步产物',
+		col2FootCode: 'step1: &String',
+		col3Kicker: '③ 形参目标',
+		col3Name: 'name',
+		col3Type: '&str',
+		col3Stack: '(ptr, len)',
+		col3StackSub: '栈上 · 16B 胖指针',
+		col3Heap: 'str 字节',
+		col3HeapSub: 'ptr 指向首字节',
+		col3HeapNote: 'len 截出长度',
+		col3Foot: '匹配签名',
+		col3FootCode: 'fn greet(name: &str)',
+		banTitle: '编译期静态展开',
+		banMid: '因目标 &str 已知，编译器自动插入两次 .deref()，运行时零额外心智负担',
+		banLow: '支持 &mut T → &U 权限降级 · 严禁 &T → &mut U',
+	},
+	en: {
+		caption:
+			'For greet(&boxed_name) the compiler sees a parameter of &str, so at compile time it turns the 8-byte &Box<String> into &String at the 24-byte header via Box::deref, then into a 16-byte &str via String::deref. &mut T may become &U; &T may not become &mut U.',
+		title: 'Deref coercion: two steps from &Box<String> to &str',
+		desc: 'The top row is the two automatic steps. Step 1 calls Box::deref(&boxed_name), whose Target is String. Step 2 calls String::deref(step1), whose Target is str, keeping only ptr and len. The bottom row has three stages left to right. Left: the call argument &boxed_name: &Box<String>, an 8-byte thin pointer on the stack aimed at the heap String. Middle: step1: &String, aimed at the 24-byte header (ptr, len, cap). Right: the parameter name: &str, a 16-byte fat pointer (ptr, len) on the stack, matching fn greet(name: &str). The footer says both deref calls are inserted statically because the target type &str is known, with no extra runtime cost. &mut T may coerce down to &U; &T must not coerce up to &mut U.',
+		step1: 'step 1',
+		step1Code: 'Box::deref(&boxed_name)',
+		step1Sub: 'Target = String',
+		step2: 'step 2',
+		step2Code: 'String::deref(step1)',
+		step2Sub: 'Target = str · ptr+len',
+		col1Kicker: '① call argument',
+		col1Name: '&boxed_name',
+		col1Type: '&Box<String>',
+		col1Stack: 'ptr',
+		col1StackSub: 'stack · 8B thin',
+		col1Heap: 'String',
+		col1HeapSub: 'heap value',
+		col1HeapNote: 'what the Box owns',
+		col1Foot: 'you write',
+		col1FootCode: 'greet(&boxed_name)',
+		col2Kicker: '② intermediate',
+		col2Name: 'step1',
+		col2Type: '&String',
+		col2Stack: 'ptr',
+		col2StackSub: 'stack · 8B thin',
+		col2Heap: '(ptr, len, cap)',
+		col2HeapSub: '24B header',
+		col2HeapNote: 'still has cap',
+		col2Foot: 'after step 1',
+		col2FootCode: 'step1: &String',
+		col3Kicker: '③ parameter',
+		col3Name: 'name',
+		col3Type: '&str',
+		col3Stack: '(ptr, len)',
+		col3StackSub: 'stack · 16B fat',
+		col3Heap: 'str bytes',
+		col3HeapSub: 'ptr aims at byte 0',
+		col3HeapNote: 'len sets the end',
+		col3Foot: 'signature',
+		col3FootCode: 'fn greet(name: &str)',
+		banTitle: 'Compile-time expansion',
+		banMid: 'Target &str is known: .deref() runs twice, no extra runtime cost',
+		banLow: 'Allows &mut T → &U; forbids &T → &mut U',
+	},
+} as const;
+
+const { lang } = Astro.props;
+const locale = lang ?? (SITE_LOCALE === 'en' ? 'en' : 'zh');
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 556" role="img" aria-labelledby="dcc-title dcc-desc">
+		<title id="dcc-title">{t.title}</title>
+		<desc id="dcc-desc">{t.desc}</desc>
+
+		{/* 框在下：上排步骤卡片，下排三列，底部横幅。右列是目标形参。 */}
+		<rect class="slot" x="114" y="8" width="200" height="80" rx="6"></rect>
+		<rect class="slot" x="326" y="8" width="200" height="80" rx="6"></rect>
+
+		<rect class="panel" x="12" y="100" width="192" height="340" rx="10"></rect>
+		<rect class="panel" x="224" y="100" width="192" height="340" rx="10"></rect>
+		<rect class="object" x="436" y="100" width="192" height="340" rx="10"></rect>
+
+		<rect class="slot" x="24" y="186" width="168" height="58" rx="6"></rect>
+		<rect class="slot" x="236" y="186" width="168" height="58" rx="6"></rect>
+		<rect class="slot" x="448" y="186" width="168" height="58" rx="6"></rect>
+
+		<rect class="slot" x="24" y="276" width="168" height="100" rx="6"></rect>
+		<rect class="slot" x="236" y="276" width="168" height="100" rx="6"></rect>
+		<rect class="slot" x="448" y="276" width="168" height="100" rx="6"></rect>
+
+		<rect class="panel" x="12" y="452" width="616" height="92" rx="10"></rect>
+
+		{/* 列间是脱壳箭头；列内短箭头表示栈上指针指向下面那块值 */}
+		<path class="arrow" d="M 196 215 H 232" marker-end="url(#dcc-head)"></path>
+		<path class="arrow" d="M 408 215 H 444" marker-end="url(#dcc-head)"></path>
+		<path class="arrow" d="M 108 244 V 270" marker-end="url(#dcc-head)"></path>
+		<path class="arrow" d="M 320 244 V 270" marker-end="url(#dcc-head)"></path>
+		<path class="arrow" d="M 532 244 V 270" marker-end="url(#dcc-head)"></path>
+
+		{/* 上排：两次 deref，卡片中心对准列间箭头 */}
+		<text class="edge-label" x="214" y="30" text-anchor="middle">{t.step1}</text>
+		<text class="code" x="214" y="50" text-anchor="middle">{t.step1Code}</text>
+		<text class="edge-sub" x="214" y="68" text-anchor="middle">{t.step1Sub}</text>
+		<text class="edge-label" x="426" y="30" text-anchor="middle">{t.step2}</text>
+		<text class="code" x="426" y="50" text-anchor="middle">{t.step2Code}</text>
+		<text class="edge-sub" x="426" y="68" text-anchor="middle">{t.step2Sub}</text>
+
+		{/* 左列：调用处实参 */}
+		<text class="label" x="108" y="124" text-anchor="middle">{t.col1Kicker}</text>
+		<text class="name" x="108" y="150" text-anchor="middle">{t.col1Name}</text>
+		<text class="code" x="108" y="172" text-anchor="middle">{t.col1Type}</text>
+		<text class="code" x="108" y="210" text-anchor="middle">{t.col1Stack}</text>
+		<text class="edge-sub" x="108" y="230" text-anchor="middle">{t.col1StackSub}</text>
+		<text class="code" x="108" y="304" text-anchor="middle">{t.col1Heap}</text>
+		<text class="edge-sub" x="108" y="326" text-anchor="middle">{t.col1HeapSub}</text>
+		<text class="edge-sub" x="108" y="348" text-anchor="middle">{t.col1HeapNote}</text>
+		<text class="edge-label" x="108" y="400" text-anchor="middle">{t.col1Foot}</text>
+		<text class="code" x="108" y="422" text-anchor="middle">{t.col1FootCode}</text>
+
+		{/* 中列：第一次 deref 的中间引用 */}
+		<text class="label" x="320" y="124" text-anchor="middle">{t.col2Kicker}</text>
+		<text class="name" x="320" y="150" text-anchor="middle">{t.col2Name}</text>
+		<text class="code" x="320" y="172" text-anchor="middle">{t.col2Type}</text>
+		<text class="code" x="320" y="210" text-anchor="middle">{t.col2Stack}</text>
+		<text class="edge-sub" x="320" y="230" text-anchor="middle">{t.col2StackSub}</text>
+		<text class="code" x="320" y="304" text-anchor="middle">{t.col2Heap}</text>
+		<text class="edge-sub" x="320" y="326" text-anchor="middle">{t.col2HeapSub}</text>
+		<text class="edge-sub" x="320" y="348" text-anchor="middle">{t.col2HeapNote}</text>
+		<text class="edge-label" x="320" y="400" text-anchor="middle">{t.col2Foot}</text>
+		<text class="code" x="320" y="422" text-anchor="middle">{t.col2FootCode}</text>
+
+		{/* 右列：形参目标 &str */}
+		<text class="label" x="532" y="124" text-anchor="middle">{t.col3Kicker}</text>
+		<text class="name" x="532" y="150" text-anchor="middle">{t.col3Name}</text>
+		<text class="code" x="532" y="172" text-anchor="middle">{t.col3Type}</text>
+		<text class="code" x="532" y="210" text-anchor="middle">{t.col3Stack}</text>
+		<text class="edge-sub" x="532" y="230" text-anchor="middle">{t.col3StackSub}</text>
+		<text class="code" x="532" y="304" text-anchor="middle">{t.col3Heap}</text>
+		<text class="edge-sub" x="532" y="326" text-anchor="middle">{t.col3HeapSub}</text>
+		<text class="edge-sub" x="532" y="348" text-anchor="middle">{t.col3HeapNote}</text>
+		<text class="edge-label" x="532" y="400" text-anchor="middle">{t.col3Foot}</text>
+		<text class="code" x="532" y="422" text-anchor="middle">{t.col3FootCode}</text>
+
+		{/* 底部：编译期展开与可变性方向 */}
+		<text class="name" x="320" y="478" text-anchor="middle">{t.banTitle}</text>
+		<text class="edge-label" x="320" y="504" text-anchor="middle">{t.banMid}</text>
+		<text class="edge-sub" x="320" y="528" text-anchor="middle">{t.banLow}</text>
+
+		<defs>
+			<marker id="dcc-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

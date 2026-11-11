@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["foundations/*", "ownership", "memory/*", "types/*", "appendix/*"]
+members = ["foundations/*", "ownership", "memory/*", "types/*", "concurrency/*", "appendix/*"]
 exclude = ["target"]
 
 # 课程代码实验。一课或一组课一个 crate，例如 examples/ownership/。
