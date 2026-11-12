@@ -1,0 +1,12 @@
+[package]
+name = "engineering-tools"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "Appendix D: Cargo Engineering and Compiler Error Diagnostics"
+
+[features]
+default = ["json"]
+json = []
+compression = []

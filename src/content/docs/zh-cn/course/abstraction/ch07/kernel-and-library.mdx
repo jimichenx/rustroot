@@ -3,7 +3,7 @@ title: "章末视野：Rust 语言到底有多小？——内核机制、语言�
 description: 从操作系统的「机制与策略分离」原则出发，看清 Rust 如何将语言内核压缩到极小，并通过「#[lang] 字符串协议钩子」与「全生态公共约定 Trait」两大阵营把其他语言的内置特性全部下放给库来实现。
 sidebar:
   label: 语言有多小：内核与库
-  order: 5
+  order: 6
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -91,9 +91,9 @@ pub trait Copy: Clone {
 
 ### 第二阵营：打通核心库与第三方库的「公共约定契约」
 
-再看另一半标准库 Trait：**`From<T>` / `Into<T>`、`TryFrom<T>`、`Default`、`AsRef<T>`、`Display`**。
+再看我们在前两节系统学过的另一半标准库 Trait：**`From<T>` / `Into<T>`、`TryFrom<T>`、`AsRef<T>`、`ToOwned`、`Default`、`Display`**。
 
-在编译器内核的 `#[lang]` 注册表里，**根本没有它们的名字**——没有任何一个运算符会直接展开成 `Default::default()` 或 `AsRef::as_ref()`。（注：哪怕是上一节讲的 `expr?` 自动调用 `From::from(e)`，也不是编译器硬编码了 `From`，而是标准库在实现 `?` 对应的 `FromResidual` 语言项钩子时，用纯库代码写了一行 `From::from(e)`！）
+在编译器内核的 `#[lang]` 注册表里，**根本没有它们的名字**——没有任何一个运算符会直接展开成 `Default::default()` 或 `AsRef::as_ref()`。（注：哪怕是 `expr?` 自动调用 `From::from(e)`，也不是编译器硬编码了 `From`，而是标准库在实现 `?` 对应的 `FromResidual` 语言项钩子时，用纯库代码写了一行 `From::from(e)`。）
 
 既然编译器内核根本不认识它们，**为什么还要由标准库来统一定义这批 Trait？**
 
@@ -101,12 +101,12 @@ pub trait Copy: Clone {
 
 - 如果标准库不预先定义 `From<T>`、`Default` 和 `AsRef<T>`，那么第三方库 A 会自己发明一个 `trait ConvertFrom<T>` 和 `trait EmptyValue`，第三方库 B 又会发明一个 `trait MakeFrom<T>` 和 `trait Init`。当你在业务代码里想把两个第三方库组合在一起时，两边就会因为契约名字不同而无法互通；
 - 而现在，标准库立下了这套全生态通用的公共约定，全天下所有的库作者都围绕同一套契约编写泛型约束（例如 `Option::unwrap_or_default` 只要 `T: Default`；文件打开函数 `File::open` 只要参数满足 `P: AsRef<Path>`）。
-- 你的自定义业务类型只要签下 `From`、`Default` 或 `AsRef`（完整用法见[附录 B.6：生态约定 Trait 详解](/appendix/mechanisms/convention-traits/)），无需编写任何胶水代码，就能像标准零件一样直接插进全生态所有的库函数中运行。
+- 你的自定义业务类型只要签下[上一节](/abstraction/ecosystem-traits/)的 `From`、`TryFrom`、`Default` 或 `AsRef`，无需编写任何胶水代码，就能像标准零件一样直接插进全生态所有的库函数中运行。
 
-| 阵营划分 | 与编译器的关系 | 典型代表 Trait | 核心架构价值 | 延伸速查 |
+| 阵营划分 | 与编译器的关系 | 典型代表 Trait | 核心架构价值 | 对应章节 |
 | --- | --- | --- | --- | --- |
 | **1. 系统钩子契约（Lang Items）** | 通过 `#[lang = "..."]` 字符串协议与编译器语法降级绑定 | `Copy`、`Add`、`PartialEq`、`Index`、`Drop`、`Iterator` | 将编译器与标准库路径解耦，让用户类型获得与原生类型一致的运算符与控制流体验 | [附录 B.5](/appendix/mechanisms/lang-item-traits/) |
-| **2. 生态公共约定契约** | 编译器完全不感知，纯库级定义 | `From` / `Into`、`TryFrom`、`Default`、`AsRef`、`Display` | 作为连接核心库、第三方库与业务代码的统一握手协议，消除生态碎片化與伪重载需求 | [附录 B.6](/appendix/mechanisms/convention-traits/) |
+| **2. 生态公共约定契约** | 编译器完全不感知，纯库级定义 | `From` / `Into`、`TryFrom`、`AsRef`、`ToOwned`、`Default`、`Display` | 作为连接核心库、第三方库与业务代码的统一握手协议，消除生态碎片化与伪重载需求 | [上一节](/abstraction/ecosystem-traits/) |
 
 ---
 
@@ -139,7 +139,7 @@ pub trait Copy: Clone {
 1. **因为运行时栈上裸数据不含对象信息头**，按值传递的泛型代码必须在编译期通过**单态化（Monomorphization）**将类型信息烧录进各自独立的机器码中（**7.1**）；
 2. **因为编译器要在单态化前直接检验泛型模板**，未知的裸 `<T>` 被视为黑盒，从而逼出了作为编译期契约的 **Trait 与泛型约束 `<T: Trait>`**，并由防止单态化实现冲突推导出**孤儿规则**（**7.2**）；
 3. **为了区分契约中的「一对多输入」与「一对一输出」**，分化出了**泛型 Trait（`trait From<T>`）**与**关联类型（`type Item;`）**（**7.3**）；
-4. **借助泛型与 Trait 的正交组合（一揽子实现、`#[lang]` 字符串协议与生态公共约定）**，Rust 将语言内核压缩到极小，把函数重载、错误转换（`?` + `From`）乃至运算符体系全部交由库来实现（**7.4～7.5**）。
+4. **借助泛型与 Trait 的正交组合（一揽子实现、`#[lang]` 字符串协议与生态公共约定）**，Rust 将语言内核压缩到极小，把类型转换体系（`From` / `TryFrom` / `AsRef` / `ToOwned`）、默认值（`Default`）、错误归并（`?`）乃至运算符体系全部交由库来实现。
 
 但正如我们在 7.1 节推演「信息守恒」时所预告的那样：把类型信息烧录进多份机器码的**编译期单态化（静态分发）**，并不是全宇宙唯一的路。
 

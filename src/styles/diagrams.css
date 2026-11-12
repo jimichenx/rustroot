@@ -948,6 +948,208 @@
 	opacity: 1;
 }
 
+/* ---------- 13.3 通道：横卧管道 ----------
+   一条轮廓。填充用画布底色，消息块直接放在里面。 */
+
+.diagram .pipe-body {
+	fill: var(--dg-bg);
+	stroke: var(--dg-node-stroke);
+	stroke-width: 1.5;
+}
+
+/* 关掉 JS 时三张图都停在终态。武装后按 data-step 点亮当前这一拍。 */
+
+.diagram.ch-move-figure .mv-phase,
+.diagram.ch-move-figure .mv-only,
+.diagram.ch-fan-figure .fi-phase,
+.diagram.ch-fan-figure .fi-only,
+.diagram.ch-press-figure .bp-phase,
+.diagram.ch-press-figure .bp-only {
+	opacity: 0;
+	transition: opacity 0.35s ease;
+}
+
+.diagram.ch-move-figure .mv-end,
+.diagram.ch-fan-figure .fi-end,
+.diagram.ch-press-figure .bp-end {
+	opacity: 1;
+}
+
+.diagram.ch-move-figure.is-armed .mv-phase,
+.diagram.ch-move-figure.is-armed .mv-only,
+.diagram.ch-fan-figure.is-armed .fi-phase,
+.diagram.ch-fan-figure.is-armed .fi-only,
+.diagram.ch-press-figure.is-armed .bp-phase,
+.diagram.ch-press-figure.is-armed .bp-only {
+	opacity: 0;
+}
+
+.diagram.ch-move-figure.is-resetting :is(.mv-phase, .mv-only),
+.diagram.ch-fan-figure.is-resetting :is(.fi-phase, .fi-only),
+.diagram.ch-press-figure.is-resetting :is(.bp-phase, .bp-only) {
+	transition: none;
+}
+
+.diagram.ch-move-figure.is-armed:is([data-step='0'], [data-step='1']) .mv-report-live,
+.diagram.ch-move-figure.is-armed:is([data-step='2'], [data-step='3']) .mv-report-dead,
+.diagram.ch-move-figure.is-armed[data-step='2'] .mv-chip,
+.diagram.ch-move-figure.is-armed:is([data-step='0'], [data-step='1'], [data-step='2']) .mv-recv-empty,
+.diagram.ch-move-figure.is-armed[data-step='3'] .mv-recv-live,
+.diagram.ch-move-figure.is-armed[data-step='0'] .mv-only-0,
+.diagram.ch-move-figure.is-armed[data-step='1'] .mv-only-1,
+.diagram.ch-move-figure.is-armed[data-step='2'] .mv-only-2,
+.diagram.ch-move-figure.is-armed[data-step='3'] .mv-only-3,
+.diagram.ch-fan-figure.is-armed:is([data-step='0'], [data-step='1'], [data-step='2']) .fi-work-live,
+.diagram.ch-fan-figure.is-armed:is([data-step='0'], [data-step='1'], [data-step='2']) .fi-feed,
+.diagram.ch-fan-figure.is-armed:is([data-step='3'], [data-step='4']) .fi-work-dead,
+.diagram.ch-fan-figure.is-armed[data-step='2'] .fi-msg,
+.diagram.ch-fan-figure.is-armed:is(
+		[data-step='0'],
+		[data-step='1'],
+		[data-step='2'],
+		[data-step='3']
+	)
+	.fi-tx-live,
+.diagram.ch-fan-figure.is-armed[data-step='4'] .fi-tx-dead,
+.diagram.ch-fan-figure.is-armed:is(
+		[data-step='0'],
+		[data-step='1'],
+		[data-step='2'],
+		[data-step='3']
+	)
+	.fi-rx-wait,
+.diagram.ch-fan-figure.is-armed[data-step='4'] .fi-rx-done,
+.diagram.ch-fan-figure.is-armed:is([data-step='0'], [data-step='1'], [data-step='2']) .fi-count-4,
+.diagram.ch-fan-figure.is-armed[data-step='3'] .fi-count-1,
+.diagram.ch-fan-figure.is-armed[data-step='4'] .fi-count-0,
+.diagram.ch-fan-figure.is-armed[data-step='0'] .fi-only-0,
+.diagram.ch-fan-figure.is-armed[data-step='1'] .fi-only-1,
+.diagram.ch-fan-figure.is-armed[data-step='2'] .fi-only-2,
+.diagram.ch-fan-figure.is-armed[data-step='3'] .fi-only-3,
+.diagram.ch-fan-figure.is-armed[data-step='4'] .fi-only-4,
+.diagram.ch-press-figure.is-armed:is([data-step='0'], [data-step='1']) .bp-b1-empty,
+.diagram.ch-press-figure.is-armed:is(
+		[data-step='2'],
+		[data-step='3'],
+		[data-step='4'],
+		[data-step='5']
+	)
+	.bp-b1-full,
+.diagram.ch-press-figure.is-armed:is([data-step='0'], [data-step='1'], [data-step='2']) .bp-b2-empty,
+.diagram.ch-press-figure.is-armed:is([data-step='3'], [data-step='4'], [data-step='5']) .bp-b2-full,
+.diagram.ch-press-figure.is-armed:is([data-step='0'], [data-step='1'], [data-step='2']) .bp-b3-empty,
+.diagram.ch-press-figure.is-armed:is([data-step='3'], [data-step='4'], [data-step='5']) .bp-b3-full,
+.diagram.ch-press-figure.is-armed[data-step='4'] .bp-out,
+.diagram.ch-press-figure.is-armed[data-step='5'] .bp-got,
+.diagram.ch-press-figure.is-armed:is(
+		[data-step='0'],
+		[data-step='1'],
+		[data-step='2'],
+		[data-step='3'],
+		[data-step='5']
+	)
+	.bp-send-ok,
+.diagram.ch-press-figure.is-armed[data-step='4'] .bp-send-stop,
+.diagram.ch-press-figure.is-armed:is(
+		[data-step='0'],
+		[data-step='1'],
+		[data-step='2'],
+		[data-step='3'],
+		[data-step='4']
+	)
+	.bp-recv-idle,
+.diagram.ch-press-figure.is-armed[data-step='5'] .bp-recv-got,
+.diagram.ch-press-figure.is-armed[data-step='0'] .bp-only-0,
+.diagram.ch-press-figure.is-armed[data-step='1'] .bp-only-1,
+.diagram.ch-press-figure.is-armed[data-step='2'] .bp-only-2,
+.diagram.ch-press-figure.is-armed[data-step='3'] .bp-only-3,
+.diagram.ch-press-figure.is-armed[data-step='4'] .bp-only-4,
+.diagram.ch-press-figure.is-armed[data-step='5'] .bp-only-5,
+.diagram.mutex-guard-figure.is-armed:is([data-step='0'], [data-step='1']) .mx-a-out,
+.diagram.mutex-guard-figure.is-armed[data-step='2'] .mx-a-hold,
+.diagram.mutex-guard-figure.is-armed[data-step='3'] .mx-a-drop,
+.diagram.mutex-guard-figure.is-armed:is([data-step='0'], [data-step='1']) .mx-b-out,
+.diagram.mutex-guard-figure.is-armed[data-step='2'] .mx-b-wait,
+.diagram.mutex-guard-figure.is-armed[data-step='3'] .mx-b-wake,
+.diagram.mutex-guard-figure.is-armed:is([data-step='0'], [data-step='1']) .mx-c-out,
+.diagram.mutex-guard-figure.is-armed:is([data-step='2'], [data-step='3']) .mx-c-wait,
+.diagram.mutex-guard-figure.is-armed:is([data-step='0'], [data-step='1'], [data-step='3']) .mx-lock-open,
+.diagram.mutex-guard-figure.is-armed[data-step='2'] .mx-lock-held,
+.diagram.mutex-guard-figure.is-armed:is([data-step='0'], [data-step='1']) .mx-vec-old,
+.diagram.mutex-guard-figure.is-armed:is([data-step='2'], [data-step='3']) .mx-vec-new,
+.diagram.mutex-guard-figure.is-armed[data-step='2'] .mx-push,
+.diagram.mutex-guard-figure.is-armed[data-step='0'] .mx-only-0,
+.diagram.mutex-guard-figure.is-armed[data-step='1'] .mx-only-1,
+.diagram.mutex-guard-figure.is-armed[data-step='2'] .mx-only-2,
+.diagram.mutex-guard-figure.is-armed[data-step='3'] .mx-only-3 {
+	opacity: 1;
+}
+
+/* 13.4 MutexGuard：关掉 JS 停在第 3 步（Drop 已放开锁）。 */
+.diagram.mutex-guard-figure .mx-phase,
+.diagram.mutex-guard-figure .mx-only {
+	opacity: 0;
+	transition: opacity 0.35s ease;
+}
+
+.diagram.mutex-guard-figure .mx-end {
+	opacity: 1;
+}
+
+.diagram.mutex-guard-figure.is-armed .mx-phase,
+.diagram.mutex-guard-figure.is-armed .mx-only {
+	opacity: 0;
+}
+
+.diagram.mutex-guard-figure.is-resetting :is(.mx-phase, .mx-only) {
+	transition: none;
+}
+
+/* 14.2 poll / Waker。关掉 JS 停在 Ready。 */
+.diagram.poll-waker-figure .pw-phase,
+.diagram.poll-waker-figure .pw-only {
+	opacity: 0;
+	transition: opacity 0.35s ease;
+}
+
+.diagram.poll-waker-figure .pw-end {
+	opacity: 1;
+}
+
+.diagram.poll-waker-figure.is-armed .pw-phase,
+.diagram.poll-waker-figure.is-armed .pw-only {
+	opacity: 0;
+}
+
+.diagram.poll-waker-figure.is-resetting :is(.pw-phase, .pw-only) {
+	transition: none;
+}
+
+.diagram.poll-waker-figure.is-armed:is([data-step='0'], [data-step='1'], [data-step='4']) .pw-worker-poll,
+.diagram.poll-waker-figure.is-armed:is([data-step='2'], [data-step='3']) .pw-worker-else,
+.diagram.poll-waker-figure.is-armed:is([data-step='0'], [data-step='1']) .pw-result-call,
+.diagram.poll-waker-figure.is-armed[data-step='2'] .pw-result-pending,
+.diagram.poll-waker-figure.is-armed[data-step='3'] .pw-result-wake,
+.diagram.poll-waker-figure.is-armed[data-step='4'] .pw-result-ready,
+.diagram.poll-waker-figure.is-armed:is([data-step='0'], [data-step='1']) .pw-waker-none,
+.diagram.poll-waker-figure.is-armed[data-step='2'] .pw-waker-reg,
+.diagram.poll-waker-figure.is-armed:is([data-step='3'], [data-step='4']) .pw-waker-done,
+.diagram.poll-waker-figure.is-armed:is(
+		[data-step='0'],
+		[data-step='1'],
+		[data-step='3'],
+		[data-step='4']
+	)
+	.pw-queue-in,
+.diagram.poll-waker-figure.is-armed[data-step='2'] .pw-queue-out,
+.diagram.poll-waker-figure.is-armed[data-step='0'] .pw-only-0,
+.diagram.poll-waker-figure.is-armed[data-step='1'] .pw-only-1,
+.diagram.poll-waker-figure.is-armed[data-step='2'] .pw-only-2,
+.diagram.poll-waker-figure.is-armed[data-step='3'] .pw-only-3,
+.diagram.poll-waker-figure.is-armed[data-step='4'] .pw-only-4 {
+	opacity: 1;
+}
+
 /* 尊重系统的减弱动态设置：直接落到终态，不做补间 */
 @media (prefers-reduced-motion: reduce) {
 	.diagram.grow-figure .grow-chips > g,
@@ -980,7 +1182,17 @@
 	.diagram.rc-count-figure .rc-phase,
 	.diagram.rc-count-figure .rc-only,
 	.diagram.guard-leak-figure .gl-phase,
-	.diagram.guard-leak-figure .gl-only {
+	.diagram.guard-leak-figure .gl-only,
+	.diagram.ch-move-figure .mv-phase,
+	.diagram.ch-move-figure .mv-only,
+	.diagram.ch-fan-figure .fi-phase,
+	.diagram.ch-fan-figure .fi-only,
+	.diagram.ch-press-figure .bp-phase,
+	.diagram.ch-press-figure .bp-only,
+	.diagram.mutex-guard-figure .mx-phase,
+	.diagram.mutex-guard-figure .mx-only,
+	.diagram.poll-waker-figure .pw-phase,
+	.diagram.poll-waker-figure .pw-only {
 		transition-duration: 0.001s;
 		transition-delay: 0s;
 	}

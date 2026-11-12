@@ -1,7 +1,8 @@
 ---
-title: Cell<T> 与 RefCell<T>：内部可变性——把借用检查搬到运行时
+title: Cell<T> 与 RefCell<T>：内部可变性
 description: 从修改 Rc<Node> 共享字段与只读 &self 接口追加日志的任务出发，排查为什么编译器严禁通过 &T 修改内存，并顺着物理安全边界亲手推演出「整进整出」的 Cell<T> 与「运行时借用计数」的 RefCell<T>。
 sidebar:
+  label: Cell<T> 与 RefCell<T>
   order: 2
 ---
 

@@ -1,0 +1,169 @@
+---
+title: 高频编译错误码诊断速查
+description: 拆解 rustc 三段式报错现场的阅读方法，按所有权、借用、生命周期与 Trait 契约四条主轴汇总十类最高频编译错误码的成因、正确改法与常见误修陷阱。
+sidebar:
+  label: 高频编译错误码速查
+  order: 2
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import e0382AndE0502 from '../../../../../../examples/appendix/engineering/src/bin/e0382-and-e0502.rs?raw';
+import e0507MoveBehindRef from '../../../../../../examples/appendix/engineering/src/bin/e0507-move-behind-ref.rs?raw';
+import e0597BorrowedLifetime from '../../../../../../examples/appendix/engineering/src/bin/e0597-borrowed-lifetime.rs?raw';
+import e0277SendAcrossThreads from '../../../../../../examples/appendix/engineering/src/bin/e0277-send-across-threads.rs?raw';
+
+初次接触 Rust 或让 AI 辅助编写复杂业务代码时，最常遇到的阻碍往往不是「不知道某条规则」，而是面对终端里十几行带箭头的编译报错时只盯着最后一行红字看，顺手用 `.clone()` 或 `'static` 把报错临时压下去，结果把局部问题扩散成了整条调用链的签名污染。
+
+本节先拆解 `rustc` 诊断输出的标准阅读顺序，随后按本指南的四大核心主轴，汇总日常开发覆盖率超过 90% 的十类高频编译错误码及其排障判据。
+
+---
+
+## 一、 先看懂现场：`rustc` 报错的三段式因果结构
+
+与其他语言常常只报出「第 N 行类型错误」不同，`rustc` 的报错信息是一份结构完整的**状态变迁记录**。以一段最典型的 `error[E0382]` 输出为例：
+
+```text
+error[E0382]: borrow of moved value: `tag`
+  --> src/main.rs:8:20
+   |
+6  |     let tag = String::from("release-v1");
+   |         --- move occurs because `tag` has type `String`, which does not implement the `Copy` trait
+7  |     let moved = tag;
+   |                 --- value moved here
+8  |     println!("{tag}");
+   |                ^^^ value borrowed here after move
+```
+
+阅读任何一条所有权、借用或生命周期报错时，请固定按**从上往下三步**核对蓝标（`---`）与红标（`^^^`）：
+
+1. **初始条件（第一处 `---`）**：编译器先交代前提——变量 `tag` 的类型是 `String`，未实现 `Copy`，因此按值传递会触发移动；
+2. **状态变更点（第二处 `---`）**：指明所有权在哪一行被移走，或者前一个借用区间从哪一行开始生效；
+3. **冲突触发点（红标 `^^^`）**：指明哪一行代码试图读取已失效的变量，或者在已有借用尚未结束时抢占了冲突权限。
+
+遇到陌生的错误编号时，随时可以在终端执行 **`rustc --explain E0382`** 查看编译器内置的最小复现说明。
+
+<Aside type="caution" title="警惕局部 help 提示的视野局限">
+`rustc` 常在报错末尾附带一行 `help: consider cloning the value...` 或 `help: consider adding a 'static lifetime...`。请记住：**编译器的 `help` 只是站在「尽量少改周边函数签名、让当前这一行先编过」的局部视角给出的候选动作**。如果被调函数本来只需要只读借用 `&str`，盲目听从提示在调用处加 `.clone()` 就会引入无谓的堆内存分配；在采纳任何 `help` 之前，先对照下表确认到底是调用方式错了，还是函数签名本身定错了。
+</Aside>
+
+---
+
+## 二、 高频编译错误码全景速查表
+
+| 错误码 | 典型报错摘要 | 触发的底层约束 | 关联主线章节 |
+| --- | --- | --- | --- |
+| **`E0382`** | `use / borrow of moved value` | 非 `Copy` 值转移释放责任后，原变量在编译期状态表中已标记失效 | [最简模型：赋值即失效](/memory/minimal-model/) |
+| **`E0507`** | `cannot move out of ... which is behind a shared reference` | 引用不承担释放责任，禁止通过 `&T` / `&mut T` 把内部非 `Copy` 字段移走掏空 | [函数调用逼出引用](/memory/references/)、[位置与值表达式](/appendix/mechanisms/place-and-value/) |
+| **`E0502`** / **`E0499`** | `cannot borrow as mutable because it is also borrowed as immutable`（或 `more than once`） | 同一有效区间内，共享只读引用 `&T` 与独占可变引用 `&mut T` 互斥（且 `&mut T` 不可并存） | [引用类型构造器](/types/reference-constructors/)、[借用疑难排障](/pointers/borrowing-puzzles/) |
+| **`E0596`** | `cannot borrow ... as mutable, as it is not declared as mutable` | 变量绑定未声明 `let mut`，或试图穿透只读引用 `&T` 获取内部字段的 `&mut` | [变量绑定与可变性](/memory/bindings/) |
+| **`E0597`** | `... does not live long enough` | 被借用数据的存活作用域短于引用本身的有效使用区间，放行会产生悬垂引用 | [生命周期与有效区间](/memory/lifetimes/) |
+| **`E0515`** / **`E0106`** | `cannot return value referencing local variable` / `missing lifetime specifier` | 禁止向函数外返回当前栈帧局部变量的引用（`E0515`）；多输入或无输入返回引用时需显式关联生命周期（`E0106`） | [跨函数签名的生命周期](/pointers/lifetime-functions/) |
+| **`E0308`** | `mismatched types` | 静态类型不匹配（高频诱因：函数末尾多写分号变成单元类型 `()`，或混淆 `String` 与 `&str`） | [函数、语句与表达式](/appendix/basics/functions/)、[字符串](/types/strings/) |
+| **`E0277`** | `the trait bound ... is not satisfied`（含 `cannot be sent between threads safely`） | 类型未实现目标函数要求的 Trait（如缺 `Debug` / `From`，或跨线程/`async` 持有未实现 `Send` 的 `Rc` / `MutexGuard`） | [Trait 与约束](/abstraction/traits-and-bounds/)、[Send 与 Sync](/concurrency/send-and-sync/) |
+| **`E0038`** | `the trait ... is not dyn compatible`（旧版称 `cannot be made into an object`） | Trait 含有泛型方法、无 `&self` 关联函数或返回 `Self`，编译器无法生成固定布局的虚表 `vtable` | [dyn Trait 与虚表](/abstraction/dyn-trait-and-vtable/) |
+| **`E0117`** | `only traits defined in the current crate can be implemented for external types` | 违反孤儿规则：禁止在当前 `crate` 为外部类型实现外部 Trait，防止多包链接时产生实现冲突 | [类型转换与孤儿规则](/abstraction/conversions-and-from/)、[Newtype 模式](/architecture/newtype-and-parse/) |
+
+---
+
+## 三、 四大重灾区排障判据：正确解法 vs 常见误修
+
+### 1. 所有权与移动组：`E0382` 与头号拦路虎 `E0507`
+
+#### `E0382`（移动后使用）
+遇到 `E0382` 时，不要条件反射加 `.clone()`，先问一个问题：**消费掉这个变量的那一步，真的需要夺走堆数据的所有权吗？**
+- 如果接收方只是一个读取配置、打印日志或解析文本的辅助函数，却把参数写成了 `fn log_tag(tag: String)`，**真正的根因是函数签名过度索取了所有权**——把签名改为 `fn log_tag(tag: &str)`，调用处传 `&tag`，零内存分配即可消除报错；
+- 只有当两个结构体或两个独立任务确实需要各自持有一份互不干扰的堆副本时，才显式调用 `.clone()`（只读跨线程共享则优先考虑 `Arc<T>`）。
+
+#### `E0507`（试图从引用背后移出非 `Copy` 值）
+这是日常业务代码中出现频率最高、也最让初学者困惑的错误码。典型现场是在 `&self` 方法或接收 `&Account` 的函数里，对内部的 `Option<String>`、`Result` 或 `Vec<T>` 做模式匹配解构：
+
+```rust
+fn domain_of(account: &Account) -> Option<&str> {
+    // 报错 error[E0507]：试图把非 Copy 的 String 从 &Account 背后直接搬走
+    let Some(addr) = account.email else { return None; };
+    // ...
+}
+```
+
+**物理原因**：你手里拿到的 `account` 只是一个只读引用 `&Account`，真正的所有者还在外层调用方手里。如果允许这行代码把 `account.email` 里的 `String` 移给局部变量 `addr`，函数结束时 `addr` 会释放那块堆内存；等外层真正的 `Account` 所有者离开作用域时，又会对同一块堆内存执行第二次释放（双重释放）。
+
+- **常见误修**：写成 `account.email.clone()`。虽然能编过，但每次只读提取域名都要重新分配一次堆内存并复制整条字符串。
+- **正确解法**：把「对外层容器的引用」转换为「装在容器内部的引用」——写 **`match &account.email`**，或者对 `Option<String>` 直接调用零成本转换方法 **`.as_ref()`**（得到 `Option<&String>`）与 **`.as_deref()`**（一步到位得到 `Option<&str>`）：
+
+<small class="code-source">源文件：<code>examples/appendix/engineering/src/bin/e0507-move-behind-ref.rs</code></small>
+<Code
+  code={e0507MoveBehindRef.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+/>
+
+---
+
+### 2. 借用与可变性排他组：`E0502` / `E0499`
+
+当你已经持有一个集合或结构体的共享借用（如 `let first = &scores[0];`），在最后一次读取 `first` **之前**又尝试调用 `scores.push(40)`（需要 `&mut scores`），编译器就会报 `E0502`。正如我们在[向量 `Vec<T>`](/types/vectors/)中推导过的，`push` 一旦触发堆缓冲区扩容搬迁，原地址失效，后面再读 `first` 就会读到已释放的内存。
+
+遇到 `E0502` / `E0499` 时，按以下三步依次排查：
+1. **调整读写语句顺序（利用 NLL 非词法生命周期）**：借用检查器按引用的**最后一次实际使用位置**结算借用区间，而不是死板地算到花括号 `}` 末尾。只要把读取 `first` 的操作挪到 `scores.push(40)` 之前，共享借用当场结束，后续可变借用自然放行；
+2. **拆分结构体独立字段借用**：如果是在同一个结构体上同时读字段 `a`、写字段 `b`，不要写一个锁死整个 `&mut self` 的辅助方法，而是直接拆开访问 `self.a` 与 `&mut self.b`（详见[借用检查器疑难排障](/pointers/borrowing-puzzles/)）；
+3. **同一切片的不重叠可变切分**：需要同时修改同一数组的前半段和后半段时，调用标准库安全抽象 `.split_at_mut(mid)`，而不是两次写 `&mut slice[..]`。
+
+<small class="code-source">源文件：<code>examples/appendix/engineering/src/bin/e0382-and-e0502.rs</code></small>
+<Code
+  code={e0382AndE0502.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+/>
+
+---
+
+### 3. 生命周期与悬垂防御组：`E0597` 与 `E0515`
+
+#### 绝对不要用 `'static` 掩盖 `E0597` / `E0515`
+当你在内部代码块创建了一个临时 `String`，试图把它的引用赋给外层变量（报 `E0597: does not live long enough`），或者试图在函数里拼接出新字符串后返回 `&str`（报 `E0515: cannot return value referencing local variable`）时，**最常见的误修就是听信局部报错提示，把返回类型改成 `&'static str`**。
+
+回想[`'static` 的真相与生命周期型变](/pointers/lifetime-variance-and-static/)中的结论：`'static` 引用意味着数据必须存放在二进制只读数据段（如硬编码字符串字面量 `"hello"`）或者通过内存泄漏驻留整个进程运行期。函数内部新算出来的数据存活在当前栈帧或局部堆所有者名下，栈帧退场时所有者必然释放——**没有任何生命周期标注语法能延长一个局部变量的实际存活时间**。
+
+- **解决 `E0515`（函数返回新造数据）**：直接把返回值签名从 `&str` / `&[T]` 改为拥有所有权的 **`String` / `Vec<T>`**。按值返回只会复制栈上 24 字节控制头，堆上数据原地不动，释放责任干净地移交给调用方；
+- **解决 `E0597`（局部所有者退场过早）**：把数据所有者的 `let` 声明提到外层作用域，确保所有者的声明排在引用之前（局部变量按声明逆序释放，先声明的活得更长）：
+
+<small class="code-source">源文件：<code>examples/appendix/engineering/src/bin/e0597-borrowed-lifetime.rs</code></small>
+<Code
+  code={e0597BorrowedLifetime.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+/>
+
+---
+
+### 4. 类型、Trait 与并发安全组：`E0308` 与 `E0277`
+
+#### `E0308`（多写一个分号引发的 `expected T, found ()`）
+如果编译器报出 `expected i32, found ()`，第一时间检查函数体或 `if / else` 分支的**最后一行末尾是不是多加了一个分号 `;`**。在 Rust 中，表达式末尾一旦加上分号就变成了不产出有效值的语句，整个代码块求值为零字节的单元类型 `()`（详见[函数、语句与表达式](/appendix/basics/functions/)）。
+
+#### `E0277` 的并发与异步变体：未满足 `Send` 约束
+普通业务里的 `E0277` 往往只是打印自定义结构体时忘了加 `#[derive(Debug)]`，或者 `?` 错误早退时缺少对应的 `From` 转换实现。但在多线程（`thread::spawn`）与异步运行时（`tokio::spawn`）中，`E0277` 会呈现为并发安全约束报错：
+
+```text
+error[E0277]: `Rc<String>` cannot be sent between threads safely
+  --> src/main.rs:10:18
+   |
+   = help: the trait `Send` is not implemented for `Rc<String>`
+```
+
+这类并发 `E0277` 集中在两个高频现场：
+1. **跨线程传递单线程容器**：`Rc<T>` 与 `RefCell<T>` 使用普通非原子整数维护计数，多线程并发读写计数会产生数据竞争，因此标准库显式移除了它们的 `Send` 实现。跨线程共享只读数据换用原子引用计数 **`Arc<T>`**，需要内部修改再配合 `Mutex<T>` 或 `RwLock<T>`；
+2. **`async fn` 中跨 `.await` 持有了同步锁守卫 `MutexGuard`**：在多线程异步调度器中，任务在 `.await` 挂起恢复后可能被调度到另一个工作线程继续执行，因此跨 `.await` 存活的所有局部变量都必须满足 `Send`；而标准库的 `std::sync::MutexGuard` 未实现 `Send`。**正确改法通常不是盲目替换成开销更高的异步锁**，而是用一对花括号 `{ let mut guard = state.lock().unwrap(); ... }` 把锁的读取与修改限制在同步块内，保证在到达 `.await` 之前提前释放 `MutexGuard`（详见[async/await 实战与并发陷阱](/concurrency/async-await-in-practice/)）。
+
+<small class="code-source">源文件：<code>examples/appendix/engineering/src/bin/e0277-send-across-threads.rs</code></small>
+<Code
+  code={e0277SendAcrossThreads.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+/>
+
+---
+
+## 小结：收到编译报错时的三问清单
+
+无论是在自己编写代码，还是审查并修复 AI 生成的 Rust 代码时，遇到编译错误都可以按这三步收束判断：
+
+1. **看第一处蓝标查前提**：涉及的类型是不是非 `Copy`？绑定有没有加 `mut`？跨线程闭包是不是要求 `Send + 'static`？
+2. **分辨是「调用手法错」还是「接口签名错」**：如果函数只是读取数据却报了 `E0382`，改被调函数的参数签名为借用，不要在调用方用 `.clone()` 硬凑；如果函数内部新建了数据却报 `E0515`，改返回类型为拥有所有权的 `String` / `Vec<T>`，不要往签名上硬贴 `'static`；
+3. **跨线程与异步报 `E0277` 先查数据存活边界**：单线程 `Rc` 过界换 `Arc`；同步锁守卫跨 `.await` 用局部作用域 `{ ... }` 提前释放。

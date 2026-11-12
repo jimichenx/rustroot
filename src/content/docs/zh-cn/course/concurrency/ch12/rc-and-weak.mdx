@@ -1,7 +1,8 @@
 ---
-title: Rc<T> 与 Weak<T>：把唯一所有者放宽为单线程引用计数
+title: Rc<T> 与 Weak<T>：单线程引用计数
 description: 从构建「Y 字形」共享链表的日常任务出发，排查为什么 Box 与普通引用双双受阻，顺着 Deref 与 Drop 亲手推演出局部按需的引用计数智能指针 Rc<T>，并用弱引用 Weak<T> 化解双向链表的循环引用泄漏。
 sidebar:
+  label: Rc<T> 与 Weak<T>
   order: 1
 ---
 

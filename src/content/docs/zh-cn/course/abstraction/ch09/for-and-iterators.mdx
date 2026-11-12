@@ -73,7 +73,7 @@ for s in &names {
 
 ## 登场准备：认识 `Iterator` 与 `IntoIterator` 两大契约
 
-在[第 7 章 7.5 节](/abstraction/kernel-and-library/)我们讲过，Rust 的设计哲学是「极小语言内核 + 标准库契约」。语言内核里根本没有内置「怎么遍历 `Vec` 或 `HashMap`」的逻辑，所有的遍历规则都定义在核心库 `core::iter` 的两个 Trait 里。
+在[第 7 章章末视野](/abstraction/kernel-and-library/)我们讲过，Rust 的设计哲学是「极小语言内核 + 标准库契约」。语言内核里根本没有内置「怎么遍历 `Vec` 或 `HashMap`」的逻辑，所有的遍历规则都定义在核心库 `core::iter` 的两个 Trait 里。
 
 在看编译器如何展开 `for` 循环之前，我们先认清这两个 Trait 的名字含义与签名长相。
 

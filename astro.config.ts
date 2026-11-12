@@ -31,6 +31,9 @@ export default defineConfig({
                                 '/ownership/references/': '/memory/references/',
                                 '/ownership/lifetimes/': '/memory/lifetimes/',
                                 '/ownership/summary/': '/memory/summary/',
+                                '/appendix/mechanisms/convention-traits/': '/abstraction/ecosystem-traits/',
+                                '/appendix/comparisons/function-overloading/': '/architecture/api-design-and-builder/',
+                                '/architecture/builder-and-typestate/': '/architecture/typestate-pattern/',
                         }
                         : {}),
         }),

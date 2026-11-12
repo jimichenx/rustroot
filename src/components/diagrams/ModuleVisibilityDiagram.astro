@@ -1,0 +1,94 @@
+---
+/**
+ * 15.1「模块是一棵容器树。子看父看得见，父看子和兄弟默认看不见」。
+ * 实线是看得见，虚线是默认看不见。不另加第二种颜色。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+const copy = {
+	zh: {
+		caption:
+			'整棵模块树的根是 crate。network 里面有 http 和 tcp。子模块看得见父模块里的私有项。父模块看子模块、兄弟互相看，默认看不见，要标 pub。',
+		title: '子模块看得见父模块，父模块看子模块默认要 pub',
+		desc: '外层是 crate，里面是 network，network 里并排放着 http 和 tcp。http 标了 pub mod，tcp 没有。从子模块指向上面的实线表示子看父，父模块里的私有项看得见。从父模块指向 tcp、以及 http 与 tcp 之间的虚线表示父看子和兄弟互看，默认看不见，要标 pub。',
+		root: 'crate',
+		rootSub: '根模块',
+		parent: 'network',
+		http: 'http',
+		httpSub: 'pub mod',
+		httpFn: 'pub fn get_status',
+		tcp: 'tcp',
+		tcpSub: 'mod',
+		tcpFn: 'fn connect',
+		childSees: '子看父：私有项看得见',
+		parentSees: '父看子：要标 pub',
+		sibling: '兄弟：要标 pub',
+	},
+	en: {
+		caption:
+			'The root of the module tree is crate. network contains http and tcp. A child module can see private items in its parent. A parent looking into a child, and siblings looking at each other, see nothing until an item is pub.',
+		title: 'A child can see its parent. A parent sees a child only when the item is pub',
+		desc: 'The outer box is crate. Inside it is network, and inside network sit http and tcp. http is pub mod. tcp is not. The solid arrow from a child up to the parent means the child can see private items in the parent. The dashed arrows, from the parent down to tcp and between http and tcp, mean those directions are closed until an item is pub.',
+		root: 'crate',
+		rootSub: 'root module',
+		parent: 'network',
+		http: 'http',
+		httpSub: 'pub mod',
+		httpFn: 'pub fn get_status',
+		tcp: 'tcp',
+		tcpSub: 'mod',
+		tcpFn: 'fn connect',
+		childSees: 'child sees parent',
+		parentSees: 'parent sees child only if pub',
+		sibling: 'siblings only if pub',
+	},
+} as const;
+
+const locale = SITE_LOCALE === 'en' ? 'en' : 'zh';
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 460" role="img" aria-labelledby="mvis-title mvis-desc">
+		<title id="mvis-title">{t.title}</title>
+		<desc id="mvis-desc">{t.desc}</desc>
+
+		<rect class="panel" x="16" y="16" width="608" height="292" rx="10"></rect>
+		<text class="name" x="320" y="44" text-anchor="middle">{t.root}</text>
+		<text class="edge-sub" x="320" y="64" text-anchor="middle">{t.rootSub}</text>
+
+		<rect class="panel" x="36" y="80" width="568" height="208" rx="10"></rect>
+		<text class="name" x="320" y="106" text-anchor="middle">{t.parent}</text>
+
+		<rect class="slot" x="56" y="128" width="220" height="136" rx="8"></rect>
+		<text class="name" x="166" y="160" text-anchor="middle">{t.http}</text>
+		<text class="code" x="166" y="186" text-anchor="middle">{t.httpSub}</text>
+		<text class="edge-sub" x="166" y="214" text-anchor="middle">{t.httpFn}</text>
+
+		<rect class="slot" x="364" y="128" width="220" height="136" rx="8"></rect>
+		<text class="name" x="474" y="160" text-anchor="middle">{t.tcp}</text>
+		<text class="code" x="474" y="186" text-anchor="middle">{t.tcpSub}</text>
+		<text class="edge-sub" x="474" y="214" text-anchor="middle">{t.tcpFn}</text>
+
+		<path class="arrow" d="M 166 128 V 112" marker-end="url(#mvis-head)"></path>
+		<path class="arrow danger" d="M 474 112 V 128" marker-end="url(#mvis-muted)"></path>
+		<path class="arrow danger" d="M 276 196 H 364" marker-end="url(#mvis-muted)"></path>
+
+		<text class="edge-sub" x="120" y="336">{t.childSees}</text>
+		<text class="edge-sub" x="120" y="364">{t.parentSees}</text>
+		<text class="edge-sub" x="120" y="392">{t.sibling}</text>
+		<path class="arrow" d="M 36 330 H 100" marker-end="url(#mvis-head)"></path>
+		<path class="arrow danger" d="M 36 358 H 100" marker-end="url(#mvis-muted)"></path>
+		<path class="arrow danger" d="M 36 386 H 100" marker-end="url(#mvis-muted)"></path>
+
+		<defs>
+			<marker id="mvis-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+			<marker id="mvis-muted" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line-muted)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

@@ -86,7 +86,7 @@ where
 - 更有意思的是，标准库还内置了另一条自反一揽子实现 **`impl<T> From<T> for T`**（任何类型都能从自己转成自己），所以 `Endpoint` 自身也天然满足 `Into<Endpoint>`。
 
 <Aside type="tip" title="工程铁律：永远只手写 From，不要手写 Into">
-正因为标准库已经通过一揽子实现写死了 `impl<T, U> Into<U> for T where U: From<T>`，在为你自己的类型编写无损转换逻辑时，**永远只需要实现 `From`**，这样调用方既能用 `Target::from(src)`，又能自动白拿 `src.into()`（关于可能失败的受检转换 `TryFrom` 以及零成本借用转换 `AsRef`，详见[附录 B.6：生态约定 Trait 详解](/appendix/mechanisms/convention-traits/)）。
+正因为标准库已经通过一揽子实现写死了 `impl<T, U> Into<U> for T where U: From<T>`，在为你自己的类型编写无损转换逻辑时，**永远只需要实现 `From`**，这样调用方既能用 `Target::from(src)`，又能自动白拿 `src.into()`（关于可能失败的受检转换 `TryFrom` 以及零成本借用转换 `AsRef`，我们紧接着在下一节展开）。
 </Aside>
 
 ---
@@ -140,7 +140,7 @@ connecting to localhost:3000
 
 对比传统语言内置的「同名函数重载」，用「泛型 `<T>` + `Into` 契约」实现的多参数兼容有两大显著优势：
 1. **函数主体零重复**：你只需要编写并维护唯一一份 `connect` 函数体，编译器会在单态化阶段按每次调用的具体类型自动展开；
-2. **对第三方扩展开放**：在 C++ 或 Java 中，如果另一个模块的开发者定义了一个新的自定义地址结构体 `MyCustomAddr`，他无法去修改你已经写好的 `connect` 重载列表；但在 Rust 中，他只需为自己的类型写一行 `impl From<MyCustomAddr> for Endpoint`，就能立刻把 `MyCustomAddr` 直接传进你的 `connect` 函数里（关于为什么 Rust 禁止同名函数重载以及参数个数不同、默认参数等场景的完整替代方案，详见[附录 C.4：没有「函数重载」与「默认参数」，Rust 如何设计灵活 API？](/appendix/comparisons/function-overloading/)）。
+2. **对第三方扩展开放**：在 C++ 或 Java 中，如果另一个模块的开发者定义了一个新的自定义地址结构体 `MyCustomAddr`，他无法去修改你已经写好的 `connect` 重载列表；但在 Rust 中，他只需为自己的类型写一行 `impl From<MyCustomAddr> for Endpoint`，就能立刻把 `MyCustomAddr` 直接传进你的 `connect` 函数里（关于为什么双向类型推断决定了 Rust 禁止同名函数重载，以及默认参数等场景的完整工程设计范式，将在[第 15 章灵活 API 签名设计](/architecture/api-design-and-builder/)中系统展开）。
 
 ---
 
@@ -165,7 +165,7 @@ let n = match raw.parse::<u32>() {
 ```
 
 看到 `return Err(From::from(e))` 这一行，一切就彻底通透了：
-当 `?` 遇到底层的 `Err(e)`（类型为 `ParseIntError`）准备提前返回时，它会自动调用 **`<AppError as From<ParseIntError>>::from(e)`**。
+当 `?` 遇到底层的 `Err(e)`（类型为 `ParseIntError`）准备提前返回时，它会自动调用 **`<AppError as From<ParseIntError>>::from(e)`**——顺便认识一下这行尖括号写法 **`<具体类型 as Trait名>::方法名(...)`**：它叫**完全限定语法（Fully Qualified Syntax）**，用来向编译器毫无歧义地指明「调用该类型身上哪一份特定 Trait 的实现」（当一个类型的固有方法或多个 Trait 方法重名时，同样靠它消歧）。
 
 因此，我们只需要为顶层错误枚举 `AppError` 签下一份 5 行的 `From<ParseIntError>` 契约：
 
@@ -207,11 +207,11 @@ impl From<ParseIntError> for AppError {
 2. **用 `Into` 契约替代函数重载**：Rust 无需在语言层引入复杂的同名函数重载规则，只需编写一个带 `<T: Into<Target>>`（或 `<T: AsRef<Target>>`）约束的泛型函数，即可同时接纳多种输入类型并对外部新类型保持开放。
 3. **`?` 运算符的自动错误归并**：`expr?` 在遇到 `Err(e)` 时展开为 `return Err(From::from(e))`；只需为顶层错误实现底层错误的 `From` 契约，即可用 `?` 无缝归并不同模块的错误。
 
-到这里，我们已经见识了 Trait 如何化解函数重载与跨模块错误转换。在进入下一章之前，让我们退后一步，站在编程语言设计的最高处思考一个问题：**为什么在别的语言里需要做成编译器内置语法特性的东西（从复制、运算符、函数重载到错误处理），在 Rust 里全都变成了一个个普通的库级 Trait？Rust 的语言内核到底有多小？**
+到这里，我们已经打通了无损转换契约 `From` / `Into` 与 `?` 错误归并。但如果在工程中转换**可能失败**、或者函数只想**零分配借用视图**、又或者要把借用切片升级为拥有者类型，标准库又是如何规划的？
 
-下一节，我们就为第 7 章做一个顶层视野收束。
+下一节，我们就顺着所有权流向与内存成本，铺开标准库的完整生态契约矩阵。
 
-[继续：章末视野 · Rust 语言到底有多小？ →](/abstraction/kernel-and-library/)
+[继续：生态约定契约矩阵与成本命名法则 →](/abstraction/ecosystem-traits/)
 
 ### 动手核对与小练习
 

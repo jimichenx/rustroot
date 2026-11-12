@@ -1,0 +1,188 @@
+---
+title: "生态约定契约矩阵：TryFrom、AsRef、ToOwned、Default 与成本命名法则"
+description: 沿着所有权流向与堆分配成本轴线，系统串联 TryFrom、AsRef、ToOwned 与 Default 四组全生态公共握手契约，并建立 as_ / to_ / into_ 方法前缀的成本审查准则。
+sidebar:
+  label: 生态契约矩阵与成本命名
+  order: 5
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import conventionTraits from '../../../../../../../examples/types/traits/src/bin/convention-traits.rs?raw';
+
+在上一节中，我们看到标准库通过 `From<T>` 与 `Into<U>` 解决了「接管所有权且必定成功的类型转换」。
+
+但如果顺着我们在前两篇建立的**所有权流向**与**内存分配成本**继续追问，你会发现仅仅一对 `From` / `Into` 远不足以覆盖真实工程中的接口交互：
+1. 如果转换过程**可能失败**（比如把 `u32` 缩窄为 `1..=65535` 的非零端口号），还能实现 `From` 并在失败时直接 `panic!` 吗？
+2. 如果函数只是想**临时只读借用**一段视图，不想拿走原变量的所有权，也不想触发堆内存分配，用什么契约接收不同载体的输入？
+3. 反过来，当手里只有一个编译期大小未知的借用切片（如 `&str` 或 `&[u8]`），需要**申请新堆内存**升级成对应的拥有者类型（`String` 或 `Vec<u8>`）时，为什么普通的 `Clone` 办不到？
+4. 没有隐式零值初始化的 Rust，泛型容器和配置结构体靠什么统一生成初始默认值？
+
+在 Rust 标准库中，负责回答这四个问题的正是 **`TryFrom`、`AsRef`、`ToOwned` 与 `Default`**。编译器内核对它们没有任何特殊语法优待，但它们共同构成了连接标准库、数十万个第三方 `crate` 与你业务代码的**全生态公共握手协议**。
+
+本节沿着「所有权流向 × 失败可能性 × 内存成本」一条主线，把这张生态契约地图连同 Rust 标志性的 **`as_` / `to_` / `into_` 方法命名法则**一次立稳。
+
+---
+
+## 一、 消费型受检转换：`TryFrom<T>` 与 `TryInto<U>`
+
+在日常编写转换逻辑或审查 AI 生成的代码时，有一条不可逾越的工程红线：**严禁在 `From::from` 的实现内部因为输入数据越界或格式错误而调用 `panic!` 或 `.unwrap()`**。
+
+`From<T>` 向全生态做出的契约承诺是「100% 无损且必定成功」（如 `u16` 拓宽为 `u32`）。一旦源数据的合法域大于目标类型的合法域——比如把 `u32` 转换成要求落在 `1..=65535` 范围内的端口号 `Port`——就必须改用标准库的受检转换契约 **`std::convert::TryFrom<T>`**：
+
+<small class="code-source">标准库源码结构示意（<code>core::convert::TryFrom</code>）</small>
+```rust
+pub trait TryFrom<T>: Sized {
+    type Error;
+    fn try_from(value: T) -> Result<Self, Self::Error>;
+}
+```
+
+请看这个定义：它正好实战了我们在[关联类型 vs 泛型 Trait](/abstraction/associated-types/)中学过的机制——对于给定的一对源类型 `T` 和目标类型 `Self`，转换失败的原因只有唯一确定的那一种错误类型，因此标准库用关联类型 **`type Error;`** 将其锁定。
+
+与 `From` / `Into` 完全对称，标准库同样内置了一揽子实现 `impl<T, U> TryInto<U> for T where U: TryFrom<T>`。你永远只需要为自己的类型手写 `TryFrom`，调用方就会自动获得返回 `Result` 的 `.try_into()` 方法，并可直接接入 `?` 运算符向上传播错误。
+
+---
+
+## 二、 零分配借用视图转换：`AsRef<T>`
+
+现在把场景切到**只读借用**。假设我们要写一个拼接网络地址的函数，希望调用方手里无论是字符串字面量 `"localhost"`（`&str`），还是堆字符串 `String`，甚至不加 `&` 直接传进来，都能在不发生任何堆分配的前提下提取出 `&str` 视图。
+
+如果用上一节的 `<S: Into<String>>`，传入 `"localhost"` 时就会被迫在堆上新分配一块 `String`；而标准库专门为「零成本借用视图转换」定义了 **`AsRef<T>`**（可变借用对应 **`AsMut<T>`**）：
+
+<small class="code-source">标准库源码结构示意（<code>core::convert::AsRef</code>）</small>
+```rust
+pub trait AsRef<T: ?Sized> {
+    fn as_ref(&self) -> &T;
+}
+```
+
+注意签名里的两处细节：
+1. 输入接收的是只读借用 **`&self`**，输出是只读视图 **`&T`**——原变量的所有权留在调用方手里，运行期只构造一个瘦指针或胖指针，**零堆内存分配**；
+2. 参数位置标了 `: ?Sized`（放宽编译期固定大小限制），使得目标视图 `T` 可以直接填入 `str`、`[u8]` 或文件系统路径 `Path` 等动态大小切片类型。
+
+标准库中出镜率最高的例子就是文件打开函数 `std::fs::File::open<P: AsRef<Path>>(path: P)`：因为标准库预先为 `str`、`String`、`Path`、`PathBuf` 全部实现了 `AsRef<Path>`，所以无论你写 `File::open("a.toml")` 还是传一个拼接出来的 `PathBuf`，都能零分配地直接调通。
+
+---
+
+## 三、 从借用视图升级为堆所有者：为什么有了 `Clone` 还需要 `ToOwned`？
+
+看清了从拥有者向借用视图降级的 `AsRef`，再看反方向：**手里只有一个只读借用，怎么复制出一份自己独占所有权的新值？**
+
+对于编译期大小已知的具体类型（如 `Port` 或 `String`），我们早就认识标准库的 **`Clone`**：
+
+```rust
+pub trait Clone: Sized {
+    fn clone(&self) -> Self; // 输入 &String，输出同类型的 String
+}
+```
+
+但请仔细看 `Clone` 顶部的约束 `: Sized` 和返回类型 `-> Self`：它要求**借用对象和克隆出来的拥有者必须是同一个类型**。
+如果我们手里拿的是一个字符串切片 `&str`（即对动态大小类型 `str` 的借用），想把它复制成堆上的拥有者——`str` 本身在编译期连固定大小都没有，不可能按值返回 `str`，它对应的拥有者类型其实是另一个名叫 **`String`** 的结构体（同理，切片 `[u8]` 对应的拥有者是 **`Vec<u8>`**）。
+
+为了打通「借用切片类型 → 对应堆拥有者类型」的桥梁，标准库在 `alloc::borrow` 中定义了 `Clone` 的泛化契约 **`ToOwned`**：
+
+<small class="code-source">标准库源码结构示意（<code>alloc::borrow::ToOwned</code>）</small>
+```rust
+pub trait ToOwned {
+    type Owned: Borrow<Self>;
+    fn to_owned(&self) -> Self::Owned;
+}
+```
+
+- 对 `str` 实现 `ToOwned` 时，关联类型 `type Owned = String;`，调用 `"hi".to_owned()` 就会在堆上申请空间并返回 `String`；
+- 对 `[T]` 实现 `ToOwned` 时（要求 `T: Clone`），关联类型 `type Owned = Vec<T>;`，调用 `slice.to_owned()` 返回 `Vec<T>`；
+- 同时标准库还通过一揽子实现规定：任何已经实现 `Clone` 的固定大小类型 `T`，都自动实现 `ToOwned<Owned = T>`。这正是我们在第 4 章见过的 `.to_owned()` 背后的真实契约，也将直接支撑第 15 章的写时复制智能指针 `Cow<'a, B>`。
+
+---
+
+## 四、 显式默认起点：`Default`
+
+在 C++、Go 或 Java 中，声明结构体或类字段时往往存在隐式的「零值初始化」（数字为 `0`，引用为 `null`）。而 Rust 为了杜绝未初始化内存与空指针，强制要求创建实例时显式填满每一个字段。
+
+为了让泛型容器或配置对象能够按统一契约生成合理的初始值，标准库定义了 **`std::default::Default`**：
+
+```rust
+pub trait Default {
+    fn default() -> Self;
+}
+```
+
+- 标准库已为基础数值（`0`）、`bool`（`false`）、`String`（空串 `""`）、`Vec<T>`（空向量）、`Option<T>`（`None`）实现了 `Default`；
+- 自定义结构体若所有字段都取各自类型的默认值，直接标注 `#[derive(Default)]` 即可；若业务上有特定初始值（比如默认端口号不是 `0` 而是 `8080`），则手写 `impl Default`；
+- **全生态联动**：一旦实现了 `Default`，该类型立刻解锁 `Option<T>::unwrap_or_default()`（遇到 `None` 时自动兜底构造默认值），以及结构体更新语法 `Config { port: 9000, ..Default::default() }`。
+
+我们用一段完整可运行代码，串联检验 `Default`、`From`、`TryFrom`、`AsRef` 与 `ToOwned` 在同一个业务类型周围的协同效果：
+
+<small class="code-source">源文件：<code>examples/types/traits/src/bin/convention-traits.rs</code></small>
+<Code
+  code={conventionTraits.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+/>
+
+运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+localhost:8080 | 10.0.0.8:443
+valid = Ok(9000), invalid = Err("port out of 1..=65535 range")
+borrowed len = 2
+reused heap buffer = [111, 107]
+```
+
+---
+
+## 五、 工程裁决地图：转换契约与 `as_` / `to_` / `into_` 成本命名法则
+
+把前两节所有的转换契约放在一起对比，你会发现 Rust 标准库与社区遵循的 [API 命名指南](https://rust-lang.github.io/api-guidelines/naming.html)（更多大小写与访问器惯例可查[附录 A.5](/appendix/basics/conventions/)）根本不是随意的个人喜好，而是把**所有权流向与堆内存分配成本直接编码进了方法名前缀**。
+
+只要扫一眼契约或方法名前缀，甚至不用翻函数签名，你就能在 Code Review 中直接做出成本裁决：
+
+| 转换维度 | 标准库代表 Trait | 对应固有方法前缀 | 接收者签名 | 堆内存成本与原变量状态 | 标准库典型例子 |
+| --- | --- | --- | --- | --- | --- |
+| **1. 借用看视图** | **`AsRef<T>`** / `AsMut<T>` | **`as_...`** | `&self` | **零成本（无堆分配）**；原变量继续有效 | `s.as_str()`、`s.as_bytes()`、`v.as_slice()` |
+| **2. 借用造新值** | **`ToOwned`** / `Clone` | **`to_...`** | `&self` | **有成本（通常分配新堆内存并复制字节）**；原变量继续有效 | `s.to_owned()`、`s.to_lowercase()`、`slice.to_vec()` |
+| **3. 消费转所有权** | **`From<T>` / `Into<U>`** | **`into_...`** | `self` | **原变量当场移动失效**；底层已有的堆缓冲区被直接拆解复用，零额外堆复制 | `s.into_bytes()`（24B 控制头直接转交 `Vec<u8>`） |
+| **4. 消费受检转换** | **`TryFrom<T>` / `TryInto<U>`** | **`try_from_...`** / `try_new` | `self` 或源值 | 校验输入合法性并返回 `Result`，绝不因脏数据触发 `panic!` | `u16::try_from(n)`、`String::from_utf8(vec)` |
+
+<Aside type="tip" title="Code Review 实战判据：盯紧循环里的 to_ 与 clone">
+对比源码末尾的 `token.as_bytes()` 与 `token.into_bytes()`：
+- 如果后续还要继续使用 `token`，只是临时读取字节切片，调 **`as_bytes(&self)`**（零分配）；
+- 如果后续不再需要 `token`，且下游正好要求拥有所有权的 `Vec<u8>`，直接调 **`into_bytes(self)`**——它直接把 `String` 的 24 字节 `(ptr, len, cap)` 控制头移交给 `Vec<u8>`，连 1 个字节的堆内存都不必重新申请；
+- 在审查 AI 生成的代码时，一旦在热路径循环里看到密集的 `.to_vec()`、`.to_owned()` 或 `.to_string()`，就要立刻核查下游是不是只需要只读切片视图。
+</Aside>
+
+---
+
+## 小结
+
+1. **受检与无损严格分家**：100% 成功的转换实现 `From<T>`；任何可能因输入越界或格式非法而失败的转换必须实现 `TryFrom<T>` 返回 `Result`，严禁在 `From` 内 `panic!`。
+2. **借用视图与拥有者升级**：`AsRef<T>` 从 `&self` 零分配借出 `&T` 视图；`ToOwned` 突破 `Clone` 的固定大小同类型限制，将 `&str` / `&[T]` 等切片升级为堆拥有者 `String` / `Vec<T>`；`Default` 为无隐式零值的类型体系提供统一初始值契约。
+3. **前缀即成本契约**：记住 **`as_` 零分配借用、`to_` 分配新堆复制、`into_` 移交所有权复用底层内存**三条铁律。
+
+到这里，我们已经见识了从运算符、复制、`?` 错误传播到全套转换协议的十几个核心 Trait。在结束第 7 章之前，让我们退后一步，站在编程语言设计的最高处思考一个问题：**为什么在别的语言里需要做成编译器内置语法特性的东西，在 Rust 里全都变成了一个个普通的库级 Trait？编译器又是怎么在不认识标准库路径的前提下找到 `+` 号对应的 `Add` 的？**
+
+下一节，我们为第 7 章做一个顶层架构收束。
+
+[继续：章末视野 · Rust 语言到底有多小？ →](/abstraction/kernel-and-library/)
+
+### 动手核对与小练习
+
+1. **转换契约选型**：假设你要定义一个表示 HTTP 状态码的结构体 `struct StatusCode(u16);`，规定合法范围只能是 `100..=599`。请问从 `u16` 转换到 `StatusCode` 应该实现 `From<u16>` 还是 `TryFrom<u16>`？从 `StatusCode` 提取回底层整数 `u16` 呢？
+2. **成本判据核查**：下面两行代码最终都得到了 `Vec<u8>`，它们在运行时的堆内存分配行为和执行后变量 `raw` 的可用状态有什么区别？
+   ```rust
+   let raw = String::from("payload");
+   let a: Vec<u8> = raw.as_bytes().to_vec(); // 写法 A
+   let b: Vec<u8> = raw.into_bytes();        // 写法 B
+   ```
+
+<details>
+<summary>点击核对参考答案</summary>
+
+1. **转换契约选型**：
+   - `u16 -> StatusCode` 必须实现 **`TryFrom<u16>`**，因为传入 `0` 或 `999` 时转换会失败，需要返回 `Result` 交给调用方处理；
+   - `StatusCode -> u16` 应该实现 **`From<StatusCode> for u16`**，因为任意合法的 `StatusCode` 本身就是 `100..=599` 内的整数，转换为 `u16` 百分之百成功且无信息丢失。
+2. **成本与所有权差异**：
+   - **写法 A（`raw.as_bytes().to_vec()`）**：先借出 `&[u8]` 切片，再通过 `to_` 方法在堆上**新申请一块缓冲区并把字节完整复制一遍**；执行后原变量 `raw` 依然有效可用，但多付出了一次堆分配开销。
+   - **写法 B（`raw.into_bytes()`）**：通过 `into_` 按值消费 `raw`，直接把 `raw` 原有的堆缓冲区控制权转交给 `Vec<u8>`，**零堆内存分配、零字节复制**；执行后原变量 `raw` 因所有权移走而当场失效。
+
+</details>

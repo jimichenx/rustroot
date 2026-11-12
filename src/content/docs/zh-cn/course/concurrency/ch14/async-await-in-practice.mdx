@@ -1,0 +1,268 @@
+---
+title: async / await 实战与并发避坑
+description: 掌握在 tokio 运行时中启动异步程序、区分顺序 .await 与并发 join! / spawn，并在工程 Code Review 中拦截阻塞工作线程与持标准库 MutexGuard 跨越 .await 两大隐患。
+sidebar:
+  label: async / await 实战与避坑
+  order: 3
+---
+
+import { Code } from '@astrojs/starlight/components';
+import asyncInPracticeSource from '../../../../../../../examples/concurrency/async-and-pin/src/bin/async-await-in-practice.rs?raw';
+
+前两节我们已经把 `async / await` 状态机、`Future::poll` 和 `Waker` 的底层机制拆解清楚了。
+
+从这一节开始，我们进入真实的工业级工程环境。在 Rust 后端与网络开发生态中，最主流的异步运行时是 **`tokio`**。我们直接来看看在 `tokio` 中如何编写日常异步代码、如何真正跑起并发，以及在 Code Review 时必须拦截的两类典型并发事故。
+
+---
+
+## 启动运行时：`#[tokio::main]` 做了什么？
+
+在普通的 Rust 程序里，入口函数 `fn main()` 是由操作系统直接调用的同步函数。如果你直接在 `fn main()` 前面加上 `async` 写成 `async fn main()`，编译器会报错告诉你：`main function is not allowed to be async`。
+
+原因我们在前两节已经知道了：`async fn` 返回的只是一个惰性的 `Future` 状态机，而 Rust 语言本身并不内置驱动它的运行时永动机。
+
+当我们在 `Cargo.toml` 中引入 `tokio`，并在 `main` 函数头顶写下属性宏 `#[tokio::main]` 时：
+
+```rust
+#[tokio::main]
+async fn main() {
+    println!("运行在 tokio 异步运行时中");
+}
+```
+
+这个宏在编译期所做的事情非常直白——它把你写的 `async fn main()` 拆成了下面这 4 行普通的同步入口代码：
+
+```rust
+// #[tokio::main] 在编译期展开后的等价代码：
+fn main() {
+    // 1. 初始化由「多线程工作窃取线程池 + I/O Event Loop」组成的 tokio 运行时
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    // 2. 将最外层的 async 代码块构造成 Future 状态机，交给运行时驱动到底
+    runtime.block_on(async {
+        println!("运行在 tokio 异步运行时中");
+    });
+}
+```
+
+---
+
+## 顺序等待 vs 并发执行
+
+运行时启动后，我们来写两个各耗时 50 毫秒模拟异步网络查询的函数：`fetch_user_name` 和 `fetch_user_orders`：
+
+<small class="code-source">源文件：<code>examples/concurrency/async-and-pin/src/bin/async-await-in-practice.rs</code>（节选：异步查询任务）</small>
+<Code
+  code={asyncInPracticeSource.split('// ANCHOR: async_tasks\n')[1].split('\n// ANCHOR_END: async_tasks')[0]}
+  lang="rust"
+  title="使用 tokio::time::sleep 模拟耗时 50ms 的非阻塞网络请求"
+/>
+
+现在我们要同时查出 1 号用户的名字和他的订单列表。很多刚开始写 Rust 异步代码的程序员，会顺手写出下面这样的两行 `.await`：
+
+```rust
+// 写法 1：依次写两个 .await
+let name = fetch_user_name(1).await;     // 先花 50ms 等名字返回
+let orders = fetch_user_orders(1).await; // 再花 50ms 等订单返回
+```
+
+请问：这两行代码是并发执行的吗？总耗时是 50 毫秒还是 100 毫秒？
+
+答案是：**完全串行，总耗时 100 毫秒**。
+结合上一节学过的惰性求值原理，原因一目了然：在 Rust 中，只有调用 `.await`（底层调用 `.poll()`）时状态机才会开始工作。在第一行 `fetch_user_name(1).await` 彻底跑完并返回 `Poll::Ready` 之前，执行流根本还没有走到第二行，`fetch_user_orders(1)` 的状态机甚至都还没构造出来。
+
+既然查名字和查订单互不依赖，怎样让它们真正**同时并发执行**，把总耗时从 100 毫秒缩减到 50 毫秒？
+`tokio` 提供了两种不同层级的并发工具：**`tokio::join!`** 与 **`tokio::spawn`**。
+
+### 1. 任务内并发组合：`tokio::join!`
+
+如果你只是想在当前函数内部同时发起两三个异步操作，并等待它们全部返回结果，最轻量的工具是宏 **`tokio::join!`**（当分支需要用 `?` 处理 `Result` 错误时，使用对应的 `tokio::try_join!`）：
+
+```rust
+let local_prefix = String::from("VIP");
+
+// tokio::join! 把多个子状态机合绑在当前任务里同时轮询，总耗时约 50ms
+let (name, orders) = tokio::join!(
+    async {
+        let n = fetch_user_name(2).await;
+        format!("{}-{}", local_prefix, n) // 可以直接借用当前栈上的局部变量
+    },
+    fetch_user_orders(2)
+);
+```
+
+`tokio::join!` 的底层机制非常轻量：它**不会**向运行时线程池注册新的独立调度任务，而是把你传入的两个子 `Future` 合绑在当前同一个外层状态机里。每次工作线程来 `poll` 外层状态机时，它就顺手把里面的两个子状态机都 `poll` 一遍。
+
+正因为这两个分支始终待在当前任务内部、绝不会脱离当前函数独自存活，所以 **`tokio::join!` 内部的异步块可以直接借用当前函数栈上的局部变量（如 `&local_prefix`），不需要满足 `'static` 约束**。
+
+### 2. 派生独立后台任务：`tokio::spawn`
+
+那什么时候需要用 **`tokio::spawn`**？
+当你需要处理成千上万个独立的客户端连接，或者需要把一个耗时任务丢到后台独立运行、让 `tokio` 底层的多个操作系统工作线程真正发挥**多核 CPU 并行算力**时，就需要调用 `tokio::spawn`：
+
+```rust
+let handle = tokio::spawn(async move {
+    // 作为一个独立的顶层任务交给 tokio 线程池调度
+    record_and_notify(counter_cloned, id).await;
+});
+
+// 稍后可以通过 .await 等待后台任务完成（类似 std::thread 的 join）
+handle.await.unwrap();
+```
+
+注意一个关键的签名特征：**`tokio::spawn` 的要求与我们在第 13.1 节学过的 `std::thread::spawn` 完全一致——传入的 `Future` 状态机必须满足 `Send + 'static` 约束。**
+
+结合我们在第 13 章和本章前两节建立的物理模型，这两条约束的原因非常清楚：
+- **为什么要求 `'static`？** 被 `tokio::spawn` 派生的后台任务会立刻脱离当前函数独立运行，哪怕当前函数已经返回销毁了，后台任务可能还在跑。因此它内部不能直接借用当前函数的短命栈变量，通常配合 `async move { ... }` 将所需数据（或 `Arc` 克隆）的所有权移入状态机；
+- **为什么要求 `Send`？** `tokio` 的多线程运行时采用的是**工作窃取（Work-Stealing）调度算法**：你的状态机在第 1 次被工作线程 A 调用 `poll()` 返回 `Poll::Pending` 挂起后，如果稍后唤醒时工作线程 A 正忙，空闲的**工作线程 B 就会把这个状态机偷过去执行第 2 次 `poll()`**。既然同一个状态机实例在两次 `.await` 之间可能会跨操作系统线程搬家，它自身自然必须实现 `Send`。
+
+---
+
+## Code Review 禁忌一：严禁在 `async fn` 中调用同步阻塞操作
+
+在审查他人或 AI 生成的 Rust 异步代码时，排名第一的高危缺陷，就是在 `async fn` 里面混入了传统的**同步阻塞调用**。最常见的例子就是误用了标准库的 `std::thread::sleep`：
+
+```rust
+async fn bad_handler() {
+    // 严重缺陷：直接把底层承载成千上万个任务的 OS 工作线程卡死 1 秒钟
+    std::thread::sleep(Duration::from_secs(1));
+
+    // 正确写法：向运行时定时器注册 Waker，立刻 return Poll::Pending 让出工作线程
+    tokio::time::sleep(Duration::from_secs(1)).await;
+}
+```
+
+为什么一行 `std::thread::sleep`（或者同步的 `std::fs::read`、同步网络请求、耗时数百毫秒的密集密码哈希计算）在异步程序里会引发灾难？
+
+请回想 `14.1` 节中异步运行时的工作线程池结构：在一台 8 核服务器上，`tokio` 默认**一共只创建 8 个操作系统工作线程**，这 8 个工作线程要轮流服务好几万个异步状态机。
+这套机制能运转的前提是**协作式调度（Cooperative Scheduling）**：每个状态机每次被调用 `poll()` 时，只执行几微秒的非阻塞代码就主动返回 `Poll::Pending` 把工作线程让出来。
+
+如果你在某个 `async fn` 里面直接调用了 `std::thread::sleep(Duration::from_secs(1))`，你的状态机**根本没有返回 `Poll::Pending`**，而是直接向操作系统内核发起了系统调用，把当前正在驱动它的那个操作系统工作线程死死冻在了原地。如果有 8 个请求同时触发了这段代码，整台服务器的 8 个工作线程就会在瞬间全部趴窝——哪怕另外 49,992 个连接的数据早已到达网卡，也没有任何一个工作线程能腾出手去 `poll` 它们，整台服务当场陷入长达 1 秒的全面假死。
+
+**工程裁决准则**：
+- 在 `async fn` 中，凡是涉及定时器、网络读写、通道等待的操作，一律使用异步运行时提供的非阻塞版本（如 `tokio::time::sleep`、`tokio::net::TcpStream`、`tokio::sync::mpsc`）并配合 `.await`；
+- 如果你在异步业务中确实无法避免要调用一段同步阻塞的第三方库（如同步数据库驱动）或耗时超过几毫秒的 CPU 密集型计算（如图像压缩、大文件哈希），**绝不能直接写在 `async fn` 里，必须使用 `tokio::task::spawn_blocking` 将它单独扔进 `tokio` 专门准备的阻塞线程池中执行**：
+  ```rust
+  let hash = tokio::task::spawn_blocking(|| {
+      // 运行在独立的阻塞线程池上，绝不占用核心异步工作线程
+      compute_heavy_sha256()
+  }).await.unwrap();
+  ```
+
+---
+
+## Code Review 禁忌二：为什么不能拿着标准库 `MutexGuard` 跨过 `.await`？
+
+第二个高频踩坑场景，发生在把第 13.4 节学过的标准库互斥锁 `std::sync::Mutex` 带进异步函数的时候。
+
+很多开发者听说过一句话：「在异步代码里要用 `tokio::sync::Mutex`，不能用标准库的 `std::sync::Mutex`。」
+这句话其实**只说对了一半**。事实是：如果你的锁只用来保护内存里的某个结构体（比如往 `HashMap` 里插一条记录、给计数器加个 `1`），不仅**完全可以用标准库的 `std::sync::Mutex`**，而且因为标准库锁开销更小，官方文档明确推荐优先使用标准库 `Mutex`。
+
+但使用标准库 `std::sync::Mutex` 有一条绝对不能触碰的红线：**绝不能拿着锁守卫 `MutexGuard` 跨过 `.await` 挂起点**。
+
+我们来看看如果违规跨过 `.await` 会发生什么：
+
+```rust
+async fn bad_hold_guard_across_await(counter: Arc<Mutex<u64>>) {
+    let mut guard = counter.lock().unwrap(); // 1. 拿到标准库锁守卫 MutexGuard
+    *guard += 1;
+
+    // 2. 致命错误：还没释放 guard，就在这里 .await 挂起让出了线程
+    tokio::time::sleep(Duration::from_millis(20)).await;
+
+    println!("count = {}", *guard); // 3. 跨越 .await 后还在使用 guard
+}
+```
+
+一旦你尝试用 `tokio::spawn(bad_hold_guard_across_await(counter))` 派生这个任务，Rust 编译器会立刻甩出 `E0277` 报错把你拦下：
+
+```text
+error: future cannot be sent between threads safely
+  --> src/bin/async-await-in-practice.rs:85:22
+   |
+85 |         let handle = tokio::spawn(bad_hold_guard_across_await(counter_cloned));
+   |                      ^^^^^^^^^^^^ future returned by `bad_hold_guard_across_await` is not `Send`
+   |
+   = help: within `impl Future<Output = ()>`, the trait `Send` is not implemented for `std::sync::MutexGuard<'_, u64>`
+note: future is not `Send` as this value is used across an await
+  --> src/bin/async-await-in-practice.rs:36:50
+   |
+33 |     let mut guard = counter.lock().unwrap();
+   |         --------- has type `std::sync::MutexGuard<'_, u64>` which is not `Send`
+...
+36 |     tokio::time::sleep(Duration::from_millis(20)).await;
+   |                                                  ^^^^^^ await occurs here, with `guard` maybe used later
+```
+
+读一读编译器给出的那句提示：`future is not Send as this value is used across an await`。把我们在第 13.5 节和第 14.1 节学过的两块知识拼在一起，这条报错背后的物理逻辑堪称严丝合缝：
+
+1. **为什么状态机变成了 `!Send`？**
+   我们在 `14.1` 学过，凡是跨过 `.await` 挂起点还要继续使用的局部变量（这里的 `guard`），都会被编译器自动打包变成**状态机枚举的内部字段**；而我们在 `13.5` 四象限表中专门学过，为了满足操作系统「哪个线程加的锁必须由哪个线程解开」的底层要求，**`std::sync::MutexGuard` 是明确标记为 `!Send` 的**。一旦状态机结构体里装了一个 `!Send` 的 `MutexGuard` 字段，整个 `Future` 状态机就根据自动推导规则变成了 `!Send`——因为如果工作线程 A 在加锁后于 `.await` 处挂起，醒来时状态机被工作线程 B 偷过去继续执行并析构解锁，就会直接在工作线程 B 上解开工作线程 A 加的锁！
+2. **就算不跨线程，也会引发工作线程死锁**：
+   退一步说，即便在单线程运行时里不涉及 `Send`，拿着标准库锁跨过 `.await` 同样是致命的：任务 1 锁住 `counter` 后遇到 `.await` 返回 `Poll::Pending` 让出了工作线程；工作线程转身从就绪队列里拎起任务 2 开始执行，而任务 2 第一步也调了 `counter.lock()`——此时 `counter` 的锁还揣在已经挂起休眠的任务 1 兜里，结果任务 2 直接调用操作系统阻塞原语把当前唯一的工作线程卡死在门外，导致任务 1 永远没有机会醒来解锁，当场死锁。
+
+**工程裁决与重构方案**：
+- **首选方案（缩短锁作用域，不跨 `.await`）**：95% 的业务场景根本不需要在等待网络 I/O 的时候还占着内存锁。只需用一对花括号 `{}` 把锁守卫的生命周期限制在 `.await` 之前，改完内存数据、拷出所需值后立即让 `guard` 离开作用域自动解锁：
+
+<small class="code-source">源文件：<code>examples/concurrency/async-and-pin/src/bin/async-await-in-practice.rs</code>（节选：在 .await 前提前释放锁守卫）</small>
+<Code
+  code={asyncInPracticeSource.split('// ANCHOR: mutex_across_await\n')[1].split('\n\n/*')[0]}
+  lang="rust"
+  title="在进入 .await 挂起点前用代码块 {} 提前释放 MutexGuard"
+/>
+
+  - **次选方案（改用异步锁 `tokio::sync::Mutex`）**：只有当你的业务逻辑确实要求「必须锁住某个异步连接池或事务，在持锁期间完成多步 `.await` 网络交互」时，才改用 `tokio::sync::Mutex`（它的 `.lock().await` 在抢不到锁时不会卡死操作系统工作线程，而是直接返回 `Poll::Pending` 让出线程，且其守卫实现了 `Send`）。
+
+---
+
+## 运行完整实战实验
+
+我们把本节讲过的四项核心操作（顺序 `.await`、`tokio::join!`、`tokio::spawn` 配合提前解锁、`spawn_blocking`）放在同一个 `#[tokio::main]` 程序中运行验证：
+
+<small class="code-source">源文件：<code>examples/concurrency/async-and-pin/src/bin/async-await-in-practice.rs</code>（节选：tokio 并发实战主函数）</small>
+<Code
+  code={asyncInPracticeSource.split('// ANCHOR: tokio_main\n')[1].split('\n// ANCHOR_END: tokio_main')[0]}
+  lang="rust"
+  title="顺序 .await、tokio::join!、tokio::spawn 与 spawn_blocking 实战对照"
+/>
+
+运行输出：
+
+```text
+[1. 顺序 .await] 拿到 Alice(#1) 与 ["订单-1-A", "订单-1-B"]（耗时约 110.48ms）
+[2. tokio::join! 并发] 拿到 VIP-Alice(#2) 与 ["订单-2-A", "订单-2-B"]（耗时约 50.42ms）
+  [后台任务 #3] 已完成通知，当前累计访问计数 = 3
+  [后台任务 #2] 已完成通知，当前累计访问计数 = 2
+  [后台任务 #1] 已完成通知，当前累计访问计数 = 1
+[4. spawn_blocking] 拿到同步计算结果: sha256:9f86d081884c7d659a2feaa0c55ad015
+```
+
+---
+
+## 小结
+
+掌握了这一节的实战工具与两条审查红线，你就已经具备了编写与 Review 工业级 Rust 异步代码的核心能力：
+
+1. **区分串行与并发**：依次写两行 `.await` 是纯串行等待；无依赖的同任务分支用 **`tokio::join!`** 同时轮询（可直接借用局部变量），独立后台任务用 **`tokio::spawn`** 交给多线程池并行调度（要求 `Send + 'static`）；
+2. **绝不阻塞异步工作线程**：严禁在 `async fn` 中直接调用 `std::thread::sleep` 或同步阻塞 I/O；遇到不可避免的同步调用或重度 CPU 计算，用 **`tokio::task::spawn_blocking`** 隔离到专用阻塞池；
+3. **标准库锁不跨 `.await`**：优先用标准库 `std::sync::Mutex` 保护纯内存数据，但必须在 `.await` 之前用 `{}` 提前释放 `MutexGuard`。
+
+到这里，第五篇关于异步并发的拼图还剩下最后一块最吊胃口的核心悬念：
+在上一节查看 `Future::poll` 的真实签名时，它的第一个参数为什么不能写成普通的 `&mut self`，而必须写成 **`self: Pin<&mut Self>`**？我们在第 10.1 节和第 11.5 节两次预告过的「自引用结构体移动悬垂困局」，到底是怎样在 `async fn` 状态机里撞上的？
+
+下一节（`14.4`），我们就来彻底解开 **`Pin<P>` 与自引用状态机**的底层真相。
+
+---
+
+### 附：本节完整可运行实验源码
+
+<details>
+<summary>点击展开完整源码（<code>examples/concurrency/async-and-pin/src/bin/async-await-in-practice.rs</code>）</summary>
+
+<Code
+  code={asyncInPracticeSource.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+  title="examples/concurrency/async-and-pin/src/bin/async-await-in-practice.rs"
+/>
+
+</details>

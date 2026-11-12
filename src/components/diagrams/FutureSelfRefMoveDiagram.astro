@@ -1,0 +1,103 @@
+---
+/**
+ * 14.4「挂起后的自引用状态机，按位 Move 不改写内部地址」。
+ * 左：fut1 在 0x1000，first_byte_ref 指回 buf。
+ * 右：搬到 0x2000 后，buf 在新地址，first_byte_ref 仍是 0x1000。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+const copy = {
+	zh: {
+		caption:
+			'挂起时 fut1 在 0x1000，first_byte_ref 里写的就是 buf 的地址 0x1000。按位 Move 到 0x2000 之后，buf 到了新地址，first_byte_ref 里复制过来的仍是 0x1000，指着已经失效的旧位置。',
+		title: '按位 Move 不改写 first_byte_ref 里的旧地址',
+		desc: '左边是挂起时的 fut1，地址 0x1000。buf 在 0x1000，first_byte_ref 在 0x1008，里面保存 0x1000，箭头指回同一个状态机里的 buf。右边按位 Move 到 fut2 的 0x2000 之后，buf 位于 0x2000，first_byte_ref 里的数字仍是 0x1000。虚线指向已经失效的旧地址。',
+		before: '挂起时',
+		beforeSub: 'fut1 · 0x1000',
+		after: '按位 Move 之后',
+		afterSub: 'fut2 · 0x2000',
+		move: '按位 Move',
+		buf: 'buf',
+		bufAt: '在 0x1000',
+		bufNew: '在 0x2000',
+		ptr: 'first_byte_ref',
+		holdsOld: '里面是 0x1000',
+		same: '指回 buf',
+		dangling: '仍是旧地址',
+		gone: '0x1000 已失效',
+	},
+	en: {
+		caption:
+			'While fut1 is suspended at 0x1000, first_byte_ref stores the address of buf, 0x1000. After a bitwise move to 0x2000, buf is at the new address, but the copied first_byte_ref still holds 0x1000 and points at the old location.',
+		title: 'A bitwise move does not rewrite the old address in first_byte_ref',
+		desc: 'On the left, suspended fut1 is at 0x1000. buf is at 0x1000 and first_byte_ref at 0x1008 stores 0x1000, so the arrow points back at buf in the same state machine. On the right, after a bitwise move to fut2 at 0x2000, buf is at 0x2000. The number in first_byte_ref is still 0x1000. The dashed arrow points at the invalidated old address.',
+		before: 'while suspended',
+		beforeSub: 'fut1 · 0x1000',
+		after: 'after the bitwise move',
+		afterSub: 'fut2 · 0x2000',
+		move: 'bitwise Move',
+		buf: 'buf',
+		bufAt: 'at 0x1000',
+		bufNew: 'at 0x2000',
+		ptr: 'first_byte_ref',
+		holdsOld: 'stores 0x1000',
+		same: 'points at buf',
+		dangling: 'still the old address',
+		gone: '0x1000 is invalid',
+	},
+} as const;
+
+const locale = SITE_LOCALE === 'en' ? 'en' : 'zh';
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 460" role="img" aria-labelledby="fsr-title fsr-desc">
+		<title id="fsr-title">{t.title}</title>
+		<desc id="fsr-desc">{t.desc}</desc>
+
+		<text class="edge-label" x="150" y="28" text-anchor="middle">{t.before}</text>
+		<text class="edge-sub" x="150" y="48" text-anchor="middle">{t.beforeSub}</text>
+		<text class="edge-label" x="490" y="28" text-anchor="middle">{t.after}</text>
+		<text class="edge-sub" x="490" y="48" text-anchor="middle">{t.afterSub}</text>
+		<text class="edge-sub" x="320" y="36" text-anchor="middle">{t.move}</text>
+		<path class="arrow" d="M 250 40 H 390" marker-end="url(#fsr-head)"></path>
+
+		<rect class="panel" x="16" y="68" width="268" height="360" rx="10"></rect>
+		<rect class="slot" x="36" y="96" width="228" height="100" rx="8"></rect>
+		<text class="name" x="150" y="132" text-anchor="middle">{t.buf}</text>
+		<text class="code" x="150" y="158" text-anchor="middle">{t.bufAt}</text>
+		<text class="edge-sub" x="150" y="180" text-anchor="middle">{t.same}</text>
+
+		<rect class="slot" x="36" y="248" width="228" height="120" rx="8"></rect>
+		<text class="name" x="150" y="284" text-anchor="middle">{t.ptr}</text>
+		<text class="code" x="150" y="312" text-anchor="middle">{t.holdsOld}</text>
+		<text class="edge-sub" x="150" y="338" text-anchor="middle">0x1008</text>
+		<path class="arrow" d="M 150 248 V 204" marker-end="url(#fsr-head)"></path>
+
+		<rect class="panel" x="356" y="68" width="268" height="360" rx="10"></rect>
+		<rect class="slot" x="376" y="96" width="228" height="88" rx="8"></rect>
+		<text class="name" x="490" y="128" text-anchor="middle">{t.buf}</text>
+		<text class="code" x="490" y="156" text-anchor="middle">{t.bufNew}</text>
+
+		<rect class="slot" x="376" y="204" width="228" height="100" rx="8"></rect>
+		<text class="name" x="490" y="236" text-anchor="middle">{t.ptr}</text>
+		<text class="code" x="490" y="262" text-anchor="middle">{t.holdsOld}</text>
+		<text class="edge-sub" x="490" y="284" text-anchor="middle">{t.dangling}</text>
+
+		<rect class="freed" x="376" y="328" width="228" height="72" rx="8"></rect>
+		<text class="edge-sub" x="490" y="360" text-anchor="middle">{t.gone}</text>
+		<text class="code" x="490" y="382" text-anchor="middle">0x1000</text>
+		<path class="arrow danger" d="M 490 304 V 328" marker-end="url(#fsr-muted)"></path>
+
+		<defs>
+			<marker id="fsr-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+			<marker id="fsr-muted" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line-muted)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

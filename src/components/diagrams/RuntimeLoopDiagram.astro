@@ -1,0 +1,154 @@
+---
+/**
+ * 14.1「运行时环路」。
+ *
+ * 一条闭合线：就绪队列 → 工作线程 step() → Event Loop → 回到就绪队列。
+ * 标记点真的沿这条线走。等在 Event Loop 上的时间明显长于调用 step()。
+ * 前两圈让出线程，第三圈在工作线程上拿到结果，然后回到第一圈。
+ * 不使用进度条。关掉 JS 时停在第三圈的文字；减动效时标记点停在工作线程上。
+ */
+import { SITE_LOCALE } from '../../config/site';
+import FigureControls from '../course/FigureControls.astro';
+
+const copy = {
+	zh: {
+		caption:
+			'工作线程从就绪队列取出状态机，调用一次 step。没准备好就挂到 Event Loop，网卡数据到达后再塞回队列。前两圈都会让出线程；第三圈拿到订单结果。这条环路接着走下一圈。',
+		title: '状态机在就绪队列、工作线程和 Event Loop 之间循环',
+		desc: '上方四个阶段是编译器展开的枚举：Start、WaitingUserId、WaitingOrders、Done。下方一条闭合线。标记点从左侧的就绪队列走到右侧的工作线程。第一圈调用 step 发起查用户，返回 None，沿右边下到 Event Loop，等网卡到达后再沿底边回到就绪队列。第二圈收到 user_id 42，发起查订单，再次让出。第三圈订单就绪，任务停在工作线程上。然后环路回到第一圈。',
+		ready: '就绪队列',
+		worker: '工作线程',
+		workerSub: 'step()',
+		loop: 'Event Loop',
+		loopSub: 'epoll / kqueue',
+		phases: [
+			{ name: 'Start', sub: 'username' },
+			{ name: 'WaitingUserId', sub: '等 user_id' },
+			{ name: 'WaitingOrders', sub: 'user_id: 42' },
+			{ name: 'Done', sub: '订单就绪' },
+		],
+		laps: [
+			'阶段 0：发起查用户，返回 None，挂到 Event Loop。',
+			'阶段 1：收到 user_id = 42，发起查订单，再次让出。',
+			'阶段 2：订单就绪。这一圈在工作线程上结束。',
+		],
+	},
+	en: {
+		caption:
+			'A worker takes the state machine off the ready queue and calls step once. If it is not ready, the task parks on the event loop and returns to the queue when the socket has data. The first two laps yield. The third lap gets the orders. Then the circuit starts again.',
+		title: 'The state machine circulates through the queue, a worker, and the event loop',
+		desc: 'Four phases across the top are the enum the compiler builds: Start, WaitingUserId, WaitingOrders, and Done. One closed line below. The marker runs from the ready queue on the left to the worker on the right. Lap one calls step to fetch the user, returns None, drops to the event loop, and comes back when the socket has data. Lap two receives user_id 42, fetches orders, and yields again. Lap three finds the orders ready and stops on the worker. Then the circuit returns to lap one.',
+		ready: 'ready queue',
+		worker: 'worker',
+		workerSub: 'step()',
+		loop: 'event loop',
+		loopSub: 'epoll / kqueue',
+		phases: [
+			{ name: 'Start', sub: 'username' },
+			{ name: 'WaitingUserId', sub: 'await user id' },
+			{ name: 'WaitingOrders', sub: 'user_id: 42' },
+			{ name: 'Done', sub: 'orders ready' },
+		],
+		laps: [
+			'Phase 0: fetch the user, return None, park on the event loop.',
+			'Phase 1: user_id is 42. Fetch orders, then yield again.',
+			'Phase 2: orders are ready. This lap ends on the worker.',
+		],
+	},
+} as const;
+
+const locale = SITE_LOCALE === 'en' ? 'en' : 'zh';
+const t = copy[locale];
+
+const phases = [
+	{ ...t.phases[0], x: 16, lap: 1, end: false },
+	{ ...t.phases[1], x: 172, lap: 2, end: false },
+	{ ...t.phases[2], x: 328, lap: 3, end: false },
+	{ ...t.phases[3], x: 484, lap: 0, end: true },
+] as const;
+---
+
+<figure class="diagram runtime-loop" data-loop>
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 468" role="img" aria-labelledby="rtl-title rtl-desc">
+		<title id="rtl-title">{t.title}</title>
+		<desc id="rtl-desc">{t.desc}</desc>
+
+		{
+			phases.map((phase) => (
+				<g>
+					<rect class="freed" x={phase.x} y="16" width="140" height="64" rx="8"></rect>
+					<g class:list={['loop-phase', phase.lap ? `loop-phase-${phase.lap}` : '', phase.end && 'loop-end']}>
+						<rect class="slot" x={phase.x} y="16" width="140" height="64" rx="8"></rect>
+					</g>
+					<text class="code" x={phase.x + 70} y="42" text-anchor="middle">
+						{phase.name}
+					</text>
+					<text class="edge-sub" x={phase.x + 70} y="62" text-anchor="middle">
+						{phase.sub}
+					</text>
+				</g>
+			))
+		}
+
+		<path class="arrow" d="M 120 168 H 520 V 328 H 120 Z"></path>
+		<text class="edge-label" x="200" y="156" text-anchor="middle">{t.ready}</text>
+		<text class="edge-label" x="470" y="156" text-anchor="middle">{t.worker}</text>
+		<text class="edge-sub" x="470" y="188" text-anchor="start">{t.workerSub}</text>
+		<text class="edge-label" x="320" y="356" text-anchor="middle">{t.loop}</text>
+		<text class="edge-sub" x="320" y="376" text-anchor="middle">{t.loopSub}</text>
+
+		<circle class="slot loop-token" data-loop-token cx="0" cy="0" r="8"></circle>
+
+		<rect class="panel" x="16" y="396" width="608" height="52" rx="10"></rect>
+		{
+			t.laps.map((line, index) => (
+				<text
+					class:list={[
+						'edge-label',
+						'loop-lap',
+						`loop-lap-${index + 1}`,
+						index === 2 && 'loop-end',
+					]}
+					x="320"
+					y="428"
+					text-anchor="middle"
+				>
+					{line}
+				</text>
+			))
+		}
+	</svg>
+	<FigureControls controls="loop" />
+</figure>
+
+<script>
+	import { bindCirculation } from '../../scripts/motion';
+
+	const park = {
+		duration: 6400,
+		frames: [
+			{ at: 0, x: 160, y: 168 },
+			{ at: 0.12, x: 520, y: 168 },
+			{ at: 0.28, x: 520, y: 168 },
+			{ at: 0.38, x: 520, y: 328 },
+			{ at: 0.48, x: 320, y: 328 },
+			{ at: 0.76, x: 320, y: 328 },
+			{ at: 0.88, x: 120, y: 328 },
+			{ at: 0.94, x: 120, y: 168 },
+			{ at: 1, x: 160, y: 168 },
+		],
+	};
+	const finish = {
+		duration: 2800,
+		frames: [
+			{ at: 0, x: 160, y: 168 },
+			{ at: 0.35, x: 520, y: 168 },
+			{ at: 1, x: 520, y: 168 },
+		],
+	};
+
+	document.querySelectorAll('.runtime-loop').forEach((figure) => {
+		bindCirculation(figure, [park, park, finish]);
+	});
+</script>

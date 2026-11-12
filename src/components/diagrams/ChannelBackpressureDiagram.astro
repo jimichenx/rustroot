@@ -1,0 +1,167 @@
+---
+/**
+ * 13.3「sync_channel 放满之后，下一次 send 停住」。
+ *
+ * 容量画成 3。五步可跳：
+ * 1. 空；
+ * 2. 放进 1 条；
+ * 3. 放满；
+ * 4. 再 send，值停在管道外面，发送端不返回；
+ * 5. recv 取走一条，等着的那条进入，send 返回。管道仍是满的。
+ *
+ * 关掉 JS 时停在第 5 步。
+ */
+import { SITE_LOCALE } from '../../config/site';
+import FigureControls from '../course/FigureControls.astro';
+import PipeTube from './PipeTube.astro';
+import { pipeMetrics } from './pipe-metrics';
+
+const copy = {
+	zh: {
+		caption:
+			'sync_channel 的容量在这里画成 3。放满之后，下一次 send 停在管道外面，发送端不返回。接收端取走一条，空出来的位置让这次 send 返回。管道里仍是 3 条。',
+		title: '有界通道放满后，发送端停住，直到接收端腾出空位',
+		desc: '容量是 3。第 1 步管道是空的。第 2 步放进 1 条。第 3 步 3 条放满。第 4 步再 send，值停在管口外面，发送端不返回。第 5 步 recv 取走一条，等着的那条进入，send 返回，管道里仍是 3 条。',
+		sender: '发送端',
+		receiver: '接收端',
+		sendOk: 'send 返回',
+		sendStop: 'send 停住',
+		recvIdle: 'rx',
+		recvGot: '取到一条',
+		cap: '容量 3',
+		notes: [
+			'容量 3，通道是空的，send 直接返回。',
+			'容量 3，通道是空的，send 直接返回。',
+			'放进一条，还没到上限。',
+			'三条放满。',
+			'再 send 停在管口外，发送端不返回。',
+			'recv 取走一条，等着的那条进入，send 返回。',
+		],
+		stepper: '放满之后 send 停住',
+		steps: [
+			'容量 3，通道是空的',
+			'放进一条',
+			'三条放满',
+			'再 send，停在管口外',
+			'recv 腾出空位，send 返回',
+		],
+	},
+	en: {
+		caption:
+			'The sync_channel bound is drawn as 3. Once it is full, the next send waits outside the pipe and does not return. After recv takes one, that send returns. The pipe holds 3 again.',
+		title: 'A bounded channel blocks send until recv frees a slot',
+		desc: 'The bound is 3. Step 1 is empty. Step 2 holds one message. Step 3 is full. Step 4: another send waits outside the mouth and does not return. Step 5: recv takes one, the waiting message enters, send returns, and the pipe holds 3 again.',
+		sender: 'sender',
+		receiver: 'receiver',
+		sendOk: 'send returns',
+		sendStop: 'send waits',
+		recvIdle: 'rx',
+		recvGot: 'took one',
+		cap: 'bound 3',
+		notes: [
+			'Bound 3. The channel is empty. send returns.',
+			'Bound 3. The channel is empty. send returns.',
+			'One message is in. The bound is not reached.',
+			'Three messages. The channel is full.',
+			'The next send waits outside. It does not return.',
+			'recv takes one. The waiting message enters. send returns.',
+		],
+		stepper: 'send waits once the channel is full',
+		steps: [
+			'bound 3, channel empty',
+			'one message in',
+			'three messages, full',
+			'the next send waits outside',
+			'recv frees a slot and send returns',
+		],
+	},
+} as const;
+
+const locale = SITE_LOCALE === 'en' ? 'en' : 'zh';
+const t = copy[locale];
+
+const pipe = { x: 196, y: 76, width: 256, height: 32 };
+const bore = pipeMetrics(pipe.x, pipe.y, pipe.width, pipe.height);
+const bayW = 60;
+const bayH = 16;
+const bayGap = (bore.boreW - bayW * 3) / 4;
+const bayY = bore.boreY + (bore.boreH - bayH) / 2;
+const bays = [0, 1, 2].map((index) => bore.boreX + bayGap + index * (bayW + bayGap));
+---
+
+<figure class="diagram ch-press-figure" data-stepper>
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 280" role="img" aria-labelledby="cbp-title cbp-desc">
+		<title id="cbp-title">{t.title}</title>
+		<desc id="cbp-desc">{t.desc}</desc>
+
+		<rect class="panel" x="12" y="36" width="148" height="96" rx="10"></rect>
+		<text class="label" x="56" y="56" text-anchor="middle">{t.sender}</text>
+		<g class="bp-phase bp-send-ok bp-end">
+			<rect class="slot" x="24" y="66" width="80" height="52" rx="8"></rect>
+			<text class="name" x="64" y="86" text-anchor="middle">tx</text>
+			<text class="edge-sub" x="64" y="106" text-anchor="middle">{t.sendOk}</text>
+		</g>
+		<g class="bp-phase bp-send-stop">
+			<rect class="slot" x="24" y="66" width="80" height="52" rx="8"></rect>
+			<text class="name" x="64" y="86" text-anchor="middle">tx</text>
+			<text class="edge-sub" x="64" y="106" text-anchor="middle">{t.sendStop}</text>
+		</g>
+		<g class="bp-phase bp-out">
+			<rect class="object" x="148" y="78" width="36" height="28" rx="4"></rect>
+			<text class="code" x="166" y="97" text-anchor="middle">4</text>
+		</g>
+
+		<PipeTube x={pipe.x} y={pipe.y} width={pipe.width} height={pipe.height} />
+		{
+			bays.map((bayX, index) => {
+				const emptyClass = `bp-b${index + 1}-empty`;
+				const fullClass = `bp-b${index + 1}-full`;
+				return (
+					<g>
+						<g class:list={['bp-phase', emptyClass]}>
+							<rect class="freed" x={bayX} y={bayY} width={bayW} height={bayH} rx="6"></rect>
+						</g>
+						<g class:list={['bp-phase', fullClass, 'bp-end']}>
+							<rect class="object" x={bayX} y={bayY} width={bayW} height={bayH} rx="6"></rect>
+						</g>
+					</g>
+				);
+			})
+		}
+		<text class="edge-sub" x="324" y="128" text-anchor="middle">{t.cap}</text>
+
+		<rect class="panel" x="492" y="36" width="136" height="96" rx="10"></rect>
+		<text class="label" x="560" y="56" text-anchor="middle">{t.receiver}</text>
+		<g class="bp-phase bp-recv-idle">
+			<rect class="slot" x="504" y="66" width="112" height="52" rx="8"></rect>
+			<text class="name" x="560" y="98" text-anchor="middle">{t.recvIdle}</text>
+		</g>
+		<g class="bp-phase bp-recv-got bp-end">
+			<rect class="slot" x="504" y="66" width="112" height="52" rx="8"></rect>
+			<text class="name" x="560" y="86" text-anchor="middle">rx</text>
+			<text class="edge-sub" x="560" y="106" text-anchor="middle">{t.recvGot}</text>
+		</g>
+
+		<rect class="panel" x="16" y="188" width="608" height="68" rx="10"></rect>
+		{
+			t.notes.map((line, index) => (
+				<text
+					class:list={['edge-label', 'bp-only', `bp-only-${index}`, index === 5 && 'bp-end']}
+					data-step={index === 0 ? undefined : index}
+					x="320"
+					y="228"
+					text-anchor="middle"
+				>
+					{line}
+				</text>
+			))
+		}
+	</svg>
+	<FigureControls controls="stepper" label={t.stepper} steps={[...t.steps]} />
+</figure>
+
+<script>
+	import { initFigures } from '../../scripts/motion';
+	initFigures();
+</script>

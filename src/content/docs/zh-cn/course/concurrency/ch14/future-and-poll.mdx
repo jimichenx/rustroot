@@ -1,0 +1,250 @@
+---
+title: Future 与 poll：状态机的推进契约
+description: 拆解 async fn 返回的惰性 Future 状态机，从盲目轮询导致的 CPU 空转推导出 Poll::Pending 与 Waker 唤醒机制，并手写一个与 async / await 咬合的真实 Future。
+sidebar:
+  label: Future 与 poll
+  order: 2
+---
+
+import { Code } from '@astrojs/starlight/components';
+import PollWakerDiagram from '../../../../../../components/diagrams/PollWakerDiagram.astro';
+import futureAndPollSource from '../../../../../../../examples/concurrency/async-and-pin/src/bin/future-and-poll.rs?raw';
+
+在上一节结尾，我们留下了一个核心问题：
+
+状态机是 Rust 编译器在编译期生成的，而驱动它的异步运行时（如 `tokio`）是第三方社区库写的。编译器在编译你的 `async fn` 时，并不知道你将来会选用哪家运行时；反过来，`tokio` 的作者在写工作线程池时，也不知道你会写出什么样的业务状态机。
+
+双方素未谋面，却要严丝合缝地配合运转——这就要求 Rust 标准库必须定下一份全国通用的标准接口契约。这份契约就是 **`std::future::Future`**。
+
+---
+
+## `async fn` 返回的到底是什么？
+
+我们先写一段只有 4 行的代码，看看调用一个 `async fn` 时会发生什么：
+
+```rust
+async fn fetch_user(username: &str) -> u64 {
+    println!("开始向网卡发起查询: {}", username);
+    42
+}
+```
+
+如果你在 `main` 函数里只写下一行调用，不加 `.await`：
+
+```rust
+fn main() {
+    let fut = fetch_user("alice"); // 注意：后面没有写 .await
+    println!("main 函数结束");
+}
+```
+
+运行这段程序，控制台只会输出一行 `main 函数结束`——而 `fetch_user` 函数体里的那句 `println!` **根本没有执行**。
+
+如果你来自 JavaScript 或 Go，这个现象会显得有些反直觉（在 JS 中只要调用 `fetchUser("alice")`，哪怕不写 `await`，函数体的第一段代码也会当场执行）。但在 Rust 中，结合上一节学过的状态机原理，原因非常直接：
+
+`async fn` 只是一层编译器语法糖。当编译器看到 `async fn fetch_user` 时，在幕后自动把它的函数签名改写成了：
+
+```rust
+// 你写下的语法糖：
+async fn fetch_user<'a>(username: &'a str) -> u64 { /* ... */ }
+
+// 编译器展开后的真实签名：返回一个实现了 Future 契约的匿名状态机枚举
+fn fetch_user<'a>(username: &'a str) -> impl std::future::Future<Output = u64> + 'a {
+    // 构造并返回处于初始阶段 0（Start）的状态机实例，不执行任何业务代码
+}
+```
+
+这就是为什么我们在上一节说 Rust 的异步任务是**纯惰性求值（Lazy）**：调用 `fetch_user("alice")` 的那一刻，CPU 仅仅是在栈上构造了一个处于初始阶段、保存了参数 `username` 的状态机结构体实例，并把它赋给了变量 `fut`。只要没有人去调用这个状态机身上的推进方法，它就永远静静地停在阶段 0。
+
+---
+
+## 第一版设计：`Poll::Ready` 与 `Poll::Pending`
+
+现在，假设我们自己就是 Rust 标准库的设计者，需要为所有状态机定义那个统一的推进 Trait `Future`。
+
+回顾上一节我们手写的模拟状态机，当时的推进方法签名是这样的：
+
+```rust
+fn step(&mut self) -> Option<String>
+```
+
+要把它升级为全生态通用的标准库契约，有两处明显的改进空间：
+
+1. **不同异步任务的最终产出类型不同**：有的任务返回 `u64`，有的返回 `String`，有的什么都不返回 `()`。我们在第 9 章学过，当每个实现者只对应唯一一种产出类型时，应当使用**关联类型（Associated Type）** `type Output;`；
+2. **用专用枚举替代语义模糊的 `Option`**：如果用 `Option<Self::Output>` 表示「做完了 / 还没好」，万一某个异步任务本身的业务返回值就是 `Option<User>`，外层就会套成令人费解的 `Option<Option<User>>`。
+
+因此，标准库在 `std::task::Poll` 中专门定义了一个语义清晰的两变体枚举：
+
+```rust
+pub enum Poll<T> {
+    Ready(T), // 任务已彻底完成，交出最终结果 T
+    Pending,  // 当前遇到 I/O 等待，已保存好现场，请求立即 return 让出工作线程
+}
+```
+
+把关联类型 `Output` 和返回枚举 `Poll` 组合起来，我们就推导出了第一版最简 `Future` 契约：
+
+```rust
+// 第一版草稿（理想化的最简模型）：
+pub trait SimpleFuture {
+    type Output;
+    fn poll(&mut self) -> Poll<Self::Output>;
+}
+```
+
+工作线程每次拿到任务，就调一次 `task.poll()`：如果返回 `Poll::Ready(val)`，说明大功告成；如果返回 `Poll::Pending`，说明网卡数据还没到，任务已经把当前阶段记在了结构体字段里，工作线程立刻转身去处理别的任务。
+
+---
+
+## 盲目轮询的死结与 `Waker` 唤醒机制
+
+上面那版 `fn poll(&mut self) -> Poll<Self::Output>` 看起来干净利落，为什么真实的 Rust 标准库没有采用它，反而要在参数里多塞进一个 `cx: &mut Context<'_>`？
+
+我们顺着工作线程的视角往前推演一步，就会发现第一版草稿藏着一个致命的工程漏洞。
+
+假设服务器上同时挂着 **50,000 个网络连接**，对应的 50,000 个状态机在第一次被调用 `poll()` 时，全都因为等待客户端发消息而返回了 `Poll::Pending`。
+
+现在请思考：**10 毫秒过去了，其中只有第 302 号客户端发来了一个数据包——此时，异步运行时的工作线程怎么知道该去调哪一个状态机的第二次 `poll()`？**
+
+在第一版 `poll(&mut self)` 的签名里，状态机除了冷冰冰地吐出一个 `Poll::Pending` 之外，和外部没有任何后续联系。运行时要想知道谁的数据准备好了，唯一的办法就是让 8 个工作线程排着队，对这 50,000 个状态机挨个循环调用 `poll()` 去试探（这种做法称为**忙轮询 Busy Polling**）：
+
+```rust
+// 没有唤醒机制时的忙轮询灾难：
+loop {
+    for task in &mut all_50000_tasks {
+        // 哪怕 49999 个连接根本没有数据到达，CPU 也在永不停歇地空转试探
+        if let Poll::Ready(res) = task.poll() { /* ... */ }
+    }
+}
+```
+
+一旦这么干，哪怕整台服务器一个请求都没收到，8 个 CPU 核心的占用率也会瞬间飙到 **100%**，算力全被成千上万次无效的 `poll() -> Poll::Pending` 空转烧光了。
+
+怎么避免工作线程盲目试探？
+答案是**反客为主**：当状态机发现网卡数据还没到、准备返回 `Poll::Pending` 之前，必须让状态机主动在底层事件源（Event Loop）那里登记一个**回调通知句柄**。在收到通知之前，工作线程直接把这个状态机移出就绪队列，**绝不再碰它一下（零 CPU 消耗）**；等将来网卡数据真正到达时，再由 Event Loop 触发这个句柄，把该状态机重新塞回就绪队列。
+
+这个负责把休眠任务重新放回就绪队列的通知句柄，在 Rust 标准库里就叫做唤醒器 **`Waker`**（被包裹在上下文参数 **`Context`** 中传给 `poll`）。
+
+第一次 `poll` 把 `Waker` 交出去并返回 `Pending`。在 `wake()` 把它叫回就绪队列之前，工作线程不再碰它。
+
+<PollWakerDiagram />
+
+补齐这一环后，标准库 `std::future::Future` 的真实定义就完全顺理成章了：
+
+```rust
+pub trait Future {
+    type Output;
+
+    // 真实标准库签名：
+    // 1. self: Pin<&mut Self> —— 固定好内存地址的状态机可变借用（14.4 节专门拆解 Pin）
+    // 2. cx: &mut Context<'_> —— 里面装着当前任务的唤醒器 Waker（通过 cx.waker() 获取）
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output>;
+}
+```
+
+*(注：签名里的第一个参数写成了 `self: Pin<&mut Self>` 而不是普通的 `&mut self`，是为了防止包含内部自引用的状态机在内存中移动位置，我们将在本章最后一节 `14.4` 专门揭开它的底层机制。对于不包含自引用的普通结构体，只需调用 `self.get_mut()` 就能直接拿到普通的 `&mut Self` 修改字段。)*
+
+---
+
+## 手写一个真实的 `Future`
+
+为了验证这套契约不是黑盒魔法，我们现在不借助 `tokio`，直接用标准库手写一个实现 `std::future::Future` 的网络查询状态机 `QueryUserFuture`：
+
+- 第 1 次被调用 `poll` 时，模拟向网卡发起查询，克隆一份 `cx.waker()` 并在数据到达时调用 `waker.wake()`，随后返回 `Poll::Pending` 让出线程；
+- 第 2 次被调用 `poll` 时，网卡数据已经就绪，直接返回 `Poll::Ready(42)`。
+
+<small class="code-source">源文件：<code>examples/concurrency/async-and-pin/src/bin/future-and-poll.rs</code>（节选：手写 Future 实现）</small>
+<Code
+  code={futureAndPollSource.split('// ANCHOR: custom_future\n')[1].split('\n// ANCHOR_END: custom_future')[0]}
+  lang="rust"
+  title="亲手实现 std::future::Future：未就绪时保存 Waker 并返回 Poll::Pending"
+/>
+
+因为我们的 `QueryUserFuture` 实现了标准库的 `Future` Trait，所以哪怕它是我们纯手写的结构体，也能直接在任何标准的 `async fn` 里面用 `.await` 等待它：
+
+<small class="code-source">源文件：<code>examples/concurrency/async-and-pin/src/bin/future-and-poll.rs</code>（节选：在 async fn 中 .await 手写的 Future）</small>
+<Code
+  code={futureAndPollSource.split('// ANCHOR: async_fn_caller\n')[1].split('\n// ANCHOR_END: async_fn_caller')[0]}
+  lang="rust"
+  title="编译器生成的 async fn 与手写的 Future 通过同一套契约无缝咬合"
+/>
+
+最后，我们用十几行代码写一个带 `Waker` 就绪标记的极简执行器，把 `fetch_user_profile("alice")` 驱动起来：
+
+<small class="code-source">源文件：<code>examples/concurrency/async-and-pin/src/bin/future-and-poll.rs</code>（节选：基于 Waker 的极简执行器）</small>
+<Code
+  code={futureAndPollSource.split('// ANCHOR: mini_executor\n')[1].split('\n// ANCHOR_END: mini_executor')[0]}
+  lang="rust"
+  title="只有当 Waker 将 is_ready 置为 true 时，执行器才会发起下一次 poll"
+/>
+
+运行输出：
+
+```text
+1. 调用 async fn 构造状态机（注意：此时函数体内部一行代码都不会执行）
+2. 状态机已构造完毕，准备交给执行器首次 poll
+
+--- 执行器发起第 1 次 poll ---
+[fetch_user_profile] 开始执行，准备等待子任务 QueryUserFuture...
+  [QueryUserFuture::poll] 第一次被轮询：向网卡发起查询 `alice`，数据尚未返回
+  [Event Loop] 网卡数据到达，调用 waker.wake() 通知运行时重新调度该任务
+--- 第 1 次 poll 返回 Pending：任务已让出线程 ---
+
+--- 执行器发起第 2 次 poll ---
+  [QueryUserFuture::poll] 第二次被轮询：网卡数据已就绪，交出 user_id = 42
+[fetch_user_profile] 跨越 .await 恢复执行，拿到 user_id = 42
+--- 第 2 次 poll 返回 Ready：拿到最终结果 `用户 alice (ID: #42)` ---
+```
+
+---
+
+## `.await` 在编译期展开成了什么？
+
+在刚才的实验里，外层函数 `fetch_user_profile` 只是写了一句 `let user_id = QueryUserFuture::new(username).await;`，为什么当内层的 `QueryUserFuture` 返回 `Poll::Pending` 时，外层函数也能精准地停在原地并返回 `Poll::Pending`？
+
+因为 `.await` 同样是一段极其直白的编译期展开代码。
+当你在外层 `async fn` 里写下 `let val = sub_future.await;` 时，编译器实际上在当前状态分支里生成了下面这段 `match` 逻辑：
+
+```rust
+// 你写下的：
+let user_id = sub_future.await;
+
+// 编译器在幕后展开的核心逻辑（概念示意）：
+match Pin::new(&mut self.sub_future).poll(cx) {
+    // 1. 如果子状态机已经就绪，直接取出结果赋给 user_id，继续往下跑下一个阶段
+    Poll::Ready(user_id) => user_id,
+    // 2. 如果子状态机还没好，外层状态机保持在当前等待阶段不变，
+    //    并立刻向更外层的运行时工作线程 return Poll::Pending 让出线程
+    Poll::Pending => return Poll::Pending,
+}
+```
+
+你看，从最外层的业务 `async fn`，到中间层层嵌套的子 `async fn`，再到最底层的网络 Socket `Future`，整条调用链在编译后其实**嵌套成了一棵单一的大状态机树**。工作线程从最顶层调一次 `.poll(cx)`，上下文里的 `Waker` 就会顺着 `.await` 一路向下传递给最底层的网卡事件源；一旦最底层返回 `Poll::Pending`，整条链路立即层层 `return Poll::Pending`，瞬间把工作线程腾空让出来。
+
+---
+
+## 小结
+
+读完这一节，你脑海里关于 `Future` 与 `.await` 的机械运转图景应当已经非常清晰了：
+
+1. **`async fn` 是惰性的状态机工厂**：调用 `async fn` 不会执行函数体，只会返回一个实现了 `Future<Output = T>` 的状态机实例；
+2. **`Poll::Ready` 与 `Poll::Pending`**：运行时工作线程通过调用 `poll` 推动状态机单步前进；遇到未就绪的 I/O 时，状态机返回 `Poll::Pending` 退栈让出工作线程；
+3. **`Waker` 彻底消灭盲目轮询**：状态机在返回 `Poll::Pending` 前，将 `cx.waker()` 登记给底层 Event Loop。在网卡数据到达并触发 `waker.wake()` 之前，运行时绝不会浪费 CPU 去空转轮询它；
+4. **`.await` 是状态传递开关**：每次 `.await` 就是对子状态机调用一次 `.poll(cx)`——子任务 `Ready` 就拿值继续，子任务 `Pending` 就立刻向上 `return Poll::Pending`。
+
+现在我们已经彻底摸清了 `async / await` 与 `Future` 的底层引擎。下一节（`14.3`），我们将引入工业级运行时 `tokio`，看看在真实工程中如何并发驱动多个异步任务（`join!` 与 `spawn`），以及在 Code Review 时必须拦截的**两大异步阻塞与死锁事故**。
+
+---
+
+### 附：本节完整可运行实验源码
+
+<details>
+<summary>点击展开完整源码（<code>examples/concurrency/async-and-pin/src/bin/future-and-poll.rs</code>）</summary>
+
+<Code
+  code={futureAndPollSource.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+  title="examples/concurrency/async-and-pin/src/bin/future-and-poll.rs"
+/>
+
+</details>

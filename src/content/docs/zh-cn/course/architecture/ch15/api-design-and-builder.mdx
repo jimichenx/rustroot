@@ -1,0 +1,156 @@
+---
+title: 灵活 API 签名设计：为什么没有函数重载与默认参数？
+description: 从双向类型推断机制推导为什么 Rust 拒绝同名函数重载与默认参数，并系统掌握具名关联构造、转换契约泛型、Default 结构体更新与 Builder 建造者模式的工程选型。
+sidebar:
+  label: 灵活 API 与 Builder
+  order: 4
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import apiDesignSource from '../../../../../../../examples/architecture/type-driven-design/src/bin/api-design-and-builder.rs?raw';
+
+在上一节中，`Newtype` 帮我们锁死了单个参数值的静态合法性。但在真实项目中设计模块公开接口时，从 C++、Java、Python 或 TypeScript 转向 Rust 的工程师，很快就会遇到另外两个看似限制表达力的语言规则：
+
+1. **禁止同名函数重载（No Function Overloading）**：在同一个作用域或同一个 `impl` 块里，绝不允许定义两个名字相同、但参数类型或参数个数不同的函数（报 `error[E0428]`）；
+2. **禁止函数默认参数（No Default Arguments）**：不能写 `fn connect(host: &str, port: u16 = 8080)`。
+
+本节先从编译器类型系统的底层机制出发，推演为什么在拥有双向类型推断的语言里引入同名函数重载会破坏整个泛型生态；随后结合[模块私有封装边界](/architecture/crates-and-modules/)与[生态约定契约](/abstraction/ecosystem-traits/)，建立覆盖四大工程场景的灵活接口设计体系。
+
+---
+
+## 一、 底层推导：为什么双向类型推断与同名函数重载不可兼得？
+
+在 C++ 或 Java 中，函数调用处的类型信息主要是**自底向上（从实参流向形参）**单向传递的：因为调用方传入的实参类型已经固定，编译器才能去同名重载列表里挑出匹配的那个函数签名。
+
+但在 Rust 中，类型推断与泛型转换是**双向流动**的——很多时候，**括号里实参表达式最终生成什么类型，反过来取决于外层函数形参要求什么类型**。
+
+回想我们在第 7 章高频使用的 `.into()`、`.parse()` 或 `.collect()`：
+
+```rust
+fn process(id: u64) { /* ... */ }
+
+// 编译器看到 process 的形参类型唯一定死为 u64，
+// 才能反向推导出里面的 .into() 应该调用 <u64 as From<u16>>::from(42u16)
+process(42u16.into());
+```
+
+现在做一次反证推演：**假设 Rust 允许同名函数重载**，某位库作者同时写下了三个同名的 `process` 函数：
+
+```rust
+fn process(id: u32) { /* ... */ }
+fn process(id: u64) { /* ... */ }
+fn process(id: i64) { /* ... */ }
+
+// 推理死锁现场：
+process(42u16.into());
+```
+
+当编译器检查 `process(42u16.into())` 时，双向推导链条当场死锁：
+- 要确定里层 `42u16.into()` 转换成哪一个目标类型，必须先知道外层调用的是哪一个 `process`；
+- 要确定外层调用的是哪一个 `process`，又必须先知道里层 `42u16.into()` 返回的是什么类型。
+
+由于 `u16` 可以同时无损实现 `Into<u32>`、`Into<u64>` 与 `Into<i64>`，一旦放开同名函数重载，整个 Rust 泛型生态里的 `.into()`、`.collect()` 和闭包参数类型推断都会大面积陷入二义性报错，还会被迫引入像 C++ 那样隐晦的隐式转换优先级规则。
+
+因此，Rust 做出了果断的架构取舍：**在同一个命名空间下，一个函数名只对应唯一一份签名契约**；而你在其他语言里想用「重载」或「默认参数」表达的四种真实工程意图，则全部拆解给正交的编译期工具来承担。
+
+---
+
+## 二、 替代重载的三大轻量级签名范式
+
+当结构体的构造函数或工具函数参数不多时，无需动用重型模式，直接按意图选用以下三种轻量级签名：
+
+1. **多个构造函数重载 → 具名关联函数（Named Constructors）**
+   Java 与 C++ 强迫所有构造函数必须与类名相同，导致一个类常堆满五六个参数各异的 `new Client(...)`，调用点看到 `new Client("a", 80, 3000)` 时很难一眼分辨最后两个数字的含义。Rust 没有 `new` 关键字，直接把构造差异写进关联函数名（如 `Vec::new()` vs `Vec::with_capacity(10)`，或下例的 `RetryPolicy::with_retries(5)`），调用意图在字面上一目了然。
+2. **同义不同载体的参数重载 → 泛型 + `Into<T>` / `AsRef<T>`**
+   当函数希望同时接纳 `&str` 与 `String`（或 `&Path` 与 `PathBuf`）时，它们表达的是同一个业务含义，只是调用方手里的容器不同。按第 7 章准则：只读借用写 `fn ping_host<S: AsRef<str>>(target: S)`，消费所有权写 `fn new(host: impl Into<String>)`，一份函数体即可对所有载体开放。
+3. **同类型变长参数（如 `int... ports`）→ 切片引用 `&[T]`**
+   需要一次接收任意数量的同类型元素时，直接将形参声明为只读切片 `ports: &[u16]`。调用方只需写 `allow_ports(&[80, 443, 8443])`，在栈上传递一个 16 字节胖指针，零堆内存分配。（若变长参数连类型都不相同，如 `println!("{}: {}", host, port)`，则属于第 16 章编译期宏的职责范围。）
+
+<small class="code-source">源文件：<code>examples/architecture/type-driven-design/src/bin/api-design-and-builder.rs</code>（节选：轻量级签名三件套与 Default 更新）</small>
+<Code
+  code={apiDesignSource.split('// ANCHOR: lightweight_patterns\n')[1].split('\n// ANCHOR_END: lightweight_patterns')[0]}
+  lang="rust"
+/>
+
+---
+
+## 三、 多可选配置参数的工程分野：`..Default::default()` vs `Builder` 模式
+
+当一个配置结构体拥有五六个带默认值的可选项时，没有默认参数的 Rust 有两种标准解法。**选哪一种，完全取决于你在[模块封装边界](/architecture/crates-and-modules/)中是否需要隐藏内部字段**：
+
+### 1. 内部或纯透明配置：公开字段 + `..Default::default()`
+
+如果 `RetryPolicy` 只是一个模块内部使用的透明配置袋，各个字段之间没有复杂的联动校验，将来增删字段也不构成跨库破坏性变更，那么最简洁的做法是将字段公开并实现 `Default`，调用方用结构体更新语法按需覆盖关心的字段：
+
+```rust
+let p3 = RetryPolicy {
+    backoff_ms: 500,       // 只按名字覆盖关心的项，不依赖参数顺序
+    ..Default::default()   // 其余字段自动填入 Default::default()
+};
+```
+
+### 2. 对外公开 API 与受控配置：私有字段 + `Builder`（建造者模式）
+
+但如果你正在设计一个对外暴露的核心组件 `ServerConfig`，直接把所有字段标成 `pub` 去用 `..Default::default()` 就会破坏封装边界：
+- 一旦字段全部 `pub`，将来哪怕你只想给 `ServerConfig` 新增一个内部调优字段，所有外部调用方的结构体字面量都会因字段缺失而编译失败；
+- 更重要的是，如果 `host` 是绝对不能缺省的**必填项**，而 `port`、`enable_tls` 是**可选项**，`Default` 无法区分哪些字段必须由调用方显式提供。
+
+因此在标准库（如 `std::thread::Builder`、`std::process::Command`）与主流开源库中，凡涉及私有封装或必填/可选分离的复杂构造，一律采用 **`Builder` 模式**：
+
+<small class="code-source">源文件：<code>examples/architecture/type-driven-design/src/bin/api-design-and-builder.rs</code>（节选：Builder 链式构造）</small>
+<Code
+  code={apiDesignSource.split('// ANCHOR: builder_pattern\n')[1].split('\n// ANCHOR_END: builder_pattern')[0]}
+  lang="rust"
+  title="必填项放进 new，可选项按值接收 mut self 链式覆盖，最后 build 收尾"
+/>
+
+请留意 `ServerConfigBuilder` 里的两处签名设计细节：
+1. **必填项与可选项在入口处分流**：必填项 `host` 直接放进 `ServerConfigBuilder::new(host)`（配合 `impl Into<String>` 兼容字面量与 `String`），其余可选项在内部赋予安全默认值。调用方只需点出自己关心的那一两个可选项：
+   ```rust
+   let cfg = server::ServerConfigBuilder::new("0.0.0.0")
+       .port(9443)
+       .enable_tls(true)
+       .build();
+   ```
+2. **链式方法按值接收 `mut self -> Self`**：对于一次性消费的配置构造器，配置方法直接按值拿走 `mut self` 修改后再返回 `Self`（若构造过程需校验跨字段合法性，则令最终的 `.build(self)` 返回 `Result<ServerConfig, ConfigError>`）。这样调用方连中间的 `let mut builder = ...` 变量都不必声明，一气呵成完成构造。
+
+---
+
+## 四、 API 签名选型全景速查表
+
+| 传统语言里的习惯写法 | 背后的真实工程意图 | Rust 标准替代方案 | 封装与成本特征 |
+| --- | --- | --- | --- |
+| 多个同名构造函数 `new Foo(...)` | 从不同原材料或预设选项创建实例 | **具名关联函数**（`new`、`with_...`、`from_...`） | 零额外开销，函数名直接自解释业务含义 |
+| 同名函数重载不同载体 `ping(str)` / `ping(String)` | 接收语义相同但外层载体不同的参数 | **泛型转换约束**（只读用 `AsRef<T>`，消费用 `Into<T>`） | 单态化生成专用机器码，且对外部新类型开放 |
+| 同类型变长参数 `fn(int... items)` | 一次传入任意个数的同质元素 | **只读切片引用 `&[T]`** | 栈上 16 字节胖指针，零堆内存分配 |
+| 默认参数（透明内部配置） | 只填少数修改项，其余走默认值 | **公开字段 + `..Default::default()`** | 零样板代码，但暴露结构体字段列表 |
+| 默认参数（封装公开组件） | 区分必填项与可选项，且保持字段私有 | **`Builder::new(必填)` + 链式 `mut self` + `.build()`** | 严守 `mod` 私有封装，将来新增可选配置完全向后兼容 |
+
+运行完整实验源码，核对上述模式在同一工程中的配合输出：
+
+<small class="code-source">源文件：<code>examples/architecture/type-driven-design/src/bin/api-design-and-builder.rs</code></small>
+<Code
+  code={apiDesignSource.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+  collapse={22}
+/>
+
+运行输出：
+
+```text
+policies: 3 | 5 | jitter=true
+ping len = 24, ports = 3
+server = 0.0.0.0:9443 (max_conn=1024, tls=true)
+```
+
+---
+
+## 小结
+
+1. **拒绝同名重载是为了守住双向类型推断**：唯一函数名对应唯一签名契约，确保 `.into()`、`.parse()` 与闭包推断在全生态范围内清晰无二义性；
+2. **按职责拆解灵活接口**：不同构造路径用具名关联函数，同义多载体输入用 `Into` / `AsRef` 泛型，同质变长参数用切片 `&[T]`；
+3. **按封装等级选择默认配置方案**：内部透明结构用 `..Default::default()`，对外封装且区分必填与可选项的组件用链式 `Builder`。
+
+解决了单个对象创建时的灵活传参之后，下一节我们将面对更深一层的架构挑战：**当一个客户端对象具有严格的生命周期先后顺序（如「未连接 → 已连接 → 已认证 → 已关闭」）时，怎样利用泛型与 Move 语义，让乱序调用直接在编译期报方法不存在？**
+
+[继续：Typestate 模式 · 把业务状态流转编码进编译期 →](/architecture/typestate-pattern/)

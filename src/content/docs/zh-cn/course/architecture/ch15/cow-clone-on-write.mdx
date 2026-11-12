@@ -1,0 +1,136 @@
+---
+title: 写时复制智能指针 Cow<'a, B>
+description: 拆解标准库枚举智能指针 Cow<'a, B> 的 Borrowed / Owned 双变体结构与 Deref 机制，在读多写少场景中消灭防御性克隆，掌握返回端延迟分配与 to_mut 按需克隆。
+sidebar:
+  label: 写时复制 Cow<'a, B>
+  order: 6
+---
+
+import { Code } from '@astrojs/starlight/components';
+import cowSource from '../../../../../../../examples/architecture/type-driven-design/src/bin/cow-clone-on-write.rs?raw';
+
+在审查日常业务或 AI 生成的 Rust 代码时，你会频繁看到一种隐蔽的性能浪费：
+
+假设我们要写一个日志清洗函数 `sanitize_log_line(raw: &str)`——如果输入的字符串里包含制表符 `\t`，就把它替换成空格返回；如果不包含制表符，就原样返回。
+
+在线上真实流量中，**99% 的正常日志根本不包含 `\t`**，只有不到 1% 的特殊输入才需要替换字符。可是当你准备给这个函数写返回值签名时，却遇到了一个左右为难的窘境：
+- 如果返回类型写成借用 **`-> &str`**：那遇到 1% 包含 `\t` 的情况时，`raw.replace('\t', " ")` 在函数内部新分配了一个 `String`，函数一返回它就会销毁，根本无法交出 `&str` 引用；
+- 如果为了迁就那 1% 的修改情况，把返回类型写成拥有所有权的 **`-> String`**：那在另外 **99% 原本一个字节都不用改**的正常情况下，你也必须被迫写一句 `raw.to_string()`，白白在堆内存上申请空间并把整段文本深拷贝一遍。
+
+为了 1% 的偶发修改，让 99% 的只读路径跟着承担堆内存分配成本——怎么打破这个两难死结？
+
+这正是我们在第 10 章 `10.1` 节智能指针全景表中预告过的最后一位成员——标准库写时复制智能指针 **`std::borrow::Cow<'a, B>`（Clone-on-Write）**登场的时刻。
+
+---
+
+## 掀开底牌：`Cow` 就是一个两变体枚举
+
+`Cow` 这个名字是 **Clone-on-Write（写时复制 / 写时克隆）**的缩写。很多初学者看到它同时带着生命周期 `'a` 和 Trait 约束，以为它是什么高深的底层黑魔法。
+
+其实你把标准库源码打开，会发现 `Cow<'a, B>` 就是一个我们在第 6 章再熟悉不过的**普通两变体 `enum`**（去掉语法细节后的核心定义如下）：
+
+```rust
+pub enum Cow<'a, B: ?Sized + ToOwned> {
+    // 变体 1：不分配任何堆内存，直接持有一份外部数据的只读借用 &'a B（如 &'a str 或 &'a [u8]）
+    Borrowed(&'a B),
+
+    // 变体 2：在堆上分配并独占拥有一份完整的数据（对 str 来说就是 String，对 [u8] 来说就是 Vec<u8>）
+    Owned(<B as ToOwned>::Owned),
+}
+```
+
+*(注：签名里的 `?Sized` 我们在第 8 章学过，是为了允许 `B` 填入编译期大小不固定的切片类型 `str` 或 `[T]`；而[第 7 章学过的 `ToOwned`](/abstraction/ecosystem-traits/) 负责把借用切片映射到对应的堆拥有者类型——`str` 的 `Owned` 关联类型是 `String`，`[u8]` 的 `Owned` 关联类型是 `Vec<u8>`。日常工程中最常写的两种形态就是 **`Cow<'a, str>`** 与 **`Cow<'a, [u8]>`**。)*
+
+看懂了这个 `enum` 结构，刚才那个「99% 原样返回、1% 替换字符」的两难困境当场迎刃而解：
+- 遇到 99% 不含 `\t` 的干净字符串，直接包进 **`Cow::Borrowed(raw)`** 返回——栈上只拷了一个胖指针，**零堆内存分配**；
+- 遇到 1% 含有 `\t` 的脏字符串，调用 `replace` 生成新 `String`，包进 **`Cow::Owned(new_string)`** 返回——**按需分配一次堆内存**。
+
+---
+
+## 为什么 `Cow` 被称为「智能指针」？
+
+如果 `Cow` 仅仅是一个普通的枚举，那下游调用方每次拿到返回值后，岂不是都得写繁琐的 `match res { Cow::Borrowed(s) => ..., Cow::Owned(s) => ... }` 才能读取里面的字符串？
+
+完全不需要。`Cow<'a, B>` 之所以被归入第 10 章的**智能指针**家族，是因为标准库为它实现了 **`Deref<Target = B>`**：
+
+```rust
+impl<B: ?Sized + ToOwned> Deref for Cow<'_, B> {
+    type Target = B;
+
+    fn deref(&self) -> &B {
+        match *self {
+            Cow::Borrowed(borrowed) => borrowed, // 直接交出内部的 &str
+            Cow::Owned(ref owned) => owned.borrow(), // 将内部的 String 借用为 &str 交出
+        }
+    }
+}
+```
+
+有了这个 `Deref` 实现，再加上我们在第 10.3 节学过的编译器 **`Deref Coercion`（解引用强制转换）**：
+不管 `Cow<'a, str>` 肚子里当前装的是借用的 `&'a str` 还是新分配的 `String`，对外界只读消费者而言，**你只需写一个 `&res`，它就会自动退化成一个普通的 `&str` 传给任何下游函数**，调用方完全感知不到底层的差异。
+
+我们来看日志清洗函数的完整实战代码：
+
+<small class="code-source">源文件：<code>examples/architecture/type-driven-design/src/bin/cow-clone-on-write.rs</code>（节选：返回 Cow 消灭防御性分配）</small>
+<Code
+  code={cowSource.split('// ANCHOR: sanitize_cow\n')[1].split('\n// ANCHOR_END: sanitize_cow')[0]}
+  lang="rust"
+  title="99% 走 Cow::Borrowed 零分配，下游通过 Deref 直接按 &str 无感消费"
+/>
+
+---
+
+## `to_mut()`：真正的「写时克隆」动作
+
+除了在函数返回值处统一「借用」与「拥有」两条分支之外，`Cow` 身上还有一个点题的核心方法：**`.to_mut()`**。
+
+假设你手里拿着一个变量 `let mut msg: Cow<'_, str> = Cow::Borrowed("连接自 10.0.0.8");`。平时你只读它，它就一直安安静静地借用着静态字面量，占 `0` 字节堆内存。
+直到某一个分支突然决定要在它末尾追加一段警告文字时，你只需调用 **`msg.to_mut()`**：
+
+- 如果 `msg` 当前是 **`Cow::Borrowed`**，`.to_mut()` 会在这一刻自动在堆上把原字符串克隆成一份全新的 `String`，将自身状态原地切换为 **`Cow::Owned`**，并向你返回 `&mut String` 供你修改；
+- 如果后续代码再次调用 `msg.to_mut()`，因为此时它已经是 **`Cow::Owned`** 了，它会直接交出内部已有 `String` 的可变引用，**绝不会发生第二次重复克隆**。
+
+<small class="code-source">源文件：<code>examples/architecture/type-driven-design/src/bin/cow-clone-on-write.rs</code>（节选：使用 to_mut 按需升级所有权）</small>
+<Code
+  code={cowSource.split('// ANCHOR: cow_to_mut\n')[1].split('\n// ANCHOR_END: cow_to_mut')[0]}
+  lang="rust"
+  title="只有真正触发修改分支时，to_mut() 才会执行唯一一次堆内存克隆"
+/>
+
+运行完整实验代码，核对三种场景下的堆分配行为：
+
+```text
+[干净输入] 是否借用原内存 (零分配): true
+  -> 写入审计日志: `GET /api/orders 200 OK`
+
+[需转义输入] 是否分配了新堆内存: true
+  -> 写入审计日志: `POST /api/login 401`
+
+[to_mut 按需修改] 最终内容: `连接自 10.0.0.8 [WARN: 异常请求]`
+```
+
+---
+
+## 小结
+
+在日常架构设计与 Code Review 中，记住 `Cow<'a, B>` 的两条核心判据：
+
+1. **看穿物理本质**：`Cow<'a, str>` 就是一个把 `&'a str`（借用）和 `String`（拥有）合二为一的标准库枚举，并借助 `Deref<Target = str>` 对外提供统一的只读视图；
+2. **精准适用场景（读多写少的清洗、解析与转义）**：当你发现一个 URL 解码、HTML 转义、路径规范化或 JSON 反序列化函数在绝大多数情况下只需原样返回输入切片，仅在少数特殊字符出现时才需要重新拼接字符串——立刻把返回值从无脑克隆的 `-> String` 重构为 **`-> Cow<'a, str>`**。
+
+至此，我们已经集齐了 Rust 模块封装、`Newtype`、灵活 API 与 `Builder`、`Typestate` 以及 `Cow` 等全部核心设计武器。下一节作为本章的收官，我们将横向对照传统面向对象（GoF）设计模式在 Rust 中的降维替代方案，并总结在 AI 辅助编程时代如何运用这些武器建立**「签名即铁轨」**的工程协作范式。
+
+---
+
+### 附：本节完整可运行实验源码
+
+<details>
+<summary>点击展开完整源码（<code>examples/architecture/type-driven-design/src/bin/cow-clone-on-write.rs</code>）</summary>
+
+<Code
+  code={cowSource.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+  title="examples/architecture/type-driven-design/src/bin/cow-clone-on-write.rs"
+/>
+
+</details>

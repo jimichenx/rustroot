@@ -1,0 +1,168 @@
+---
+title: Send 与 Sync
+description: 从「为什么要发明跨线程标签」与「为什么分成 Send 和 Sync 两个单词」出发，破除二选一误解，建立 2×2 四象限全局观，看清编译器如何通过自动推导的标记 Trait 在编译期拦截数据竞争。
+sidebar:
+  label: Send 与 Sync
+  order: 5
+---
+
+import { Code } from '@astrojs/starlight/components';
+import SendSyncGridDiagram from '../../../../../../components/diagrams/SendSyncGridDiagram.astro';
+import sendAndSyncSource from '../../../../../../../examples/concurrency/threads-and-concurrency/src/bin/send-and-sync.rs?raw';
+
+走完前四节，我们已经用熟了多线程编程的核心工具箱：`thread::spawn`、`thread::scope`、`Arc<T>`、`Channel` 以及 `Mutex<T>`。
+
+在实战过程中，我们也多次见到编译器在报错信息里提到两个词——比如在 `13.2` 节试图把 `Rc<String>` 塞进子线程时，编译器给出的诊断是：
+`the trait Send is not implemented for Rc<String>`。
+
+很多初学者看到 **`Send`** 和 **`Sync`** 时，往往会觉得它们深不可测。这一节我们就把这两个词拿到桌面上，顺着你心里的疑问一层层剥开：**它们到底长什么样？Rust 为什么要发明它们？为什么偏偏是这两个英文单词？以及全书学过的类型是怎么分布在这两个维度构成的四个象限里的？**
+
+---
+
+## `Send` 与 `Sync` 的定义与自动推导
+
+如果翻开 Rust 标准库 `std::marker` 模块的源码，你会发现 `Send` 和 `Sync` 的定义只有短短两行空壳：
+
+```rust
+pub unsafe auto trait Send {}
+pub unsafe auto trait Sync {}
+```
+
+从这两行定义里，我们可以直接读出它们的两个基本特征：
+
+1. **里面连一个方法都没有（标记 Trait / Marker Trait）**：
+   它们和我们在第 2、3 章见过的 `Copy` 一样，不需要你去实现任何函数。它们只相当于编译器在编译期贴在每个类型身上的**两张「跨线程安全标签」**，在运行时占 0 字节、没有任何指令开销。
+2. **由编译器按结构体字段自动推导（`auto trait`）**：
+   注意定义里的 `auto` 关键字。这就是为什么你在写自己的业务结构体（比如 `struct AppReport`）时，**从来不需要手动写 `impl Send for AppReport`**。
+   编译器有一套全自动的传染推导规则：
+   - 只要一个结构体里的**所有字段**都带有 `Send`（或 `Sync`）标签，编译器就会**自动**给这个外层结构体也贴上 `Send`（或 `Sync`）标签；
+   - 反过来，只要你在结构体里（哪怕是嵌套了五六层的内部字段里）塞了一个**不带** `Send` 标签的字段（比如 `Rc<i32>`），整个外层结构体的 `Send` 标签就会自动被编译器撕掉。
+
+---
+
+## 为什么要发明这套标签？
+
+作为读者，你肯定会想：**在 Java、Go 或 C++ 里写多线程，从来没听说过什么 `Send` 和 `Sync`，为什么 Rust 非要发明这套标签机制？**
+
+让我们站在语言设计者的角度，看看如果不发明这套标签，编译器在面对 `thread::spawn` 时会陷入什么两难境地：
+
+在第 12 章和第 13 章里，标准库为我们提供了两套成本截然不同的工具：
+- 一套是专门为**单线程**设计的极速工具：比如用普通整数计数的 `Rc<T>`、不加锁的 `Cell<T>` 和 `RefCell<T>`（省去了昂贵的 CPU 原子指令和操作系统锁开销）；
+- 另一套是专门为**多线程**设计的同步工具：比如用硬件原子指令的 `Arc<T>`、带操作系统锁的 `Mutex<T>`。
+
+现在，程序员写了一行 `thread::spawn(move || { ... })`，把一个包含了十几层字段的复杂结构体变量 `service` 传进了子线程。如果语言里没有编译期标签机制，设计者面前只有两条路：
+1. **第一条路（像 C++ / Java / Go 那样在编译期不管）**：
+   编译器对传进子线程的类型不闻不问。哪怕程序员在 `service` 的第 5 层内部字段里不小心藏了一个单线程的 `Rc<T>`，编译也照常通过——结果程序一上线，两个线程同时加减非原子计数器，直接引发内存崩溃；
+2. **第二条路（为了安全一刀切，删掉所有单线程工具）**：
+   废除 `Rc` 和 `RefCell`，强迫全程序所有类型无论单线程还是多线程统统使用原子指令和互斥锁。那样一来，单线程程序就不得不为自己根本没用到的多线程同步白白付出性能代价。
+
+**既要保留 `Rc` / `RefCell` 在单线程下的零同步开销，又要在编译期 100% 拦住任何人不小心把它们（或包含它们的结构体）带进多线程**——这就逼着 Rust 发明了这套能够顺着结构体字段自动推导的安全标签：
+- 在 `thread::spawn` 的函数签名入口挂上门禁（要求传入的闭包捕获的数据必须带有 `Send` 标签）；
+- 让编译器替人类程序员自动递归检查每一层字段，只要发现不安全的单线程零件，当场在编译期拦截。
+
+---
+
+## 为什么分成 `Send` 和 `Sync` 两个词？
+
+解决了「为什么要发明标签」，第二个疑问马上就来了：
+**既然只是为了标记「这个类型在多线程下安不安全」，那发明一个单词叫 `ThreadSafe`（线程安全）不就够了吗？为什么非要分成 `Send`（发送）和 `Sync`（同步）两个单词？**
+
+答案就藏在我们在第 1 章建立的**「移动所有权（Move）」**与**「借用只读引用（`&T`）」**这两种完全不同的物理动作里。
+
+回想一下我们在 `13.1` 到 `13.4` 节里把一份数据 `T` 拿到多线程里使用时，其实干的是两件截然不同的事：
+
+1. **第一件事：把数据 `T` 的唯一所有权打包「发送（Send）」给另一个线程，原线程不再碰它**
+   - 比如 `thread::spawn(move || ...)` 或者通道 `tx.send(val)`。
+   - 这个动作在物理上是**所有权转移（Move）**——数据从主线程搬到了子线程，主线程已经放手失效，从此以后只有子线程**一个人独占**这份数据。
+   - 所以第一个单词叫 **`Send`（可发送）**：代表**「允许把这个类型的值通过 Move 发送给另一个线程去独占使用」**。
+
+2. **第二件事：数据 `T` 留在原地不动，让多个线程「同时（Sync）」拿着只读引用 `&T` 去访问它**
+   - 比如 `13.1` 节用 `thread::scope` 让两个子线程同时借用主线程的 `&shared_logs`，或者 `13.2` 节用 `Arc<T>` 让多个线程同时通过 `&T` 访问堆上的同一份配置。
+   - 这个动作在物理上是**多线程共享只读引用（Shared `&T`）**——多个线程在同一时间围着同一份数据操作，必须保证它们步调同步、不会发生数据竞争。
+   - 所以第二个单词叫 **`Sync`（Synchronized，可同步共享）**：代表**「允许多个线程同时拿着只读引用 `&T` 访问这同一份数据」**。
+
+*(顺着这两个动作，你就能立刻听懂官方文档里那句著名的定义：**「类型 `T` 是 `Sync`，当且仅当它的只读引用 `&T` 是 `Send`」**。用大白话翻译就是：你想让多个线程同时拿着 `&T` 访问同一份 `T`（即 `T: Sync`），在代码里是怎么做到的？不就是先借出几个只读引用 `&T`，然后把这些 `&T` 发送（`Send`）给各个子线程吗。)*
+
+---
+
+## `Send` 与 `Sync` 的四象限矩阵
+
+刚听完 `Send` 和 `Sync` 的区别时，很多读者容易产生一个误解：**「是不是所有类型要么是 `Send`，要么是 `Sync`，在两者之间二选一？」**
+
+**恰恰相反。** `Send`（能不能独占搬家）和 `Sync`（能不能多人拿 `&T` 共享）是两个完全独立的考核维度。两张标签组合在一起，一共构成了 **2 × 2 四个象限**——而且日常 **99% 的类型是两张标签同时都有的**。
+
+我们把第 1 章到第 13 章学过的全部核心类型放进这张四象限全景图里，你就能建立起清晰的全局观：
+
+右列是 `Send`，上行是 `Sync`。右上角两张标签都有，这是日常绝大多数类型。
+
+<SendSyncGridDiagram />
+
+| 象限分类 | 可独占发送<br/>（`Send`） | 可多线程共享 `&T`<br/>（`Sync`） | 代表类型 | 物理原因拆解 |
+| --- | :---: | :---: | --- | --- |
+| **第一象限（占 99%）：<br/>既 `Send` 又 `Sync`** | ✅ | ✅ | `i32`、`String`、`Vec<T>`、`Box<T>`、`Arc<T>`、`Mutex<T>`、绝大多数普通 `struct` | 既可以把唯一所有权搬给别的线程独占用（`Send`）；也可以留在原地，发多个只读引用 `&T` 给多个线程同时读（`Sync`，因为没人能通过 `&T` 修改它，或内部已有 `Mutex` 锁保护）。 |
+| **第二象限（核心试金石）：<br/>只 `Send`，但不 `Sync`** | ✅ | ❌ | **`Cell<T>`**<br/>**`RefCell<T>`**<br/>`mpsc::Receiver<T>` | **为什么一个 `ThreadSafe` 单词不够用？全看这一栏：** 你可以把 `RefCell<T>` 的唯一所有权打包 Move 给另一个线程一个人独占用（**是 `Send`**）；但绝不能让两个线程同时拿着 `&RefCell<T>` 共享访问（**不是 `Sync`**），因为 `RefCell` 有内部可变性，两个线程拿着 `&RefCell` 就能同时调用 `.borrow_mut()` 修改内部非原子的 `borrow` 计数器，当场引发数据竞争。 |
+| **第三象限：<br/>既不 `Send`，也不 `Sync`** | ❌ | ❌ | **`Rc<T>`**<br/>裸指针 `*const T` / `*mut T` | 彻底禁止跨出当前线程半步。连把克隆出来的 `Rc` 发送给别的线程（`Send`）都不允许，因为主线程手里还留着另一个 `Rc`，两边会同时增减同一个非原子 `strong` 计数器。 |
+| **第四象限（特殊守卫）：<br/>不 `Send`，但却是 `Sync`** | ❌ | ✅ | **`MutexGuard<T>`** | 为什么 `13.4` 的锁守卫不能 `Send`？因为许多操作系统底层规定**「哪条线程加的锁，必须由同一条线程亲自解锁」**——如果在线程 A 里调用 `.lock()` 拿到守卫，却把守卫 Move 发送给线程 B 去触发 `Drop` 解锁，会导致未定义行为；但把 `&MutexGuard` 借给别的线程只读看一眼（`Sync`）则是安全的。 |
+
+我们来写一段实验代码，亲手核验第一象限（普通结构体自动具备 `Send + Sync`）与第二象限（`RefCell<T>` 允许 `Send` 独占搬家、却禁止 `Sync` 共享，以及 `Mutex<T>` 如何补齐 `Sync`）：
+
+<small class="code-source">源文件：<code>examples/concurrency/threads-and-concurrency/src/bin/send-and-sync.rs</code></small>
+<Code
+  code={sendAndSyncSource.split('// ANCHOR: auto_trait_struct\n')[1].split('\n// ANCHOR_END: auto_trait_struct')[0] + '\n\n' + sendAndSyncSource.split('// ANCHOR: send_and_sync_demo\n')[1].split('\n    // ANCHOR_END: send_and_sync_demo')[0] + '\n\n    ' + sendAndSyncSource.split('// ANCHOR: refcell_send_not_sync\n')[1].split('\n    // ANCHOR_END: refcell_send_not_sync')[0]}
+  lang="rust"
+  title="核验普通结构体的自动推导，以及 RefCell（Send 但 !Sync）与 Mutex（Send + Sync）的差异"
+/>
+
+运行输出：
+
+```text
+[Sync 共享读 A] title = daily_health
+[Sync 共享读 B] code = 200
+[Send 独占移交] 子线程接管并销毁 report: AppReport { title: "daily_health", code: 200 }
+[RefCell 独占搬家] 子线程内部安全修改: [1, 2, 3]
+[Arc<Mutex<T>> 组合] 跨线程修改结果: [10, 20, 30]
+```
+
+---
+
+## 组合规则：`Arc<RefCell<T>>` vs `Arc<Mutex<T>>`
+
+看懂了上面的四象限表，我们现在终于可以用一行类型公式，把第 12 章和第 13 章的所有智能指针彻底串起来了：
+
+1. **`Arc<T>` 什么时候才允许跨线程传递（即 `Arc<T>: Send`）？**
+   因为 `Arc<T>` 的作用就是让多个线程共同持有同一份数据，并通过解引用同时拿到内部数据的只读引用 **`&T`**。
+   所以标准库为 `Arc<T>` 写下的规则是：**只有当内部的 `T` 同时具备 `Send + Sync` 两张标签时，`Arc<T>` 才具备 `Send` 标签**；
+2. **为什么 `Arc<RefCell<i32>>` 被拦在多线程门外？**
+   查上面的第二象限：`RefCell<i32>` 只有 `Send`，**没有 `Sync` 标签**。因此套在它外面的 `Arc<RefCell<i32>>` 自动丧失了 `Send` 资格，一放进 `thread::spawn` 就报 `E0277`；
+3. **为什么换成 `Arc<Mutex<i32>>` 就畅通无阻了？**
+   因为 `Mutex<T>` 在内部用操作系统锁把并发访问强制排队串行化了——只要里面的 `T` 是 `Send`，**`Mutex<T>` 就会自动为你补齐 `Sync` 标签（进入第一象限 `Send + Sync`）**，从而让外层的 `Arc<Mutex<T>>` 顺利拿到跨线程通行证。
+
+---
+
+## 本章总结
+
+走完第 13 章，我们已经完整建立起 Rust 多线程并发的物理模型与类型体系：
+- 每个线程拥有独立的调用栈、共享同一个堆；向子线程传数据既可以用 `move` 移交所有权，也可以在局部汇合时用 `thread::scope` 零成本借用；
+- 多线程共享只读用原子计数 **`Arc<T>`**，跨线程流水线移交数据用通道 **`Channel`**，多线程原地共享修改用锁容器 **`Arc<Mutex<T>>` / `Arc<RwLock<T>>`**；
+- 而编译器在幕后仅凭 **`Send`（可独占移交）** 与 **`Sync`（可共享 `&T`）** 两张自动推导的标签，就在编译期替我们守住了整座并发大厦的安全底线。
+
+但多线程并发故事到这里还没有全部讲完。
+本章我们创建的每一个 `std::thread::spawn`，都是实打实的**操作系统级线程（OS Thread）**：每个线程都要占用数 MB 的独立栈内存，线程切换还要进出操作系统内核。如果你的服务器需要同时保持 **10 万个** 网络连接（比如高并发 Web 网关或聊天服务器），开 10 万个操作系统线程会直接把内存和 CPU 上下文切换彻底拖垮。
+
+**如何在只开少量几个操作系统线程的前提下，同时并发驱动成千上万个轻量级 I/O 任务？**
+下一章（第 14 章），我们将进入第五篇的收官之章——**异步并发（`async / await`）、`Future` 状态机与 `Pin<P>`**。
+
+---
+
+### 附：本节完整可运行实验源码
+
+<details>
+<summary>点击展开完整源码（<code>examples/concurrency/threads-and-concurrency/src/bin/send-and-sync.rs</code>）</summary>
+
+<Code
+  code={sendAndSyncSource.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+  title="examples/concurrency/threads-and-concurrency/src/bin/send-and-sync.rs"
+/>
+
+</details>

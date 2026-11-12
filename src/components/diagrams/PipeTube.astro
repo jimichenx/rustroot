@@ -1,0 +1,16 @@
+---
+/**
+ * 13.3 通道的横卧管道。
+ * 只有一条轮廓。内腔不再另描一圈，消息直接放在这条管子里。
+ */
+interface Props {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
+const { x, y, width, height } = Astro.props;
+---
+
+<rect class="pipe-body" x={x} y={y} width={width} height={height} rx={height / 2}></rect>

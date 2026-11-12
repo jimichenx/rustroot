@@ -1,0 +1,214 @@
+---
+/**
+ * 13.3「多发送端汇入，以及漏掉 drop(tx)」。
+ *
+ * 四步可跳：
+ * 1. 三个 tx_clone 在工作线程，原版 tx 在主线程，发送端共 4 个；
+ * 2. 三条消息在通道里；
+ * 3. 克隆体已 Drop，通道可以是空的，原版 tx 还在，循环不结束；
+ * 4. drop(tx) 之后发送端为 0，循环结束。
+ *
+ * 关掉 JS 时停在第 4 步。
+ */
+import { SITE_LOCALE } from '../../config/site';
+import FigureControls from '../course/FigureControls.astro';
+import PipeTube from './PipeTube.astro';
+import { pipeMetrics } from './pipe-metrics';
+
+const copy = {
+	zh: {
+		caption:
+			'三个工作线程各持有一个 tx_clone，主线程还留着原版 tx。克隆体全部 Drop 之后，通道里可以已经没有消息；只要原版 tx 还在，for message in rx 就不结束。',
+		title: '循环结束看的是发送端还在不在，不是通道里还有没有消息',
+		desc: '第 1 步三个工作线程各有 tx_clone，主线程留着原版 tx，发送端共 4 个。第 2 步三条消息进入通道。第 3 步工作线程退场，克隆体 Drop，通道可以是空的，原版 tx 仍在，接收循环不结束。第 4 步 drop(tx)，发送端为 0，循环结束。',
+		main: '主线程',
+		clone: 'tx_clone',
+		dropped: '已 Drop',
+		original: '原版 tx',
+		waiting: '循环还在等',
+		done: '循环结束',
+		workers: ['worker #1', 'worker #2', 'worker #3'],
+		counts: ['发送端 4', '发送端 4', '发送端 4', '发送端 1', '发送端 0'],
+		notes: [
+			'三个 tx_clone 在工作线程，原版 tx 在主线程。',
+			'三个 tx_clone 在工作线程，原版 tx 在主线程。',
+			'三条消息进入通道，四个发送端都还在。',
+			'克隆体已 Drop。通道可以是空的，原版 tx 还在，循环不结束。',
+			'drop(tx) 之后发送端为 0，循环结束。',
+		],
+		stepper: '发送端全部 Drop 循环才结束',
+		steps: [
+			'三个克隆体加上原版 tx，发送端共 4 个',
+			'三条消息进入通道',
+			'克隆体已 Drop，原版 tx 还在，循环不结束',
+			'drop(tx)，发送端为 0，循环结束',
+		],
+	},
+	en: {
+		caption:
+			'Three workers each hold a tx_clone. The main thread still holds the original tx. After the clones drop, the channel can already be empty. The for loop on rx does not end while that original tx is alive.',
+		title: 'The loop ends when no sender remains, not when the channel is empty',
+		desc: 'Step 1: three workers hold tx_clone and the main thread holds the original tx, four senders. Step 2: three messages are in the channel. Step 3: the workers leave and the clones drop. The channel can be empty, the original tx remains, and the receive loop does not end. Step 4: drop(tx), zero senders, the loop ends.',
+		main: 'main thread',
+		clone: 'tx_clone',
+		dropped: 'dropped',
+		original: 'original tx',
+		waiting: 'loop still waits',
+		done: 'loop ended',
+		workers: ['worker #1', 'worker #2', 'worker #3'],
+		counts: ['senders 4', 'senders 4', 'senders 4', 'senders 1', 'senders 0'],
+		notes: [
+			'Three tx_clone handles, plus the original tx on the main thread.',
+			'Three tx_clone handles, plus the original tx on the main thread.',
+			'Three messages are in the channel. All four senders remain.',
+			'Clones are dropped. The channel can be empty. The original tx remains.',
+			'After drop(tx) there are zero senders. The loop ends.',
+		],
+		stepper: 'The loop ends only after every sender drops',
+		steps: [
+			'three clones plus the original tx: four senders',
+			'three messages enter the channel',
+			'clones dropped, original tx remains, loop waits',
+			'drop(tx), zero senders, loop ends',
+		],
+	},
+} as const;
+
+const locale = SITE_LOCALE === 'en' ? 'en' : 'zh';
+const t = copy[locale];
+
+const workers = [
+	{ name: t.workers[0], y: 24 },
+	{ name: t.workers[1], y: 100 },
+	{ name: t.workers[2], y: 176 },
+] as const;
+
+const pipe = { x: 210, y: 116, width: 220, height: 32 };
+const bore = pipeMetrics(pipe.x, pipe.y, pipe.width, pipe.height);
+const chipW = 44;
+const chipH = 16;
+const chipGap = (bore.boreW - chipW * 3) / 4;
+const chipY = bore.boreY + (bore.boreH - chipH) / 2;
+---
+
+<figure class="diagram ch-fan-figure" data-stepper>
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 400" role="img" aria-labelledby="cfn-title cfn-desc">
+		<title id="cfn-title">{t.title}</title>
+		<desc id="cfn-desc">{t.desc}</desc>
+
+		{
+			workers.map((worker) => (
+				<g>
+					<g class="fi-phase fi-work-live">
+						<rect class="slot" x="20" y={worker.y} width="156" height="64" rx="8"></rect>
+						<text class="name" x="98" y={worker.y + 26} text-anchor="middle">
+							{worker.name}
+						</text>
+						<text class="code" x="98" y={worker.y + 48} text-anchor="middle">
+							{t.clone}
+						</text>
+					</g>
+					<g class="fi-phase fi-work-dead fi-end">
+						<rect class="freed" x="20" y={worker.y} width="156" height="64" rx="8"></rect>
+						<text class="name" x="98" y={worker.y + 26} text-anchor="middle">
+							{worker.name}
+						</text>
+						<text class="edge-sub" x="98" y={worker.y + 48} text-anchor="middle">
+							{t.dropped}
+						</text>
+					</g>
+				</g>
+			))
+		}
+
+		<path class="arrow fi-phase fi-feed" d="M 176 56 H 194 V 132 H 206" marker-end="url(#cfn-head)"></path>
+		<path class="arrow fi-phase fi-feed" d="M 176 132 H 206" marker-end="url(#cfn-head)"></path>
+		<path class="arrow fi-phase fi-feed" d="M 176 208 H 194 V 132 H 206" marker-end="url(#cfn-head)"></path>
+
+		<PipeTube x={pipe.x} y={pipe.y} width={pipe.width} height={pipe.height} />
+		<g class="fi-phase fi-msg">
+			{
+				[0, 1, 2].map((index) => {
+					const chipX = bore.boreX + chipGap + index * (chipW + chipGap);
+					return (
+						<g>
+							<rect class="object" x={chipX} y={chipY} width={chipW} height={chipH} rx="6"></rect>
+							<text class="code" x={chipX + chipW / 2} y={chipY + 12} text-anchor="middle">
+								#{index + 1}
+							</text>
+						</g>
+					);
+				})
+			}
+		</g>
+
+		{
+			t.counts.map((line, index) => (
+				<text
+					class:list={[
+						'edge-label',
+						'fi-phase',
+						index <= 2 ? 'fi-count-4' : index === 3 ? 'fi-count-1' : 'fi-count-0',
+						index === 4 && 'fi-end',
+					]}
+					x="320"
+					y="196"
+					text-anchor="middle"
+				>
+					{line}
+				</text>
+			))
+		}
+
+		<rect class="panel" x="456" y="24" width="168" height="216" rx="10"></rect>
+		<text class="label" x="540" y="48" text-anchor="middle">{t.main}</text>
+		<g class="fi-phase fi-tx-live">
+			<rect class="slot" x="472" y="64" width="136" height="72" rx="8"></rect>
+			<text class="name" x="540" y="92" text-anchor="middle">tx</text>
+			<text class="edge-sub" x="540" y="116" text-anchor="middle">{t.original}</text>
+		</g>
+		<g class="fi-phase fi-tx-dead fi-end">
+			<rect class="freed" x="472" y="64" width="136" height="72" rx="8"></rect>
+			<text class="name" x="540" y="92" text-anchor="middle">tx</text>
+			<text class="edge-sub" x="540" y="116" text-anchor="middle">{t.dropped}</text>
+		</g>
+		<g class="fi-phase fi-rx-wait">
+			<rect class="slot" x="472" y="150" width="136" height="72" rx="8"></rect>
+			<text class="name" x="540" y="178" text-anchor="middle">rx</text>
+			<text class="edge-sub" x="540" y="202" text-anchor="middle">{t.waiting}</text>
+		</g>
+		<g class="fi-phase fi-rx-done fi-end">
+			<rect class="slot" x="472" y="150" width="136" height="72" rx="8"></rect>
+			<text class="name" x="540" y="178" text-anchor="middle">rx</text>
+			<text class="edge-sub" x="540" y="202" text-anchor="middle">{t.done}</text>
+		</g>
+
+		<rect class="panel" x="16" y="312" width="608" height="64" rx="10"></rect>
+		{
+			t.notes.map((line, index) => (
+				<text
+					class:list={['edge-label', 'fi-only', `fi-only-${index}`, index === 4 && 'fi-end']}
+					data-step={index === 0 ? undefined : index}
+					x="320"
+					y="350"
+					text-anchor="middle"
+				>
+					{line}
+				</text>
+			))
+		}
+
+		<defs>
+			<marker id="cfn-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+	<FigureControls controls="stepper" label={t.stepper} steps={[...t.steps]} />
+</figure>
+
+<script>
+	import { initFigures } from '../../scripts/motion';
+	initFigures();
+</script>

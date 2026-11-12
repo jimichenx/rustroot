@@ -1,0 +1,205 @@
+---
+title: 消息传递：通道（Channel）
+description: 从运行中线程需要持续向外汇报数据的需求出发，掌握 mpsc::channel 的发送端与接收端协作、多生产者汇聚与通道关闭机制，看清 tx.send(val) 如何通过 Move 语义杜绝跨线程数据竞争，并汇总 Channel 的四大常用工程方案。
+sidebar:
+  label: 消息传递 Channel
+  order: 3
+---
+
+import { Code } from '@astrojs/starlight/components';
+import ChannelMoveDiagram from '../../../../../../components/diagrams/ChannelMoveDiagram.astro';
+import ChannelFanInDiagram from '../../../../../../components/diagrams/ChannelFanInDiagram.astro';
+import ChannelBackpressureDiagram from '../../../../../../components/diagrams/ChannelBackpressureDiagram.astro';
+import messagePassingSource from '../../../../../../../examples/concurrency/threads-and-concurrency/src/bin/message-passing-channels.rs?raw';
+
+在前两节里，我们已经学会了用 `thread::spawn` 启动线程、用 `handle.join()` 等待线程结束，以及用 `Arc<T>` 在多个线程之间共享一份只读配置。
+
+但只要你开始写稍微真实一点的多线程程序，马上就会发现光靠 `join()` 和只读的 `Arc<T>` 远远不够用：
+- `handle.join()` 只能在子线程**彻底运行结束、临死退场的那一刻**，一次性交回一个最终结果；
+- 可如果子线程是一个持续运行的后台任务——比如它正在后台解析一个 10GB 的日志文件，每解析完一个分块，就需要把阶段性结果实时发给主线程去展示或落盘，而子线程自己还要继续往下解析下一个分块呢？
+- 又比如，你有 3 个工作线程在外面源源不断地抓取网页数据，想把抓到的结果全都汇总到专门负责写数据库的那个线程里去处理，该怎么把数据从线程 A 实时递给线程 B？
+
+为了解决这种**「线程还在继续跑，但中途需要源源不断地把数据跨线程传递出去」**的需求，Rust 标准库提供了并发编程的第一大协作工具——**通道（Channel）**。
+
+---
+
+## 什么是通道（Channel）？
+
+你可以把通道（Channel）直观地想象成一根架设在两个线程之间的**单向传送带（或水管）**。
+
+在标准库 `std::sync::mpsc` 模块中，当你调用 `let (tx, rx) = mpsc::channel();` 时，它会成对返回这根传送带的两头：
+
+1. **发送端 `tx`（Transmitter / Sender，投递口）**：
+   你把它通过 `move` 交给干活的子线程。子线程每产出一个数据，就调用 **`tx.send(data)`** 把包裹放上传送带；
+2. **接收端 `rx`（Receiver，取件口）**：
+   留在主线程（或专门的汇总线程）手里。接收方调用 **`rx.recv()`** 在传送带的另一头阻塞等待，一旦有包裹滑过来就立刻接住取走。
+
+模块名里的 **`mpsc`** 是 *Multiple Producer, Single Consumer* 的缩写，意思是**「多生产者，单消费者」**——也就是说，投递口 `tx` 可以复制出好几个分给不同的工作线程大家一起往里塞包裹，而取件口 `rx` 全场只有唯一一个，负责在终点统一签收。
+
+---
+
+## 发送即移动：`tx.send(val)` 如何避免数据竞争
+
+在正式看代码之前，我们先来对比一个极其关键的跨语言差异。
+
+Go 语言（`chan`）和 Java（`BlockingQueue`）里也有通道或阻塞队列。但在这些语言里，当你把一个对象（比如一个结构体或列表的引用）塞进通道发送给另一个线程后，**发送方线程自己的手里依然保留着那个对象的引用**。
+如果发送方线程在调完 `send` 之后，不小心又顺手修改了那个对象里的字段，而此时接收方线程恰好刚从通道里取出这个对象正在读取——两边在没有任何锁保护的情况下同时读写同一块内存，依然会发生**数据竞争（Data Race）**。
+
+而在 Rust 里，`Channel` 与我们在第 1 章建立的**所有权移动（Move）规则**完成了无缝咬合：
+
+**`tx.send(val)` 的函数签名是按值接收 `val: T` 的。**
+- 当子线程执行 `tx.send(report)` 时，`report` 的**唯一所有权当场顺着通道跨线程转移给了接收端 `rx`**；
+- 发送成功的那一刻，子线程手里的原变量 `report` 立即被编译器标记为已移出失效；
+- 如果子线程在发送之后还试图再去读取或修改 `report`，编译器会在编译期直接报出我们熟悉的 **`error[E0382]: borrow of moved value`** 将其拦下。
+
+`report` 先在子线程栈上。`send` 之后这只槽位失效，值在通道里；`recv` 之后它在主线程栈上。同一时刻只有一处拿着它。
+
+<ChannelMoveDiagram />
+
+我们来跑通这段单向发送与所有权移交的代码：
+
+<small class="code-source">源文件：<code>examples/concurrency/threads-and-concurrency/src/bin/message-passing-channels.rs</code></small>
+<Code
+  code={messagePassingSource.split('// ANCHOR: log_entry\n')[1].split('\n// ANCHOR_END: log_entry')[0] + '\n\n' + messagePassingSource.split('// ANCHOR: basic_channel\n')[1].split('\n    // ANCHOR_END: basic_channel')[0]}
+  lang="rust"
+  title="通过 mpsc::channel 跨线程发送数据并移交唯一所有权"
+/>
+
+运行输出：
+
+```text
+[主线程] 收到并接管数据: worker #1 -> chunk_01_parsed
+```
+
+你看，并发编程界有一句名言叫*「不要通过共享内存来通信，而要通过通信来共享内存」*。在别的语言里这只是一句靠程序员自觉遵守的道德倡议，而在 Rust 里，编译器直接用 **`send` 即 Move** 把它变成了不可违背的编译期铁律。
+
+---
+
+## 发送与接收会不会阻塞线程？
+
+在使用通道时，最需要心里有数的就是：**调用接收方法 `rx.recv()` 和发送方法 `tx.send()` 时，当前线程到底会不会停下来阻塞等待？**
+
+我们把接收端与发送端的行为拆开核对：
+
+### 接收端 `rx`：默认阻塞，按需非阻塞
+
+接收端从传送带取件时，标准库提供了三种不同力度的取件方法：
+- **`rx.recv()`（以及 `for msg in rx` 循环）—— 会阻塞线程**：
+  如果当前通道里有消息，立即取走第一条继续往下走；如果当前通道是空的，但外面的发送端 `tx` 还没有全部销毁，调用 `rx.recv()` 的线程就会**当场暂停休眠（让出 CPU）**，直到有新消息滑过来、或者所有 `tx` 全都销毁关闭为止。
+- **`rx.try_recv()` —— 绝不阻塞**：
+  去取件口看一眼就走：有消息立即返回 `Ok(msg)`；当前没消息则一微秒都不等，立即返回 `Err(TryRecvError::Empty)`，适合主线程一边干自己的活、一边顺手轮询有没有新消息。
+- **`rx.recv_timeout(duration)` —— 限时阻塞**：
+  最多阻塞等待指定时长（如 50 毫秒），超时未收到消息即返回超时错误，防止线程无限期卡死。
+
+### 发送端 `tx.send(msg)`：无界不阻塞，有界满则阻塞
+
+很多初学者误以为 `tx.send(msg)` 永远不会阻塞，其实这完全取决于你创建的是哪一种通道：
+- **用 `mpsc::channel()` 创建的「无界异步通道（Unbounded）」—— `send` 永不阻塞**：
+  它背后的内存队列没有容量上限（只要物理内存够用就能一直往里塞）。因此子线程调用 `tx.send(msg)` 把包裹往传送带上一放就立即返回，不需要等待接收端 `rx` 来取。
+- **用 `mpsc::sync_channel(N)` 创建的「有界同步通道（Bounded）」—— 队列满时 `send` 会阻塞**：
+  创建时显式指定了缓冲区最多只能积压 `N` 条未取走的消息：
+  - 当积压消息数 `< N` 时，`tx.send(msg)` 不阻塞，放入即走；
+  - 一旦通道里已经塞满了 `N` 条消息而接收端还没来得及取，下一个调用 `tx.send(msg)` 的发送线程就会**当场阻塞排队**，直到接收端 `rx` 取走至少一条消息腾出空位为止；
+  - **特例 `mpsc::sync_channel(0)`（零容量交接通道）**：缓冲区容量为 `0`，意味着发送方调用 `tx.send(msg)` 时**必定阻塞**，必须等接收方同时调用 `rx.recv()` 面对面完成一手交接，双方线程才能同时继续往下执行。
+
+| 操作端 | 方法 / 通道类型 | 会不会阻塞当前线程？ | 解除阻塞 / 返回的条件 |
+| --- | --- | :---: | --- |
+| **接收端 `rx`** | **`rx.recv()`** / **`for msg in rx`** | **会阻塞** | 收到新消息，或所有 `tx` 已销毁关闭 |
+| | **`rx.try_recv()`** | **不阻塞** | 立即返回（有值 `Ok`，空则 `Err`） |
+| | **`rx.recv_timeout(t)`** | **限时阻塞** | 收到新消息，或达到超时时间 `t` |
+| **发送端 `tx`** | 无界 **`mpsc::channel()`** 的 `tx.send()` | **不阻塞** | 放入内存队列后立即返回 |
+| | 有界 **`mpsc::sync_channel(N)`** 的 `tx.send()` | **未满不阻塞；<br/>满 `N` 条则阻塞** | 接收端 `rx` 取走消息腾出空位后解除阻塞 |
+
+---
+
+## 多生产者汇聚与通道的自然关闭
+
+在实际工程里，我们很少只用一个子线程发一条消息就结束。更常见的模式是：**启动多个工作线程并行干活，每个工作线程手里拿一个克隆出来的 `tx`，源源不断地把各自算出的结果汇入同一个 `rx`；主线程则直接用 `for msg in rx` 循环持续接收，直到所有工作线程都干完活退场。**
+
+要写出这个模式，有一个新手十有八九会踩中的**「通道死锁卡住」陷阱**——我们直接对照下面的代码看清原因：
+
+<small class="code-source">源文件：<code>examples/concurrency/threads-and-concurrency/src/bin/message-passing-channels.rs</code></small>
+<Code
+  code={messagePassingSource.split('// ANCHOR: multi_producer\n')[1].split('\n    // ANCHOR_END: multi_producer')[0]}
+  lang="rust"
+  title="克隆多个发送端汇聚结果，并通过 drop(tx) 正常关闭通道"
+/>
+
+运行输出（顺序随线程调度而定）：
+
+```text
+[汇总线程] 收到流水线消息: worker #1 阶段性产出
+[汇总线程] 收到流水线消息: worker #2 阶段性产出
+[汇总线程] 收到流水线消息: worker #3 阶段性产出
+[汇总线程] 所有发送端已关闭，流水线正常结束
+```
+
+### 为什么要显式调用 `drop(tx)`？
+
+仔细观察上面的代码：
+1. `for message in rx` 循环之所以知道什么时候该结束退出，依据的唯一信号是：**「世上所有的发送端 `tx`（包括原版和所有克隆体）已经全部被销毁（Drop）了，以后绝不可能再有新消息发过来了。」**
+2. 我们在循环里调用了 3 次 `tx.clone()`，把 3 个克隆体 `tx_clone` 通过 `move` 移交给了 3 个子线程——当这 3 个子线程执行完毕退场时，它们手里的 3 个 `tx_clone` 会自动触发 `Drop` 销毁；
+3. **但是别忘了，最初创建的那个原版 `tx`，此时还静静地留在主线程自己的栈帧里没有被 `move` 走。**
+4. 如果你不写那行 `drop(tx)`（或者在最后一个子线程里直接把原版 `tx` 给 `move` 进去），那么当 3 个子线程全都跑完退场后，主线程手里的原版 `tx` 依然存活（存活发送端计数为 `1`）。于是主线程在下方的 `for message in rx` 里就会一直阻塞等待下去，导致程序卡死。
+
+三个克隆体退场之后，通道里可以已经没有消息。`for message in rx` 停不停，看的是还有没有存活的发送端。
+
+<ChannelFanInDiagram />
+
+---
+
+## `Channel` 常用工程方案
+
+在掌握了 `mpsc` 的基础用法后，我们把日常工程与系统设计中最常用的四类 `Channel` 方案及选型边界汇总如下，供你在设计并发架构与 Code Review 时直接取用：
+
+### 1. 多工单汇聚模式（Fan-in）
+- **场景特征**：主线程将大任务切分为 N 个分片派发给 N 个工作线程并行计算，通过克隆 N 份 `tx` 将结果实时汇入主线程的同一个 `rx` 进行归并统计或统一写入磁盘（如上方实验所示）。
+- **工程要点**：由于磁盘文件或数据库连接往往不便在多个线程间同时写入，用多个计算线程通过 `Channel` 把数据汇总给**唯一一个专门负责 I/O 写入的消费者线程**，既能跑满多核 CPU，又能让 I/O 写入保持彻底的单线程无锁顺序执行。
+
+### 2. 有界通道与背压控制（`sync_channel`）
+- **场景特征**：我们前面用的 `mpsc::channel()` 创建的是**无界异步通道（Unbounded Channel）**——不管接收端 `rx` 处理得有多慢，发送端 `tx.send()` 永远不会阻塞，消息会无限堆积在内存队列里。如果生产者的速度远快于消费者（比如每秒产生 10 万条日志，而磁盘每秒只能写 1 万条），内存很快就会被撑爆（OOM）。
+- **解决方案**：在生产环境中，应当优先评估使用**有界同步通道 `mpsc::sync_channel(N)`**（例如设定容量上限 `N = 1000`）。当通道里积压的未处理消息达到 `1000` 条时，下一个调用 `tx.send()` 的生产者线程就会**自动阻塞暂停**，直到消费者取走消息腾出空位为止——这就是高并发系统里至关重要的**背压（Backpressure）保护机制**。
+
+下面把容量画成 3。放满之后，下一次 `send` 停在通道外面；接收端取走一条，这次 `send` 才返回。
+
+<ChannelBackpressureDiagram />
+
+### 3. 后台常驻命令模式（Actor / Command）
+- **场景特征**：你有一个硬件设备驱动、一个本地缓存引擎或一个状态机，不希望外面几十个线程直接加锁去改它。
+- **解决方案**：定义一个命令枚举 `enum EngineCmd { Insert(String, i32), Query(String), Shutdown }`，启动一个独占持有该引擎的后台常驻线程，并在循环里不断读取 `rx`。外部任何线程想操作引擎，只需往 `tx` 发送一条 `EngineCmd` 枚举消息即可——把复杂的多线程并发修改，彻底转化成了单线程的顺序消息处理。
+
+### 4. 非阻塞轮询与超时接收（`try_recv` / `recv_timeout`）
+- **场景特征**：主线程本身有自己的主循环任务（如游戏渲染主循环或定时巡检），不能调用 `rx.recv()` 把自己无限期卡死在原地等待。
+- **解决方案**：
+  - 使用 **`rx.try_recv()`**：立即返回，若当前通道里有消息则返回 `Ok(msg)`，若暂时没消息则立刻返回 `Err(TryRecvError::Empty)`，主线程可以继续干别的事；
+  - 使用 **`rx.recv_timeout(Duration::from_millis(50))`**：最多等待 50 毫秒，超时未收到消息即返回超时错误，避免线程永久挂死。
+
+---
+
+## 小结
+
+在这一节里，我们掌握了并发协作的第一大工具——**通道（`Channel`）**：
+- 发送端 `tx.send(val)` 利用 Move 语义将数据的唯一所有权转移给接收端 `rx`，在编译期切断了发送方与接收方同时读写同一块内存的可能；
+- 克隆多个 `tx` 可以实现多生产者汇聚，但务必记得销毁主线程手里多余的原版 `tx`，并在高吞吐场景下合理选用有界通道 `sync_channel` 实施背压保护。
+
+在进入下一节之前，我们需要清晰地划定 `Channel` 的职责边界：
+**`Channel` 的本质是「线程间传递数据、交接任务与发号施令的通信工具」，而不是用来给共享内存加锁的工具。**
+- 在 `Channel` 里，数据永远在「从线程 A 移交给线程 B」的路上，同一时刻只有一个线程独占那份数据（即使在方案三的 Actor 模式里，也是靠把数据交给唯一一个专人线程来避开多线程直接共享）；
+- 但在另一大类同样核心的工程场景里——比如**「10 个工作线程需要高频、直接地共同读写同一张全局在线用户表、同一个内存缓存池或同一个共享计数器」**，数据根本不应该在线程之间搬来搬去，而是必须放在公共的堆内存里让大家**共同访问、原地修改**。
+
+当多个线程确实需要**围着同一块共享内存原地读写**时，正面解决并发冲突与加锁保护的武器是什么？下一节（`13.4`），我们就来解锁并发协作的第二大流派——**互斥锁 `Mutex<T>`、读写锁 `RwLock<T>` 与 `Arc<Mutex<T>>` 组合拳**。
+
+---
+
+### 附：本节完整可运行实验源码
+
+<details>
+<summary>点击展开完整源码（<code>examples/concurrency/threads-and-concurrency/src/bin/message-passing-channels.rs</code>）</summary>
+
+<Code
+  code={messagePassingSource.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+  title="examples/concurrency/threads-and-concurrency/src/bin/message-passing-channels.rs"
+/>
+
+</details>

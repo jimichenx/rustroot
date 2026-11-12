@@ -1,0 +1,170 @@
+---
+/**
+ * 14.2「poll 把 Waker 交给 Event Loop，wake 之后才做第二次 poll」。
+ * 四步可跳。关掉 JS 时停在 Ready。
+ */
+import { SITE_LOCALE } from '../../config/site';
+import FigureControls from '../course/FigureControls.astro';
+
+const copy = {
+	zh: {
+		caption:
+			'工作线程调用 poll(cx)，把 Waker 传进状态机。未就绪就返回 Pending，并把 Waker 登记在 Event Loop，任务离开就绪队列。网卡数据到达后 wake() 把它塞回队列，第二次 poll 才返回 Ready。',
+		title: 'Pending 期间不再轮询，等 Waker 把任务叫回就绪队列',
+		desc: '第 1 步任务在就绪队列里，工作线程调用 poll(cx)。第 2 步返回 Pending，Waker 登记在 Event Loop，任务离开队列，工作线程去处理别的任务。第 3 步网卡数据到达，waker.wake()，任务回到就绪队列。第 4 步第二次 poll 返回 Ready。',
+		worker: '工作线程',
+		future: '状态机',
+		event: 'Event Loop',
+		queue: '就绪队列',
+		inQueue: '任务在队列里',
+		leftQueue: '任务已离开',
+		poll: 'poll(cx)',
+		other: '去处理别的任务',
+		pending: 'Poll::Pending',
+		ready: 'Poll::Ready',
+		wakerIn: '传入 Waker',
+		wakerReg: 'Waker 已登记',
+		wakerGo: 'waker.wake()',
+		zero: '这期间不再 poll',
+		notes: [
+			'工作线程调用 poll(cx)，把 Waker 传进状态机。',
+			'工作线程调用 poll(cx)，把 Waker 传进状态机。',
+			'返回 Pending。Waker 登记在 Event Loop，任务离开就绪队列。',
+			'网卡数据到达，waker.wake()，任务回到就绪队列。',
+			'第二次 poll，返回 Ready。',
+		],
+		stepper: '从 Pending 到 wake',
+		steps: [
+			'poll(cx)，传入 Waker',
+			'返回 Pending，任务离开队列',
+			'wake()，任务回到队列',
+			'第二次 poll，返回 Ready',
+		],
+	},
+	en: {
+		caption:
+			'The worker calls poll(cx) and passes a Waker into the state machine. Pending registers that Waker with the event loop and the task leaves the ready queue. When the socket has data, wake() puts it back, and the second poll returns Ready.',
+		title: 'After Pending the runtime stops polling until the Waker returns the task',
+		desc: 'Step 1: the task is on the ready queue and the worker calls poll(cx). Step 2: the result is Pending, the Waker is registered with the event loop, the task leaves the queue, and the worker moves on. Step 3: the socket has data, waker.wake() runs, and the task returns to the queue. Step 4: the second poll returns Ready.',
+		worker: 'worker',
+		future: 'state machine',
+		event: 'event loop',
+		queue: 'ready queue',
+		inQueue: 'task is queued',
+		leftQueue: 'task has left',
+		poll: 'poll(cx)',
+		other: 'works on something else',
+		pending: 'Poll::Pending',
+		ready: 'Poll::Ready',
+		wakerIn: 'Waker passed in',
+		wakerReg: 'Waker registered',
+		wakerGo: 'waker.wake()',
+		zero: 'no further poll yet',
+		notes: [
+			'The worker calls poll(cx) and passes in the Waker.',
+			'The worker calls poll(cx) and passes in the Waker.',
+			'Pending. The Waker is registered. The task leaves the queue.',
+			'The socket has data. wake() puts the task back on the queue.',
+			'The second poll returns Ready.',
+		],
+		stepper: 'From Pending to wake',
+		steps: [
+			'poll(cx) receives the Waker',
+			'Pending, the task leaves the queue',
+			'wake() puts the task back',
+			'the second poll returns Ready',
+		],
+	},
+} as const;
+
+const locale = SITE_LOCALE === 'en' ? 'en' : 'zh';
+const t = copy[locale];
+---
+
+<figure class="diagram poll-waker-figure" data-stepper>
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 420" role="img" aria-labelledby="pwk-title pwk-desc">
+		<title id="pwk-title">{t.title}</title>
+		<desc id="pwk-desc">{t.desc}</desc>
+
+		<rect class="panel" x="16" y="16" width="188" height="200" rx="10"></rect>
+		<text class="label" x="110" y="40" text-anchor="middle">{t.worker}</text>
+		<g class="pw-phase pw-worker-poll pw-end">
+			<rect class="slot" x="32" y="64" width="156" height="120" rx="8"></rect>
+			<text class="code" x="110" y="120" text-anchor="middle">{t.poll}</text>
+			<text class="edge-sub" x="110" y="146" text-anchor="middle">{t.wakerIn}</text>
+		</g>
+		<g class="pw-phase pw-worker-else">
+			<rect class="freed" x="32" y="64" width="156" height="120" rx="8"></rect>
+			<text class="edge-sub" x="110" y="128" text-anchor="middle">{t.other}</text>
+		</g>
+
+		<rect class="panel" x="220" y="16" width="200" height="200" rx="10"></rect>
+		<text class="label" x="320" y="40" text-anchor="middle">{t.future}</text>
+		<g class="pw-phase pw-result-call">
+			<rect class="slot" x="236" y="64" width="168" height="120" rx="8"></rect>
+			<text class="code" x="320" y="128" text-anchor="middle">{t.poll}</text>
+		</g>
+		<g class="pw-phase pw-result-pending">
+			<rect class="slot" x="236" y="64" width="168" height="120" rx="8"></rect>
+			<text class="code" x="320" y="116" text-anchor="middle">{t.pending}</text>
+			<text class="edge-sub" x="320" y="144" text-anchor="middle">{t.zero}</text>
+		</g>
+		<g class="pw-phase pw-result-wake">
+			<rect class="slot" x="236" y="64" width="168" height="120" rx="8"></rect>
+			<text class="code" x="320" y="128" text-anchor="middle">{t.wakerGo}</text>
+		</g>
+		<g class="pw-phase pw-result-ready pw-end">
+			<rect class="object" x="236" y="64" width="168" height="120" rx="8"></rect>
+			<text class="code" x="320" y="128" text-anchor="middle">{t.ready}</text>
+		</g>
+
+		<rect class="panel" x="436" y="16" width="188" height="200" rx="10"></rect>
+		<text class="label" x="530" y="40" text-anchor="middle">{t.event}</text>
+		<g class="pw-phase pw-waker-none">
+			<rect class="freed" x="452" y="64" width="156" height="120" rx="8"></rect>
+			<text class="edge-sub" x="530" y="128" text-anchor="middle">{t.wakerIn}</text>
+		</g>
+		<g class="pw-phase pw-waker-reg">
+			<rect class="slot" x="452" y="64" width="156" height="120" rx="8"></rect>
+			<text class="name" x="530" y="116" text-anchor="middle">Waker</text>
+			<text class="edge-sub" x="530" y="144" text-anchor="middle">{t.wakerReg}</text>
+		</g>
+		<g class="pw-phase pw-waker-done pw-end">
+			<rect class="slot" x="452" y="64" width="156" height="120" rx="8"></rect>
+			<text class="code" x="530" y="128" text-anchor="middle">{t.wakerGo}</text>
+		</g>
+
+		<rect class="panel" x="16" y="232" width="608" height="88" rx="10"></rect>
+		<text class="label" x="32" y="258">{t.queue}</text>
+		<g class="pw-phase pw-queue-in pw-end">
+			<rect class="object" x="160" y="248" width="280" height="52" rx="8"></rect>
+			<text class="name" x="300" y="280" text-anchor="middle">{t.inQueue}</text>
+		</g>
+		<g class="pw-phase pw-queue-out">
+			<rect class="freed" x="160" y="248" width="280" height="52" rx="8"></rect>
+			<text class="edge-sub" x="300" y="280" text-anchor="middle">{t.leftQueue}</text>
+		</g>
+
+		<rect class="panel" x="16" y="336" width="608" height="64" rx="10"></rect>
+		{
+			t.notes.map((line, index) => (
+				<text
+					class:list={['edge-label', 'pw-only', `pw-only-${index}`, index === 4 && 'pw-end']}
+					data-step={index === 0 ? undefined : index}
+					x="320"
+					y="374"
+					text-anchor="middle"
+				>
+					{line}
+				</text>
+			))
+		}
+	</svg>
+	<FigureControls controls="stepper" label={t.stepper} steps={[...t.steps]} />
+</figure>
+
+<script>
+	import { initFigures } from '../../scripts/motion';
+	initFigures();
+</script>

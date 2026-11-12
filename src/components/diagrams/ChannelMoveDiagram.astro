@@ -1,0 +1,149 @@
+---
+/**
+ * 13.3「send 把所有权移交进通道」。
+ *
+ * 三步可跳：
+ * 1. report 在子线程栈上；
+ * 2. send 之后槽位失效，LogReport 在管道里；
+ * 3. recv 之后值在主线程，子线程那边仍是 E0382。
+ *
+ * 管道是浅的管口，栈槽保持平面。关掉 JS 时停在第 3 步。
+ */
+import { SITE_LOCALE } from '../../config/site';
+import FigureControls from '../course/FigureControls.astro';
+import PipeTube from './PipeTube.astro';
+import { pipeMetrics } from './pipe-metrics';
+
+const copy = {
+	zh: {
+		caption:
+			'send 按值接收 report。子线程的槽位随即失效，LogReport 只在通道里；recv 之后它在主线程栈上。同一时刻只有一处拿着它。',
+		title: 'send 把 LogReport 的所有权从子线程交到主线程',
+		desc: '第 1 步 report 在子线程栈上，通道是空的。第 2 步 tx.send 之后，子线程的槽位已移出，再读会报 E0382，LogReport 在通道里。第 3 步 rx.recv 接手，值在主线程的 received 上，子线程那边仍是已移出。',
+		child: '子线程',
+		childSub: '拿着 tx',
+		main: '主线程',
+		mainSub: '拿着 rx',
+		empty: '空位',
+		moved: '已移出',
+		notes: [
+			'report 在子线程栈上，通道是空的。',
+			'report 在子线程栈上，通道是空的。',
+			'send 之后槽位已移出，LogReport 在通道里。',
+			'recv 接手。值在主线程，子线程再读会报 E0382。',
+		],
+		stepper: '所有权沿通道移交',
+		steps: [
+			'report 在子线程栈上',
+			'send 之后槽位失效，值在通道里',
+			'recv 接手，值在主线程',
+		],
+	},
+	en: {
+		caption:
+			'send takes report by value. The child slot is moved-from, and LogReport is only in the channel. After recv it is on the main thread. One place holds it at a time.',
+		title: 'send moves LogReport from the child thread to the main thread',
+		desc: 'Step 1 has report on the child stack and an empty channel. Step 2 is after tx.send: the child slot is moved-from, a further read is E0382, and LogReport is in the channel. Step 3 is after rx.recv: the value is in received on the main thread, and the child slot stays moved-from.',
+		child: 'child thread',
+		childSub: 'holds tx',
+		main: 'main thread',
+		mainSub: 'holds rx',
+		empty: 'empty',
+		moved: 'moved out',
+		notes: [
+			'report is on the child stack. The channel is empty.',
+			'report is on the child stack. The channel is empty.',
+			'After send the slot is moved-from. LogReport is in the channel.',
+			'recv takes it. The value is on the main thread.',
+		],
+		stepper: 'Ownership moves along the channel',
+		steps: [
+			'report is on the child stack',
+			'after send the slot is dead and the value is in the channel',
+			'recv takes it onto the main thread',
+		],
+	},
+} as const;
+
+const locale = SITE_LOCALE === 'en' ? 'en' : 'zh';
+const t = copy[locale];
+
+const pipe = { x: 214, y: 94, width: 212, height: 32 };
+const bore = pipeMetrics(pipe.x, pipe.y, pipe.width, pipe.height);
+const chipH = 16;
+const chipW = 120;
+const chipX = bore.boreX + (bore.boreW - chipW) / 2;
+const chipY = bore.boreY + (bore.boreH - chipH) / 2;
+---
+
+<figure class="diagram ch-move-figure" data-stepper>
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 348" role="img" aria-labelledby="cmv-title cmv-desc">
+		<title id="cmv-title">{t.title}</title>
+		<desc id="cmv-desc">{t.desc}</desc>
+
+		<rect class="panel" x="16" y="16" width="188" height="228" rx="10"></rect>
+		<rect class="panel" x="436" y="16" width="188" height="228" rx="10"></rect>
+		<text class="label" x="110" y="40" text-anchor="middle">{t.child}</text>
+		<text class="edge-sub" x="110" y="58" text-anchor="middle">{t.childSub}</text>
+		<text class="label" x="530" y="40" text-anchor="middle">{t.main}</text>
+		<text class="edge-sub" x="530" y="58" text-anchor="middle">{t.mainSub}</text>
+
+		<g class="mv-phase mv-report-live">
+			<rect class="slot" x="32" y="72" width="156" height="76" rx="8"></rect>
+			<text class="name" x="110" y="104" text-anchor="middle">report</text>
+			<text class="code" x="110" y="128" text-anchor="middle">LogReport</text>
+		</g>
+		<g class="mv-phase mv-report-dead mv-end">
+			<rect class="freed" x="32" y="72" width="156" height="76" rx="8"></rect>
+			<text class="name" x="110" y="100" text-anchor="middle">report</text>
+			<text class="edge-sub" x="110" y="120" text-anchor="middle">{t.moved}</text>
+			<text class="code" x="110" y="138" text-anchor="middle">E0382</text>
+		</g>
+
+		<rect class="slot" x="32" y="162" width="156" height="64" rx="8"></rect>
+		<text class="name" x="110" y="188" text-anchor="middle">tx</text>
+		<text class="code" x="110" y="210" text-anchor="middle">Sender</text>
+
+		<PipeTube x={pipe.x} y={pipe.y} width={pipe.width} height={pipe.height} />
+		<g class="mv-phase mv-chip">
+			<rect class="object" x={chipX} y={chipY} width={chipW} height={chipH} rx="4"></rect>
+			<text class="code" x={chipX + chipW / 2} y={chipY + 12} text-anchor="middle">LogReport</text>
+		</g>
+
+		<g class="mv-phase mv-recv-empty">
+			<rect class="freed" x="452" y="72" width="156" height="76" rx="8"></rect>
+			<text class="edge-sub" x="530" y="116" text-anchor="middle">{t.empty}</text>
+		</g>
+		<g class="mv-phase mv-recv-live mv-end">
+			<rect class="slot" x="452" y="72" width="156" height="76" rx="8"></rect>
+			<text class="name" x="530" y="104" text-anchor="middle">received</text>
+			<text class="code" x="530" y="128" text-anchor="middle">LogReport</text>
+		</g>
+
+		<rect class="slot" x="452" y="162" width="156" height="64" rx="8"></rect>
+		<text class="name" x="530" y="188" text-anchor="middle">rx</text>
+		<text class="code" x="530" y="210" text-anchor="middle">Receiver</text>
+
+		<rect class="panel" x="16" y="260" width="608" height="64" rx="10"></rect>
+		{
+			t.notes.map((line, index) => (
+				<text
+					class:list={['edge-label', 'mv-only', `mv-only-${index}`, index === 3 && 'mv-end']}
+					data-step={index === 0 ? undefined : index}
+					x="320"
+					y="298"
+					text-anchor="middle"
+				>
+					{line}
+				</text>
+			))
+		}
+	</svg>
+	<FigureControls controls="stepper" label={t.stepper} steps={[...t.steps]} />
+</figure>
+
+<script>
+	import { initFigures } from '../../scripts/motion';
+	initFigures();
+</script>

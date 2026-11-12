@@ -1,0 +1,115 @@
+---
+/**
+ * 13.5「Send × Sync 四象限」。
+ * 右列是 Send，上行是 Sync。右上是日常绝大多数类型。
+ * 原因留在正文的表里，这张图只放类型落在哪一格。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+const copy = {
+	zh: {
+		caption:
+			'右列是 Send，能把所有权移给另一个线程。上行是 Sync，能让多个线程同时拿着 &T。右上角两张标签都有，这是日常绝大多数类型。',
+		title: 'Send 与 Sync 是两个独立维度，组成四个象限',
+		desc: '右列实现 Send，左列不实现。上行实现 Sync，下行不实现。右上是第一象限，既 Send 又 Sync：i32、String、Vec<T>、Box<T>、Arc<T>、Mutex<T> 和普通 struct。右下是第二象限，只 Send 不 Sync：Cell<T>、RefCell<T>、Receiver<T>。左下是第三象限，两张都没有：Rc<T> 和 *const T。左上是第四象限，不 Send 但是 Sync：MutexGuard<T>。',
+		sendYes: 'Send',
+		sendYesSub: '可独占移交',
+		sendNo: '不 Send',
+		sendNoSub: '不能独占移交',
+		syncYes: 'Sync',
+		syncYesSub: '可共享 &T',
+		syncNo: '不 Sync',
+		syncNoSub: '不能共享 &T',
+		q1: '第一象限',
+		q1a: 'i32 · String',
+		q1b: 'Vec<T> · Box<T>',
+		q1c: 'Arc<T> · Mutex<T>',
+		q1d: '普通 struct',
+		q2: '第二象限',
+		q2a: 'Cell<T> · RefCell<T>',
+		q2b: 'Receiver<T>',
+		q2c: '能搬家，不能共享',
+		q3: '第三象限',
+		q3a: 'Rc<T>',
+		q3b: '*const T',
+		q3c: '不能跨出当前线程',
+		q4: '第四象限',
+		q4a: 'MutexGuard<T>',
+		q4b: '守卫留在加锁的线程',
+	},
+	en: {
+		caption:
+			'The right column is Send: the value can move to another thread. The top row is Sync: many threads may hold &T at once. The top-right cell has both markers. That is where most types sit.',
+		title: 'Send and Sync are separate axes, so there are four quadrants',
+		desc: 'The right column implements Send and the left column does not. The top row implements Sync and the bottom row does not. Top right is quadrant one, both Send and Sync: i32, String, Vec<T>, Box<T>, Arc<T>, Mutex<T>, and ordinary structs. Bottom right is quadrant two, Send but not Sync: Cell<T>, RefCell<T>, and Receiver<T>. Bottom left is quadrant three, neither: Rc<T> and *const T. Top left is quadrant four, not Send but Sync: MutexGuard<T>.',
+		sendYes: 'Send',
+		sendYesSub: 'may move',
+		sendNo: 'not Send',
+		sendNoSub: 'may not move',
+		syncYes: 'Sync',
+		syncYesSub: 'shared &T',
+		syncNo: 'not Sync',
+		syncNoSub: 'no shared &T',
+		q1: 'quadrant 1',
+		q1a: 'i32 · String',
+		q1b: 'Vec<T> · Box<T>',
+		q1c: 'Arc<T> · Mutex<T>',
+		q1d: 'ordinary struct',
+		q2: 'quadrant 2',
+		q2a: 'Cell<T> · RefCell<T>',
+		q2b: 'Receiver<T>',
+		q2c: 'may move, not share',
+		q3: 'quadrant 3',
+		q3a: 'Rc<T>',
+		q3b: '*const T',
+		q3c: 'stays on this thread',
+		q4: 'quadrant 4',
+		q4a: 'MutexGuard<T>',
+		q4b: 'guard stays on the locking thread',
+	},
+} as const;
+
+const locale = SITE_LOCALE === 'en' ? 'en' : 'zh';
+const t = copy[locale];
+---
+
+<figure class="diagram grid-figure">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 460" role="img" aria-labelledby="ssg-title ssg-desc">
+		<title id="ssg-title">{t.title}</title>
+		<desc id="ssg-desc">{t.desc}</desc>
+
+		<line class="grid-rule" x1="360" y1="72" x2="360" y2="440"></line>
+		<line class="grid-rule" x1="108" y1="256" x2="620" y2="256"></line>
+
+		<text class="edge-label" x="234" y="28" text-anchor="middle">{t.sendNo}</text>
+		<text class="edge-sub" x="234" y="48" text-anchor="middle">{t.sendNoSub}</text>
+		<text class="edge-label" x="490" y="28" text-anchor="middle">{t.sendYes}</text>
+		<text class="edge-sub" x="490" y="48" text-anchor="middle">{t.sendYesSub}</text>
+
+		<text class="edge-label" x="96" y="150" text-anchor="end">{t.syncYes}</text>
+		<text class="edge-sub" x="96" y="170" text-anchor="end">{t.syncYesSub}</text>
+		<text class="edge-label" x="96" y="330" text-anchor="end">{t.syncNo}</text>
+		<text class="edge-sub" x="96" y="350" text-anchor="end">{t.syncNoSub}</text>
+
+		<text class="edge-label" x="234" y="120" text-anchor="middle">{t.q4}</text>
+		<text class="code" x="234" y="156" text-anchor="middle">{t.q4a}</text>
+		<text class="edge-sub" x="234" y="182" text-anchor="middle">{t.q4b}</text>
+
+		<text class="edge-label" x="490" y="112" text-anchor="middle">{t.q1}</text>
+		<text class="code" x="490" y="142" text-anchor="middle">{t.q1a}</text>
+		<text class="code" x="490" y="166" text-anchor="middle">{t.q1b}</text>
+		<text class="code" x="490" y="190" text-anchor="middle">{t.q1c}</text>
+		<text class="edge-sub" x="490" y="214" text-anchor="middle">{t.q1d}</text>
+
+		<text class="edge-label" x="234" y="300" text-anchor="middle">{t.q3}</text>
+		<text class="code" x="234" y="332" text-anchor="middle">{t.q3a}</text>
+		<text class="code" x="234" y="356" text-anchor="middle">{t.q3b}</text>
+		<text class="edge-sub" x="234" y="382" text-anchor="middle">{t.q3c}</text>
+
+		<text class="edge-label" x="490" y="300" text-anchor="middle">{t.q2}</text>
+		<text class="code" x="490" y="332" text-anchor="middle">{t.q2a}</text>
+		<text class="code" x="490" y="356" text-anchor="middle">{t.q2b}</text>
+		<text class="edge-sub" x="490" y="382" text-anchor="middle">{t.q2c}</text>
+	</svg>
+</figure>

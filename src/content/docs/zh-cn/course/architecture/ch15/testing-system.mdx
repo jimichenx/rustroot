@@ -1,0 +1,151 @@
+---
+title: 测试体系：单元测试、集成测试与文档测试
+description: 顺应上一节的 mod 与 crate 边界，理解为什么单元测试作为同文件子模块能直接测试私有函数、为什么 tests/ 目录下的集成测试是独立外部 crate，以及文档测试如何防止注释示例过期。
+sidebar:
+  label: 测试体系
+  order: 2
+---
+
+import { Code } from '@astrojs/starlight/components';
+import testingSystemSource from '../../../../../../../examples/architecture/type-driven-design/src/bin/testing-system.rs?raw';
+
+在上一节（`15.1`）中，我们理清了 Rust 代码组织的两道物理边界：对内以模块 **`mod`** 为容器树（子模块对父模块的一切私有项无条件全透明），对外以 **`crate`** 为最小编译单元（只向外部暴露标了 `pub` 的顶层接口）。
+
+如果你直接顺着这两道边界往下想，就会发现 Rust 内置的自动化测试体系（运行一条 `cargo test` 即可全部触发）根本不是随便定下的工程规矩，而是**直接生长在 `mod` 与 `crate` 可见性规则之上的自然产物**。
+
+按所处的模块位置与测试视角，Rust 的测试分为三层：**单元测试（Unit Tests）**、**集成测试（Integration Tests）**与**文档测试（Doc Tests）**。
+
+---
+
+## 单元测试
+
+在 Java 或 C# 等语言中，单元测试通常必须单独建一个平行的 `src/test/java/...` 目录树。更让人头疼的是：如果你写了一个复杂的内部私有辅助函数（`private`），为了给它写单元测试，你往往不得不破坏封装，硬着头皮把它改成包级可见甚至 `public`。
+
+而在 Rust 项目中，你会看到所有开发者都遵守着同一个惯例：**把单元测试直接写在被测业务源码同一个 `.rs` 文件的最底部，放进一个叫 `mod tests` 的子模块里**。
+
+为什么这么写？回想一下上一节学过的模块父子可见性铁律：
+> **「子模块装在父模块的肚子里，天然有权直接访问父模块里的一切私有函数和私有字段。」**
+
+当你在业务文件底部写下 `mod tests { use super::*; ... }` 时，`tests` 就是当前业务模块的**亲生子模块**。一行 `use super::*;` 就能把父模块里所有未标 `pub` 的私有函数、私有结构体字段全盘引入测试作用域——**你既能对内部私有算法做最彻底的白盒测试，又不需要为了迁就测试而把任何一个私有函数改成 `pub`**。
+
+### 1. `#[cfg(test)]` 与三大测试标注
+
+我们来看一段标准的同文件单元测试代码：
+
+<small class="code-source">源文件：<code>examples/architecture/type-driven-design/src/bin/testing-system.rs</code>（节选：业务代码与底部单元测试子模块）</small>
+<Code
+  code={testingSystemSource.split('// ANCHOR: full\n')[1].split('\nfn main()')[0]}
+  lang="rust"
+  title="在业务文件底部定义 #[cfg(test)] mod tests 子模块"
+/>
+
+看着这段代码，我们把里面用到的四个核心语法标记挨个拆解清楚：
+
+1. **`#[cfg(test)]`（按需编译开关，零生产残留）**：
+   有人会担心：把测试代码和业务代码写在同一个文件里，编译发布线上程序时会不会把测试代码也打包进去导致体积膨胀？
+   完全不会。头顶的 `#[cfg(test)]` 是编译期的条件配置属性——当你平时运行 `cargo build` 或 `cargo run` 时，编译器在语法树阶段就会把整个 `mod tests { ... }` **整块剥离丢弃**，生成的二进制文件里连一个字节的测试残留都没有；只有当你运行 `cargo test` 时，编译器才会把这个子模块编译进专用的测试执行器里。
+2. **`#[test]` 与断言宏（`assert!` / `assert_eq!` / `assert_ne!`）**：
+   在普通函数上方加一行 `#[test]`，它就变成了一个测试用例。`cargo test` 会默认启动多线程并发运行所有标了 `#[test]` 的函数：如果函数正常返回即判为通过（`ok`），如果内部触发了 `panic!`（如 `assert_eq!(left, right)` 发现左右不相等）即判为失败（`FAILED`）。
+3. **返回 `Result<(), E>` 的测试函数**：
+   如果被测函数返回的是 `Result`（如 `settle_amount(10_000, 25)`），你不需要在测试里写一堆 `.unwrap()`，可以直接把测试函数的返回类型写成 `-> Result<(), &'static str>`。这样测试体内部就能直接用问号运算符 **`?`** 链式调用，一旦某一步返回 `Err` 测试即自动判为失败。
+4. **`#[should_panic]`（验证防御边界是否生效）**：
+   有时候我们恰恰需要验证「当传入非法参数时，函数是否如期触发了 `panic!` 拦截」。加上 `#[should_panic(expected = "费率基点不能超过 10000")]` 后，只有当该函数真的崩溃、且报错信息包含指定文本时，测试才算通过。
+
+运行 `cargo test --bin testing-system`，可以看到三个单元测试瞬间并发执行完毕：
+
+```text
+running 3 tests
+test tests::test_private_fee_calculation ... ok
+test tests::test_settle_amount_ok ... ok
+test tests::test_excessive_fee_panics - should panic ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+---
+
+## 集成测试
+
+单元测试作为内部子模块，站在「内部维护者（白盒）」的视角测透了私有细节。但作为库的设计者，我们还必须回答另一个问题：
+**如果一个外部用户通过 `Cargo.toml` 引入了我们的库，只靠我们在 `src/lib.rs` 里通过 `pub` 和 `pub use` 暴露出来的公开接口，能不能顺畅地走完完整的业务流程？**
+
+在内部子模块 `mod tests` 里是测不出这个问题的，因为子模块能看见所有私有项，很容易在不知情的情况下依赖了外部用户根本看不见的内部函数。
+
+为此，Cargo 约定了与 `src/` 平级的顶层 **`tests/` 目录**，专门存放**集成测试（Integration Tests）**：
+
+```text
+my_payment_lib/
+├── Cargo.toml
+├── src/
+│   └── lib.rs            <-- 库 Crate 树根（内含单元测试 #[cfg(test)] mod tests）
+└── tests/
+    └── settlement_flow.rs <-- 集成测试：被 Cargo 当作一个独立的外部 Crate 编译
+```
+
+`tests/` 目录的核心机制只有一条：**Cargo 会把 `tests/` 目录下的每一个 `.rs` 文件，都当作一个完全独立的外部 Crate 来单独编译。**
+
+这意味着，在 `tests/settlement_flow.rs` 里面：
+- 它不再是你模块树里的子模块，不能写 `use super::*;`，也无需写 `#[cfg(test)]`（因为整个 `tests/` 目录只有在运行 `cargo test` 时才会被编译）；
+- 它必须像真正的外部第三方用户一样，老老实实写 `use my_payment_lib::settle_amount;`，**只能访问你在 `src/lib.rs` 门面上正式标了 `pub` 的公开 API**。
+
+如果某个字段或方法你在 `src/lib.rs` 里忘了标 `pub`（或者忘写 `pub use` 重导出），单元测试不会报错，但 `tests/` 下的集成测试立刻就会在编译期把你拦下来。
+
+---
+
+## 文档测试
+
+在软件工程中，有一个困扰了所有语言几十年的顽疾：**代码一直在改，但写在函数头顶注释里的使用示例却没人维护；过不了半年，文档里的示例代码拷出来全都编译报错。**
+
+Rust 从编译器和工具链层面直接终结了这个问题——这就是**文档测试（Documentation Tests，简称 Doc Tests）**。
+
+在 Rust 的库 Crate（`src/lib.rs`）中，使用三斜杠 **`///`** 编写的注释叫做文档注释（支持完整的 Markdown 语法，运行 `cargo doc --open` 即可生成精美的 HTML API 文档网站）。
+当你运行 `cargo test` 时，测试工具不仅会跑你的单元测试和集成测试，还会**自动扫描全库所有 `///` 文档注释里的 Markdown 代码块（```` ``` ````），把每一段代码块提取出来，当作一个独立的外部调用程序去编译并运行**。
+
+```rust
+/// 计算扣除手续费后的实际到账金额（单位：分）。
+///
+/// # 示例
+/// ```
+/// use my_payment_lib::settle_amount;
+///
+/// let net = settle_amount(1000, 30).unwrap();
+/// assert_eq!(net, 970);
+/// ```
+pub fn settle_amount(gross_cents: u64, fee_bps: u64) -> Result<u64, &'static str> {
+    // ...
+}
+```
+
+只要将来某一天，有人重构了 `settle_amount` 的参数顺序或返回值类型，哪怕他改过了单元测试，只要他忘了同步更新头顶 `///` 注释里的那 3 行示例，CI 流水线上的 `cargo test` 就会当场报错失败。
+
+通过把「API 文档示例」直接变成「每一次 `cargo test` 都会编译执行的测试用例」，Rust 让整个开源生态的文档始终与真实代码保持 100% 同步。
+
+---
+
+## 小结
+
+把本节的三种测试放到上一节的模块与编译单元模型上，它们各自守卫的工程边界一目了然：
+
+| 测试类型 | 存放位置 | 编译期身份与可见性权限 | 守卫的工程目标 |
+| --- | --- | --- | --- |
+| **单元测试** | 业务文件底部 `#[cfg(test)] mod tests` | 当前模块的**内部子模块**（可访问父模块一切私有项） | 白盒验证内部私有算法、边界分支与 `panic!` 防线 |
+| **集成测试** | 项目根目录 `tests/*.rs` | **独立的外部 Crate**（仅能访问 `lib.rs` 导出的 `pub` 接口） | 黑盒验证对外公开 API 门面的完整性与多模块协作流 |
+| **文档测试** | 公开项头顶的 `///` Markdown 代码块 | **独立的外部调用代码**（由 `cargo test` 自动提取编译并运行） | 确保公开 API 文档中的示例代码永远可编译、永不过期 |
+
+现在，我们已经掌握了如何用模块 `mod` 藏住私有字段、并用三维测试守住模块边界。
+下一节（`15.3`），我们将把模块私有字段与元组结构体结合起来，引出 Rust 类型驱动架构中最核心的第一种设计模式——**`Newtype` 模式与「解析而非校验（Parse, don't validate）」**。
+
+---
+
+### 附：本节完整可运行实验源码
+
+<details>
+<summary>点击展开完整源码（<code>examples/architecture/type-driven-design/src/bin/testing-system.rs</code>）</summary>
+
+<Code
+  code={testingSystemSource.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+  title="examples/architecture/type-driven-design/src/bin/testing-system.rs"
+/>
+
+</details>

@@ -1,0 +1,110 @@
+---
+/**
+ * 14.1「async fn 展开成枚举，运行时用线程池和 Event Loop 驱动」。
+ * 上方是四个阶段。下方左是工作线程池，右是 Event Loop。
+ * 静态全景，不做成循环动画。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+const copy = {
+	zh: {
+		caption:
+			'编译器把 async fn 拆成枚举，跨过挂起点的变量留在变体里。工作线程从就绪队列取出状态机调用 step；返回 None 就挂到 Event Loop，数据到达后再塞回队列。',
+		title: '状态机自己不往前走，由工作线程和 Event Loop 轮流推动',
+		desc: '上方四个格子是 Start、WaitingUserId、WaitingOrders 和 Done。下方左边是工作线程池：就绪队列里的状态机被取出，调用一次 step。返回 None 时，箭头指向右边的 Event Loop。网卡数据到达后，另一支箭头把状态机塞回左边的就绪队列。',
+		phaseKicker: '编译器展开的 enum',
+		phases: [
+			{ name: 'Start', sub: '阶段 0 · username' },
+			{ name: 'WaitingUserId', sub: '阶段 1 · 等 user_id' },
+			{ name: 'WaitingOrders', sub: '阶段 2 · user_id' },
+			{ name: 'Done', sub: '完成' },
+		],
+		pool: '工作线程池',
+		poolSub: '少量操作系统线程',
+		queue: '就绪队列',
+		step: '取出，调用 step()',
+		park: '返回 None，挂上',
+		event: 'Event Loop',
+		eventSub: 'epoll / kqueue',
+		waiting: '等待中的状态机',
+		back: '数据到达，塞回队列',
+	},
+	en: {
+		caption:
+			'The compiler turns an async fn into an enum and keeps values that cross an await point inside the variants. A worker takes the state machine off the ready queue and calls step. None parks it on the event loop. When data arrives, it goes back on the queue.',
+		title: 'The state machine does not advance itself. Workers and the event loop take turns',
+		desc: 'Four cells on top are Start, WaitingUserId, WaitingOrders, and Done. Bottom left is the worker pool: a state machine leaves the ready queue and step is called once. When it returns None, an arrow runs to the event loop on the right. When the socket has data, the other arrow puts the state machine back on the ready queue.',
+		phaseKicker: 'the enum the compiler builds',
+		phases: [
+			{ name: 'Start', sub: 'phase 0 · username' },
+			{ name: 'WaitingUserId', sub: 'phase 1 · user id' },
+			{ name: 'WaitingOrders', sub: 'phase 2 · user_id' },
+			{ name: 'Done', sub: 'finished' },
+		],
+		pool: 'worker pool',
+		poolSub: 'a few OS threads',
+		queue: 'ready queue',
+		step: 'take one, call step()',
+		park: 'None, park it',
+		event: 'event loop',
+		eventSub: 'epoll / kqueue',
+		waiting: 'tasks waiting here',
+		back: 'data arrived, back to the queue',
+	},
+} as const;
+
+const locale = SITE_LOCALE === 'en' ? 'en' : 'zh';
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 468" role="img" aria-labelledby="rtp-title rtp-desc">
+		<title id="rtp-title">{t.title}</title>
+		<desc id="rtp-desc">{t.desc}</desc>
+
+		<text class="label" x="16" y="28">{t.phaseKicker}</text>
+		{
+			t.phases.map((phase, index) => {
+				const x = 16 + index * 156;
+				return (
+					<g>
+						<rect class="slot" x={x} y="40" width="144" height="64" rx="8"></rect>
+						<text class="code" x={x + 72} y="66" text-anchor="middle">
+							{phase.name}
+						</text>
+						<text class="edge-sub" x={x + 72} y="88" text-anchor="middle">
+							{phase.sub}
+						</text>
+					</g>
+				);
+			})
+		}
+
+		<rect class="panel" x="16" y="140" width="292" height="200" rx="10"></rect>
+		<text class="label" x="32" y="166">{t.pool}</text>
+		<text class="edge-sub" x="32" y="186">{t.poolSub}</text>
+		<rect class="object" x="32" y="204" width="260" height="56" rx="8"></rect>
+		<text class="name" x="162" y="228" text-anchor="middle">{t.queue}</text>
+		<text class="edge-sub" x="162" y="248" text-anchor="middle">{t.step}</text>
+		<rect class="slot" x="32" y="272" width="260" height="48" rx="8"></rect>
+		<text class="code" x="162" y="302" text-anchor="middle">step()</text>
+
+		<rect class="panel" x="332" y="140" width="292" height="200" rx="10"></rect>
+		<text class="label" x="348" y="166">{t.event}</text>
+		<text class="edge-sub" x="348" y="186">{t.eventSub}</text>
+		<rect class="object" x="348" y="214" width="260" height="96" rx="8"></rect>
+		<text class="name" x="478" y="258" text-anchor="middle">{t.waiting}</text>
+		<text class="edge-sub" x="478" y="282" text-anchor="middle">{t.park}</text>
+
+		<path class="arrow" d="M 292 238 H 348" marker-end="url(#rtp-head)"></path>
+		<path class="arrow" d="M 478 310 V 360 H 162 V 260" marker-end="url(#rtp-head)"></path>
+		<text class="edge-sub" x="320" y="400" text-anchor="middle">{t.back}</text>
+
+		<defs>
+			<marker id="rtp-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

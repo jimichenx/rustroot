@@ -1,0 +1,160 @@
+---
+title: 跨越语言边界：FFI 与 C ABI
+description: 从零理解跨语言二进制调用约定（C ABI），掌握 Rust 调用外部 C 库与将 Rust 导出给外部语言的双向 FFI 规范，并看清为何跨界传递结构体必须使用 #[repr(C)] 对齐内存布局。
+sidebar:
+  label: 跨越语言边界 FFI
+  order: 3
+---
+
+import { Code } from '@astrojs/starlight/components';
+import ffiSource from '../../../../../../../examples/architecture/unsafe-and-boundaries/src/bin/ffi-and-c-abi.rs?raw';
+
+如果你之前一直主要使用 Java、Python 或 TypeScript 等运行在虚拟机或解释器上的语言，很可能从来没有亲自写过 **FFI（Foreign Function Interface，外部函数接口）**。
+
+但在真实的软件工程世界里，没有任何一门语言是一座孤岛：
+- **向内借力**：操作系统的内核接口（Linux、macOS、Windows）是 C 语言定义的；人类过去几十年积累的无数顶级工业底座——数据库引擎 SQLite、加密库 OpenSSL、音视频处理 FFmpeg——也全都是 C / C++ 写的。我们不可能也不应该用 Rust 把全世界的轮子全部重写一遍；
+- **向外赋能**：今天许多团队的主力业务代码是用 Python、Node.js 或 Go 写的。当其中某一个分词计算、图像解析或加解密模块遇到了严重的性能瓶颈时，最直接的工程方案就是用 Rust 写一个超高速的动态链接库（`.so` / `.dylib` / `.dll`），让 Python 或 Node.js 直接跨语言调用它。
+
+两门完全不同的编程语言，语法不同、编译器不同，编译出来的二进制机器码凭什么能互相调用对方的函数、读取对方传过来的数据？
+
+这一节我们就从零开始，揭开跨语言互通的底层物理机制。
+
+---
+
+## 世界通用普通话：什么是 C ABI？
+
+当你在自己的 Rust 代码里调用另一个 Rust 函数 `foo(a, b)` 时，两边都是同一个 `rustc` 编译器编译出来的。编译器在生成机器码时心里明镜似的：第 1 个参数 `a` 放进 CPU 的哪个寄存器，第 2 个参数 `b` 压在栈帧的哪个位置，返回值从哪里取回，调用结束后由谁负责清理栈指针。
+
+这套关于**「机器码层面的函数名叫什么、参数和返回值在寄存器与栈上怎么摆放、结构体字段在内存里怎么对齐」**的底层物理规矩，就叫做 **ABI（Application Binary Interface，应用程序二进制接口）**。
+
+问题来了：Rust 编译器有自己的默认 ABI（甚至在不同版本的 `rustc` 之间都可能为了极致性能优化而随时调整），Python 解释器、Go 编译器、Java JVM 也各有各的内部规矩。如果大家各说各的方言，跨语言调用就会鸡同鸭讲，把寄存器里的数字彻底读乱。
+
+怎么让全世界所有语言都能两两互通？
+由于操作系统内核本身就是用 C 语言编写的，每个硬件平台（如 x86_64 Linux、ARM64 macOS）都在操作系统层面定死了一套永恒不变的标准规范——**C 语言二进制调用约定（C ABI）**。
+
+你可以把 **C ABI** 理解为计算机世界的**「国际通用普通话」**：
+- 当 Rust 想要调用 C 语言库时，Rust 编译器就按 C ABI 的规矩把参数摆好跳过去；
+- 当 Python（通过内置 `ctypes`）、Node.js 或 Java 想要调用你写的 Rust 高性能模块时，你只需要让 Rust 编译器把那个入口函数按 **C ABI** 编译导出——对方根本不需要知道这个 `.so` / `.dylib` 库底层是用 Rust 写的，直接把它当成标准 C 函数调用即可。
+
+---
+
+## 方向一：在 Rust 中调用外部 C 函数
+
+我们先看第一个方向：在 Rust 程序里直接调用操作系统自带的 C 语言标准库函数（例如求绝对值的 `abs` 和计算字符串长度的 `strlen`）。
+
+要把外部 C 函数接进 Rust，只需要一个 **`unsafe extern "C"`** 声明块：
+
+<small class="code-source">源文件：<code>examples/architecture/unsafe-and-boundaries/src/bin/ffi-and-c-abi.rs</code>（节选：声明并安全封装外部 C 函数）</small>
+<Code
+  code={ffiSource.split('// ANCHOR: rust_calls_c\n')[1].split('\n// ANCHOR_END: rust_calls_c')[0]}
+  lang="rust"
+  title="通过 unsafe extern &quot;C&quot; 声明外部接口，并在内部封装为安全 Rust 函数"
+/>
+
+看着这段代码，你会立刻明白为什么我们在 Rust 2024 中必须写 `unsafe extern "C"`，而且每次调用 `abs` 或 `strlen` 都必须放进 `unsafe {}` 块里：
+
+**因为一旦跨出了 Rust 的国界，`rustc` 编译器的自动逻辑推理机就彻底失明了。**
+C 语言的函数签名 `size_t strlen(const char *s)` 上既没有生命周期 `'a`，也没有非空保证。如果你不小心传了一个空指针进去，或者传了一段末尾忘了加零字节终止符 `\0` 的内存过去，C 语言的 `strlen` 就会顺着内存一路狂奔读下去，直到触发段错误崩溃。
+
+因此，在工业级 Rust 项目中调用外部 C 库时，我们永远遵循上一节学过的**安全抽象铁律**：
+- 绝不让裸露的 C 函数散落在业务代码里到处调用；
+- 专门写一个薄薄的适配层（如上面的 `safe_c_abs`，或利用标准库的 **`CString` / `CStr`** 自动在字符串末尾补齐 `\0` 终止符），把前置边界条件挡死，对上层业务只暴露 100% 安全的纯正 Rust 接口。
+
+---
+
+## 跨语言传数据的物理陷阱：为什么必须写 `#[repr(C)]`？
+
+光能传递 `i32`、`f64` 这样的单个数字还不够，真实业务往往需要跨语言传递包含多个字段的自定义结构体 `struct`。
+
+这时，如果你直接定义一个普通的 Rust 结构体传给 C 语言（或让 Python 按 C 结构体格式读取），就会踩中一个极隐蔽的物理陷阱：**默认情况下，Rust 编译器会为了帮你省内存，偷偷打乱重排结构体里字段的前后顺序**。
+
+我们来看一个包含两个 1 字节 `u8` 和一个 4 字节 `u32` 的结构体：
+
+```rust
+struct DefaultRustPacket {
+    flag_a: u8,   // 1 字节
+    payload: u32, // 4 字节（CPU 要求它必须存放在 4 的整数倍地址偏移上）
+    flag_b: u8,   // 1 字节
+}
+```
+
+- **如果按 C 语言的死规矩排内存**：必须严格按照代码书写的先后顺序排列。`flag_a` 放在偏移 `0`；为了凑够 4 的倍数存放 `payload`，中间必须白白塞进 **3 个字节的对齐空洞（Padding）**，把 `payload` 放在偏移 `4`；接着 `flag_b` 放在偏移 `8`，最后末尾再补 **3 个字节空洞**——整个结构体总共要占 **12 个字节**。
+- **而默认情况下（`repr(Rust)`）**：`rustc` 编译器非常聪明，它发现把 4 字节的 `payload` 挪到最前面（偏移 `0`），再把两个 1 字节的 `flag_a`（偏移 `4`）和 `flag_b`（偏移 `5`）紧挨着排在后面，整个结构体只需要 **8 个字节**，直接帮你省下了 33% 的内存体积。
+
+在纯 Rust 内部，这种自动字段重排是零副作用的免费优化；可一旦你要把这个结构体跨语言传给按固定偏移量死读内存的 C 或 Python，对方去偏移 `0` 读 1 字节的 `flag_a`，实际上读到的却是被挪到最前面的 `payload` 的头一个字节——数据当场全部错位。
+
+怎么命令 `rustc` 放弃自动重排、严格对齐 C 语言的内存图纸？
+只需在需要跨语言传递的结构体头顶加上一行属性标注——**`#[repr(C)]`**（Representation C）：
+
+<small class="code-source">源文件：<code>examples/architecture/unsafe-and-boundaries/src/bin/ffi-and-c-abi.rs</code>（节选：默认重排布局 vs #[repr(C)] 布局）</small>
+<Code
+  code={ffiSource.split('// ANCHOR: repr_c_layout\n')[1].split('\n// ANCHOR_END: repr_c_layout')[0]}
+  lang="rust"
+  title="加上 #[repr(C)] 后，字段偏移与 C 语言结构体声明 100% 字节级一致"
+/>
+
+*(回顾呼应：我们在 `15.3` 节讲 `Newtype` 时提过的 `#[repr(transparent)]`，也是这组内存布局指令中的一员——专门用于单字段包装结构体，保证包装后的 `struct UserId(u64)` 在跨 FFI 传递时的寄存器与栈布局与内部的裸 `u64` 完全透明一致。)*
+
+---
+
+## 方向二：将 Rust 函数导出给外部语言调用
+
+反过来，如果你想把一段用 Rust 写好的高性能计算函数打包成动态库（在 `Cargo.toml` 中配置 `[lib] crate-type = ["cdylib"]`），交给 Python、Java、C# 或 C++ 调用，在代码层面只需要加上两个标记：
+
+<small class="code-source">源文件：<code>examples/architecture/unsafe-and-boundaries/src/bin/ffi-and-c-abi.rs</code>（节选：按 C ABI 导出 Rust 函数）</small>
+<Code
+  code={ffiSource.split('// ANCHOR: export_rust_to_c\n')[1].split('\n// ANCHOR_END: export_rust_to_c')[0]}
+  lang="rust"
+  title="使用 #[unsafe(no_mangle)] 与 pub extern &quot;C&quot; 暴露跨语言调用入口"
+/>
+
+这两个标记各司其职：
+1. **`pub extern "C"`**：告诉编译器不要使用 Rust 内部的私有调用约定，而是严格按照当前操作系统的标准 C ABI 来接收寄存器参数并返回结果；
+2. **`#[unsafe(no_mangle)]`（禁止符号名混淆）**：
+   在默认编译时，由于 Rust 支持同名模块内存在同名函数以及泛型单态化，编译器会把函数名改写成类似 `_ZN21unsafe_and_boundaries21rust_distance_squared17h8a9b...E` 这样带哈希后缀的内部唯一符号名（这称为 Name Mangling）。如果名字被改乱了，外部的 Python 或 C 代码按原名 `rust_distance_squared` 根本找不到这个函数。
+   加上 `#[unsafe(no_mangle)]` 就是要求编译器原封不动地保留函数原名（之所以在 Rust 2024 中标为 `unsafe(...)`，是因为一旦剥去命名空间前缀直接暴露全局裸名，开发者必须自己确保不要和链接进来的其他 C 库函数撞名）。
+
+*(工程边界补充：在导出的 `extern "C"` 函数内部，还要注意避免让未捕获的 Rust `panic!` 直接跨越 FFI 边界栈展开到 C 或 Python 代码里——跨语言栈展开同样属于未定义行为。在工业级导出接口的最外层，通常会配合 `std::panic::catch_unwind` 把意外崩溃拦截转化为整型错误码返回给外部语言。)*
+
+我们运行本节完整实验代码，亲眼核对跨语言调用与两种内存布局的真实字节偏移差异：
+
+```text
+[Rust 调 C] safe_c_abs(-42) = Some(42)
+[C 字符串桥接] 内容 = "Hello across FFI boundary", C strlen 测得字节长度 = 25
+
+[内存布局对比] DefaultRustPacket 大小 = 8 字节 (flag_a 偏移=4, payload 偏移=0, flag_b 偏移=5)
+[内存布局对比] #[repr(C)] Packet 大小 = 12 字节 (flag_a 偏移=0, payload 偏移=4, flag_b 偏移=8)
+
+[导出 C ABI 函数] rust_distance_squared(3.0, 4.0) = 25
+```
+
+你看输出里的那两行数字对比：默认的 `DefaultRustPacket` 果然把 `payload` 悄悄挪到了偏移 `0` 处，把总体积压缩到了 `8` 字节；而标上 `#[repr(C)]` 后，`flag_a`、`payload`、`flag_b` 老老实实守在偏移 `0`、`4`、`8` 上，与 C 语言编译器算出来的字节位置分毫不差。
+
+---
+
+## 小结
+
+跨过 FFI 这道最后的技术边界，你会发现跨语言交互其实非常清晰直观：
+
+1. **C ABI 是跨语言互通的桥梁**：无论是向内调用操作系统与 C 生态库，还是向外把 Rust 编译成高性能扩展模块赋能 Python / Node.js，双方都在二进制层面通过标准 C 调用约定握手；
+2. **向内调用严守安全封装**：用 `unsafe extern "C"` 引入外部函数（配合 `CString` / `CStr` 桥接字符串），并在内部模块中用安全前置检查包成普通 Rust 函数对外提供；
+3. **向外导出固定名字与布局**：用 `#[unsafe(no_mangle)] pub extern "C" fn` 暴露固定入口名，凡跨界传递的结构体一律标注 **`#[repr(C)]`** 锁定内存字节布局。
+
+*(延伸阅读：在大型工程中，如果你需要对接包含几百个函数的 C `.h` 头文件，或者需要把 Rust 库批量绑定给 Python / Node.js，社区已经有极成熟的自动化工具——如自动从 C 头文件生成 Rust FFI 声明的 `bindgen`、为 Python 编写扩展库的 `PyO3`，以及为 Node.js 编写扩展的 `napi-rs`——它们的底层基石，全都是你刚刚在本节学到的这几条原语。)*
+
+至此，本指南所有十七章的技术机制已经全部拼合完毕。在最后一节中，让我们放下具体的语法细节，站在山顶回望一眼我们从第 1 章一路走来的整幅全景图。
+
+---
+
+### 附：本节完整可运行实验源码
+
+<details>
+<summary>点击展开完整源码（<code>examples/architecture/unsafe-and-boundaries/src/bin/ffi-and-c-abi.rs</code>）</summary>
+
+<Code
+  code={ffiSource.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+  title="examples/architecture/unsafe-and-boundaries/src/bin/ffi-and-c-abi.rs"
+/>
+
+</details>

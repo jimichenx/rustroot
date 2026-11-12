@@ -1,0 +1,183 @@
+---
+title: 安全抽象与未定义行为红线
+description: 亲手复刻标准库的 split_at_mut，看清如何将极小范围的 unsafe 封装在 100% 安全的函数签名与模块私有边界之内，并划清未定义行为（UB）高压线与 Miri 检测工具。
+sidebar:
+  label: 安全抽象与 UB 红线
+  order: 2
+---
+
+import { Code } from '@astrojs/starlight/components';
+import safeAbstractionSource from '../../../../../../../examples/architecture/unsafe-and-boundaries/src/bin/safe-abstractions-and-ub.rs?raw';
+
+在上一节中我们看到，`unsafe` 是程序员向编译器逻辑推理机提交的「人工安全公理证明」。
+
+但一个更深层的工程秘密在于：如果你打开 Rust 标准库的源码（比如 `Vec<T>`、`String`、`Rc<T>`、`Arc<T>`、`Mutex<T>`），会发现它们内部到处都有 `unsafe` 和裸指针；可为什么你在前十六章每天调用 `vec.push(1)`、`Arc::clone(&a)` 的时候，**你自己的业务代码里连一个 `unsafe` 关键字都不需要写，却依然享受着 100% 的内存安全保障？**
+
+这就是整个 Rust 系统编程皇冠上最核心的工程技艺——**安全抽象（Safe Abstraction）：在内部极小的笼子里使用 `unsafe` 操作裸指针，通过严密的前置检查与模块私有封装，对外暴露出 100% 安全的普通函数签名。**
+
+为了让你彻底掌握这门手艺，我们直接亲手复刻一个标准库切片上最经典的函数：**`split_at_mut`**。
+
+---
+
+## 亲手复刻标准库的 `split_at_mut`
+
+我们在上一节提到过这个真实需求：手里有一个可变切片 `values: &mut [i32]` 和一个切分下标 `mid: usize`，我们想在 `mid` 处一刀切下去，同时返回左半截 `&mut [i32]` 和右半截 `&mut [i32]` 供外部修改。
+
+我们先试试不写 `unsafe`，只用普通的切片语法能不能写出来：
+
+```rust
+fn naive_split_at_mut(values: &mut [i32], mid: usize) -> (&mut [i32], &mut [i32]) {
+    let len = values.len();
+    assert!(mid <= len);
+    // 尝试同时返回前半截和后半截的可变引用：
+    (&mut values[..mid], &mut values[mid..])
+}
+```
+
+把这段代码交给 `rustc`，借用检查器当场报出 `E0499` 错误将你拒之门外：
+
+```text
+error[E0499]: cannot borrow `*values` as mutable more than once at a time
+ --> src/bin/safe-abstractions-and-ub.rs:9:26
+  |
+6 | fn naive_split_at_mut(values: &mut [i32], mid: usize) -> (&mut [i32], &mut [i32]) {
+  |                       ------ let's call the lifetime of this reference `'1`
+...
+9 |     (&mut values[..mid], &mut values[mid..])
+  |     ---------------------^^^^^^^^^^^^^^^^^^-
+  |     |     |                   |
+  |     |     |                   second mutable borrow occurs here
+  |     |     first mutable borrow occurs here
+  |     returning this value requires that `*values` is borrowed for `'1`
+```
+
+我们在上一节分析过原因：借用检查器不理解下标算术，它只看到你对同一个切片 `values` 借出了两次可变引用，无法自动证明 `..mid` 与 `mid..` 绝不重叠。
+
+现在，轮到我们像标准库作者一样，用**「安全前置防线 + 局部裸指针 `unsafe`」**把它造出来了：
+
+<small class="code-source">源文件：<code>examples/architecture/unsafe-and-boundaries/src/bin/safe-abstractions-and-ub.rs</code>（节选：复刻标准库 split_at_mut）</small>
+<Code
+  code={safeAbstractionSource.split('// ANCHOR: safe_split_at_mut\n')[1].split('\n// ANCHOR_END: safe_split_at_mut')[0]}
+  lang="rust"
+  title="对外暴露无 unsafe 的安全签名，内部用 assert! 守住裸指针边界"
+/>
+
+请对着这短短十几行代码，重点看清**两处决定生死的工程细节**：
+
+### 1. 为什么对外函数头顶没有写 `unsafe fn`？
+
+请看函数签名：`pub fn my_split_at_mut(values: &mut [i32], mid: usize) -> (&mut [i32], &mut [i32])`。它的头顶**没有 `unsafe` 关键字**。
+
+在 Rust 中，一个函数要不要标成 `unsafe fn`，**不取决于它肚子里面有没有用到 `unsafe {}` 块，而只取决于「外部调用方有没有可能通过传入某些合法类型的参数，触发内存不安全事故」**：
+- 如果我们把中间那句 **`assert!(mid <= len)`** 删掉，那外部调用方只要传一个 `mid = 99999`，下方的 `ptr.add(99999)` 就会直接指到别人家的野内存上去造成内存踩踏——如果写成那样，这个函数就绝不能标成普通函数，必须老老实实标成 `unsafe fn`；
+- 但因为我们在进入 `unsafe` 之前，加了那道铁打的 **`assert!(mid <= len)`** 安检门：现在不管外部调用方（哪怕是写错代码的 AI）传进多么离谱的 `mid`（比如 `0`、`len` 或者 `usize::MAX`），要么落在合法区间内切出互不重叠的两半，要么在 `assert!` 处干净利落地触发安全的 `panic!` 停机——**在任何输入组合下，都 100% 不可能触发越界读写或引用重叠**。
+
+这就是「把 `unsafe` 关进笼子里」的真正含义：**由库作者在内部把边界条件挡死，把编译期自动推理机证不出来的那 4 行裸指针封装起来，向全天下交付一个零心智负担的安全接口。**
+
+---
+
+## 安全抽象的真实边界：为什么是整个 `mod` 模块？
+
+学会了在函数里用 `assert!` 关住 `unsafe` 之后，我们再来看一个连很多有经验的 Rust 程序员都会忽略的架构陷阱：
+**当你在审查一段包含 `unsafe` 的代码时，你只需要盯着 `unsafe { ... }` 花括号里的那几行代码看就够了吗？**
+
+答案是：**远远不够。`unsafe` 的真实信任边界，是包裹它的整个模块（`mod`）。**
+
+我们结合第 15 章 `15.1` 节学过的模块私有性规则，看下面这个极简容器 `FixedPair`（它模拟了标准库 `Vec<T>` 用 `len` 记录有效元素个数的核心机制）：
+
+<small class="code-source">源文件：<code>examples/architecture/unsafe-and-boundaries/src/bin/safe-abstractions-and-ub.rs</code>（节选：模块私有性保护 unsafe 不变量）</small>
+<Code
+  code={safeAbstractionSource.split('// ANCHOR: mod_trust_boundary\n')[1].split('\n// ANCHOR_END: mod_trust_boundary')[0]}
+  lang="rust"
+  title="last_valid 中的 unsafe 依赖于整个模块共同维护 active_len 的私有不变量"
+/>
+
+请仔细看 `last_valid` 方法里的那一行 `unsafe { *self.data.get_unchecked(self.active_len - 1) }`（`get_unchecked` 是跳过边界检查直接按偏移量读内存的 `unsafe` 方法）。
+这行代码之所以绝对安全，依赖的是一个结构性前提：**`self.active_len` 的值永远只能是 `1` 或 `2`**。
+
+现在设想一下：如果有同事在修改 `trusted_buffer` 模块时，**一行 `unsafe` 代码都没碰**，只是随手在字段 `active_len` 前面加了一个 `pub`（改成 `pub active_len: usize`），或者在同一个模块里新加了一个普通的安全方法 `pub fn reset(&mut self) { self.active_len = 0; }`。
+
+后果是什么？
+模块外的调用方只需要写两行 **100% 纯粹的 Safe Rust 代码**（连一个 `unsafe` 单词都没写）：
+
+```rust
+let mut pair = FixedPair::new(42);
+pair.active_len = 99999; // 外部在安全代码里直接改坏了内部不变量
+pair.last_valid();       // 触发越界读取野内存，内存安全防线彻底崩塌
+```
+
+你看，破案的关键就在这里：
+1. **对外部用户而言（模块外）**：只要你的模块把内部状态字段（如 `Vec` 的 `ptr`、`len`、`cap`）严密设为私有，外部十万行业务代码就算写得再烂，也绝不可能破坏内存安全；
+2. **对库维护者而言（模块内）**：因为同一 `mod` 内的所有代码都有权直接修改私有字段，所以 **`unsafe` 代码块所依赖的安全前提，是由它所在的整个 `mod` 共同维护的**。因此，在工程架构上，请务必把含有 `unsafe` 的底层数据结构单独放在一个尽量短小、职责纯粹的独立子模块中，把审查半径缩到最小。
+
+还要牢记一条曾引发 2015 年 Rust 1.0 前夕安全危机的底层公理：**安全抽象绝不能把「防悬垂、防数据竞争」建立在「某个守卫的 `Drop::drop` 一定会被执行」这个假设上**——因为外部调用方完全可以在 100% 安全的 Rust 代码里通过 `Rc` 循环引用或 `std::mem::forget` 合法跳过 `Drop`（关于这场著名的 Leakpocalypse 事件以及标准库 `thread::scope` 如何避开 `Drop` 守卫实现安全抽象，可延伸阅读[附录：`thread::scope` 与 1.0 泄漏危机](/appendix/mechanisms/scoped-threads/)）。
+
+`[插图：unsafe 信任边界同心圆图（最内层红色核心为几行 unsafe 裸指针块；中间橙色护城河为同模块 mod 的私有字段与前置 assert! 检查——标注「人工审查边界」；最外层绿色广阔区域为数十万行调用公开安全 API 的 Safe Rust 业务代码）]`
+
+---
+
+## 触碰不得的高压线：未定义行为（UB）与 `Miri`
+
+在结束本节前，我们还必须搞清楚一个严肃的问题：如果在编写 `unsafe` 代码时不小心写错了证明（比如越界读写、或者捏造了两个指向同一块内存的 `&mut i32`），到底会发生什么？仅仅是程序报错退出吗？
+
+不是报错退出，而是会触发系统级编程中最危险的灾难——**未定义行为（Undefined Behavior，简称 UB）**。
+
+### 1. 为什么「未定义行为（UB）」比 `panic!` 可怕得多？
+
+很多没有写过 C / C++ 的开发者容易把 `panic!` 和未定义行为混为一谈。其实二者有着天壤之别：
+
+- **`panic!` 是确定性的安全急刹车**：就像数组越界 `arr[99]` 触发 `panic!`，程序在犯错前的最后一纳秒立即停机打印调用栈，绝不会污染任何内存，也绝不会篡改业务数据；
+- **未定义行为（UB）是「编译器优化器基于假前提生成错乱机器码」**：
+  `rustc` 后端的机器码优化器（LLVM）之所以能把 Rust 代码优化得和手写汇编一样快，是因为它深信你在代码里承诺的所有类型公理都是 100% 真实的。
+  举个例子：LLVM 坚信**「在任何时刻，两个可变引用 `a: &mut i32` 和 `b: &mut i32` 绝对不可能指向同一个内存地址（Noalias 规则）」**。因此，如果函数里先写了 `*a = 10;`，接着写了 `*b = 20;`，最后返回 `*a`——优化器会想当然地认为「既然 `b` 不可能和 `a` 是同一个地方，改 `*b` 绝不会影响 `*a`」，于是直接把最后的读取优化成了写死的常数 `return 10;`。
+  如果你在 `unsafe` 里用裸指针作弊，强行把同一个变量的地址赋给了两个 `&mut i32` 传进去，你的程序既不会报错也不会停机，而是会在开启 `--release` 编译优化后，静默算出完全颠倒错乱的业务结果，甚至把你写的权限校验 `if` 分支直接当成死代码整段删掉。
+
+在编写 `unsafe` 代码时，请死死守住以下**四条绝对不能触碰的 UB 红线**：
+1. **严禁破坏引用别名铁律**：在任何时刻（哪怕只在某一行代码里存活一纳秒，哪怕根本没读写它），绝不能让两个 `&mut T`、或者一个 `&mut T` 与一个 `&T` 同时指向同一块内存；
+2. **严禁解引用空指针、悬垂指针或未对齐指针**；
+3. **严禁将未初始化的垃圾内存直接当作合法类型读取**（比如一块刚向堆申请还没填值的内存，绝不能直接转成 `&mut String`，否则旧内存里的随机字节会被当成堆地址拿去 `Drop` 释放；需要操作未初始化内存时，必须使用标准库专用的 `std::mem::MaybeUninit<T>` 包装器）；
+4. **严禁为无效字节强行构造非法值**（例如在 Rust 中 `bool` 只能是 `0` 或 `1`，用裸指针往 `bool` 内存里强塞一个整数 `2`，或者往引用里强塞 `0` 地址，当场即构成 UB）。
+
+### 2. 官方排雷显微镜：`cargo miri`
+
+既然未定义行为在平时普通运行甚至普通 `cargo test` 时可能潜伏不发（等上了生产环境开启 `--release` 优化或换架构时才突然引爆），我们怎么验证自己写的 `unsafe` 代码真的干干净净？
+
+Rust 官方工具链为此专门打造了一台针对 `unsafe` 代码的 X 光显微镜——**Miri**（Rust 中间表示解释器）。
+
+不同于直接把代码编译成机器码在真实 CPU 上裸跑，Miri 会在一个带严密监控的虚拟内存沙箱里逐条解释执行你的单元测试：它会给每一个指针打上来源血统标签，实时追踪每一字节是否已初始化、每一次解引用是否越界、每一对引用是否违反了读写排他规则。
+
+当你在工程中编写了像本节 `my_split_at_mut` 或自定义底层容器这样的 `unsafe` 模块时，只需安装并运行一条命令：
+
+```sh
+rustup +nightly component add miri
+cargo +nightly miri test
+```
+
+只要你的测试路径中潜藏着哪怕一字节的越界、内存泄漏或引用别名违规，Miri 都会精准定位到源码行号并当场报错揪出隐患。
+
+---
+
+## 小结
+
+走到这里，你已经看懂了整个 Rust 生态大厦稳固运转的秘密：
+
+1. **安全抽象契约**：标准库和底层基础设施把极少数绕不开的 `unsafe` 裸指针关进内部，在入口用 `assert!` 等安全逻辑卡死前置条件，对外交付无需写 `unsafe` 的 100% 安全 API；
+2. **模块级信任边界**：`unsafe` 依赖的不变量由整个 `mod` 共同守护。审查或编写 `unsafe` 时，必须用私有字段封死外部安全代码篡改内部状态的通道（当线上真的发生罕见的内存崩溃时，你也无需在几十万行代码里大海捞针，只需搜索全项目不到 1% 的 `unsafe` 模块即可定位根源）；
+3. **敬畏 UB 红线并用 `Miri` 验收**：绝不在 `unsafe` 中捏造非法引用或读取未初始化内存，凡写 `unsafe` 必配 `// SAFETY:` 证明注释并用 `cargo miri test` 扫描。
+
+现在，我们已经打通了 Rust 内部从顶层安全抽象到底层裸指针的垂直链条。下一节，我们将推开系统边界的大门横向向外看——从零看懂 Rust 是如何通过 **FFI 与 C ABI**，与外部的操作系统、C 语言库以及 Python / Node.js 无缝握手的。
+
+---
+
+### 附：本节完整可运行实验源码
+
+<details>
+<summary>点击展开完整源码（<code>examples/architecture/unsafe-and-boundaries/src/bin/safe-abstractions-and-ub.rs</code>）</summary>
+
+<Code
+  code={safeAbstractionSource.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+  title="examples/architecture/unsafe-and-boundaries/src/bin/safe-abstractions-and-ub.rs"
+/>
+
+</details>

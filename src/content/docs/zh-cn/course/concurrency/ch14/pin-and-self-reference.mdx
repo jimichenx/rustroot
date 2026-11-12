@@ -1,0 +1,239 @@
+---
+title: 自引用状态机与 Pin<P>
+description: 从跨过 .await 的局部借用出发，揭开编译器生成的自引用状态机在按位 Move 时引发悬垂指针的物理根源，看清 Pin<P> 与 Unpin 如何在编译期锁死内存地址。
+sidebar:
+  label: 自引用状态机与 Pin<P>
+  order: 4
+---
+
+import { Code } from '@astrojs/starlight/components';
+import FutureSelfRefMoveDiagram from '../../../../../../components/diagrams/FutureSelfRefMoveDiagram.astro';
+import pinSource from '../../../../../../../examples/concurrency/async-and-pin/src/bin/pin-and-self-reference.rs?raw';
+
+在 `14.2` 节查看标准库 `Future::poll` 的真实签名时，我们留下了一个贯穿全章的悬念：
+
+```rust
+pub trait Future {
+    type Output;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output>;
+}
+```
+
+为什么 `poll` 方法的第一个参数不能写成再普通不过的 `&mut self`，而必须套上一层我们在第 10.1 节指针家族全景表里见过的 **`Pin<&mut Self>`**？
+
+要揭开这个谜底，不需要引入任何外部概念，只需要把我们在第 1 章学过的**「Move 按位复制字节」**、第 11.5 节学过的**「自引用结构体困局」**，放到 `14.1` 节的**「编译器状态机」**上，真相就会自动浮现出来。
+
+---
+
+## 案发现场：当局部借用跨过 `.await`
+
+我们先来看一段每个程序员在写异步业务时都可能随手写出的 5 行代码：
+
+```rust
+async fn parse_packet_header() -> u8 {
+    let buf: [u8; 4] = [104, 105, 33, 0]; // 1. 栈上局部字节数组
+    let first_byte_ref: &u8 = &buf[0];    // 2. 局部引用：里面存着 buf[0] 的内存地址
+    wait_io().await;                      // 3. 挂起点：让出线程等待 I/O
+    *first_byte_ref                       // 4. 恢复执行后，顺着引用读取首字节
+}
+```
+
+这段代码在逻辑上再自然不过：先声明一个 4 字节数组 `buf`，创建一个指向首字节的引用 `first_byte_ref`，然后 `.await` 等待一步异步操作，最后解引用读出字节返回。
+
+现在，请你站到 Rust 编译器的位置上，按照我们在 `14.1` 节学过的状态机生成规则，把这个函数展开成 `enum` 状态机结构体。
+
+在挂起点 `wait_io().await` 之后，代码还需要读取 `first_byte_ref`，而 `first_byte_ref` 指向的又是数组 `buf`。因此，`buf` 和 `first_byte_ref` 这两个局部变量**必须一起跨过 `.await` 继续存活**——编译器别无选择，只能把它们俩同时塞进状态机 `WaitingIo` 变体的字段里：
+
+```rust
+// 编译器在幕后为 parse_packet_header 生成的状态机变体布局（概念示意）：
+enum ParsePacketFuture {
+    Start,
+    WaitingIo {
+        buf: [u8; 4],            // 位于状态机结构体内部偏移量 +0 处
+        first_byte_ref: *const u8, // 位于状态机结构体内部偏移量 +8 处，里面存着上面 buf 字段的内存地址
+    },
+    Done,
+}
+```
+
+请仔细观察 `WaitingIo` 变体里的这两个字段：
+结构体内部的字段 `first_byte_ref`，保存着**同一个结构体内部另一个字段 `buf` 的内存地址**。
+
+这正是我们在第 11.5 节《实战拼图：重借用、字段借用拆分与自引用困局》中专门剖析过的**自引用结构体（Self-Referential Struct）**。
+在第 11.5 节我们自己定义普通结构体时，借用检查器严禁我们写出自引用结构体，我们当时通过改存相对下标 `(usize, usize)` 避开了它。但在 `async fn` 里，程序员写的只是最普通的局部变量借用 `let first_byte_ref = &buf[0];`——是**编译器在把栈帧局部变量打包进状态机结构体时，被迫在幕后生成了一个自引用结构体**。
+
+---
+
+## 物理危机：一次按位 Move 引发的悬垂指针
+
+既然编译器生成的状态机是一个自引用结构体，当它运行到一半被移动（Move）时，内存中会发生什么？
+
+我们顺着内存地址一步一步推演：
+
+1. **阶段 0（尚未开始轮询 `Start`）**：
+   刚调用 `let fut1 = parse_packet_header();` 时，状态机停在初始阶段 `Start`，此时第 2 行代码还没执行，内部自引用指针还没有建立。在这个阶段，你随便把 `fut1` 移动多少次都完全安全；
+2. **第 1 次调用 `poll` 并挂起在 `WaitingIo`**：
+   假设此时状态机变量 `fut1` 存放在栈内存地址 **`0x1000`** 处。
+   第 1 次调用 `poll` 执行到 `wait_io().await` 挂起时：
+   - 字段 `fut1.buf` 住在地址 **`0x1000`**；
+   - 字段 `fut1.first_byte_ref` 住在地址 `0x1008`，它里面的 8 个字节实打实地写着 `fut1.buf` 的当前地址 **`0x1000`**。
+3. **在挂起期间发生一次按位 Move**：
+   趁着状态机处于 `Poll::Pending` 挂起状态，假设外层代码把 `fut1` 赋值移动给了新变量 `fut2`（或者塞进 `Vec` 触发了搬家）：
+   ```rust
+   let fut2 = fut1; // 在挂起期间把状态机 Move 到新栈槽 0x2000
+   ```
+   我们在第 1 章 1.3 节学过，Rust 的 **Move 在物理内存上就是把 `fut1` 的栈上字节按位原封不动地复制一份到 `fut2` 的新地址 `0x2000`，并把旧位置 `0x1000` 记为失效**：
+   - 现在，新的数组 `fut2.buf` 已经搬到了新地址 **`0x2000`**；
+   - 但是，因为按位复制不会自动修改字节内容，**`fut2.first_byte_ref` 里的那 8 个字节，依然原封不动地写着旧地址 `0x1000`**。
+4. **第 2 次调用 `poll` 恢复执行**：
+   当 I/O 就绪，工作线程对新位置上的 `fut2` 发起第 2 次 `poll`、执行第 4 行 `*first_byte_ref` 时，CPU 顺着 `0x1000` 摸过去，读取的是早已销毁失效的旧栈帧内存 `fut1`——当场触发**悬垂指针（Dangling Pointer）**内存事故。
+
+按位 Move 把字节原样复制到新地址，不会改写 `first_byte_ref` 里已经写下的旧地址。
+
+<FutureSelfRefMoveDiagram />
+
+---
+
+## 为什么 `&mut Self` 拦不住搬家？
+
+看清了上面的悬垂事故，防御的物理原则其实非常明确：
+> **状态机在尚未开始 `poll`（阶段 0）之前可以随便移动；但只要调用了第 1 次 `poll`、内部可能建立起自引用之后，这个状态机实例在内存中的物理地址就绝对不能再改变，直到它在原地被 `Drop` 释放为止。**
+
+这时你可能会问：既然只要禁止按值 Move 就行了，那把 `Future::poll` 的第一个参数定义成普通的可变引用 **`fn poll(&mut self, ...)`** 不就够了吗？调用方手里只有借用 `&mut Self`、没有所有权，自然就不能写 `let fut2 = fut1;` 把它移走了呀？
+
+在大多数语言里确实如此，但在 Rust 里，**拿着普通的 `&mut T` 依然可以把内存里的值搬走**。
+因为标准库里有两个完全合法的安全函数——**`std::mem::swap`** 与 **`std::mem::replace`**：
+
+```rust
+// 只要手里有两个普通的 &mut T，随时可以在安全代码中把它们指向的内存字节互换搬家
+fn sneak_move<T>(a: &mut T, b: &mut T) {
+    std::mem::swap(a, b); // a 里的状态机被按字节搬到了 b 的内存地址，自引用当场悬垂
+}
+```
+
+你看，只要编译器允许你拿到裸的 `&mut Self`，任何人都可以在不用交出所有权的情况下，用 `std::mem::swap` 把正在挂起的状态机搬到另一个内存地址去。
+
+---
+
+## 用类型构造器锁死内存地址：`Pin<P>` 与 `Unpin`
+
+既要允许 `poll` 方法修改状态机内部的字段（必须具备可变访问能力），又要严防任何人拿到裸的 `&mut Self` 去调用 `mem::swap` 把整个状态机搬走——怎么在编译期实现这个精准的权限切割？
+
+回到贯穿本指南的主线：**凡是编译期要守住的安全约束，一律做成类型构造器。**
+
+Rust 标准库为此引入了智能指针包装器 **`Pin<P>`**（`P` 是底层的指针类型，最常见的就是 `Pin<&mut T>` 和 `Pin<Box<T>>`），以及配套的自动标记 Trait **`Unpin`**。
+
+### 1. `Pin<P>` 是什么？
+
+`Pin<P>` 在运行时没有任何额外的内存开销——`Pin<&mut T>` 在内存里就只是一个普通的 8 字节可变引用 `&mut T`。
+但一旦把指针包进 `Pin<P>` 里，它就变成了一个受限的**编译期类型实体**，对外立下了一条铁律：
+
+- 如果被指向的目标类型 `T` **可能包含自引用**（在 Rust 中标记为 **`!Unpin`**），那么在安全 Rust 代码中，**`Pin<&mut T>` 彻底关闭了获取底层裸 `&mut T` 的入口**（其 `.get_mut()` 方法因不满足 `T: Unpin` 约束而直接无法调用）。
+- 拿不到裸的 `&mut T`，你就永远无法对它调用 `std::mem::swap` 或 `std::mem::replace`。从这个对象被放进 `Pin` 的那一刻起，它在内存里的物理地址就被彻底锁死（Pinned），直到生命周期结束在原地被 `Drop`。
+
+### 2. 两句话祛魅 `Unpin` 与 `!Unpin`
+
+很多初学者第一次看到 `Pin` 和 `Unpin` 时，容易被这两个单词绕晕。其实用大白话翻译过来只有两句话：
+
+1. **`Unpin`（绝大多数普通类型的默认标签，「不在乎被移动」）**：
+   像 `i32`、`String`、`Vec<T>`，或者我们在 `14.2` 节手写的 `QueryUserFuture`，它们内部**根本没有指向自身字段的自引用指针**，就算在内存里搬一万次家也绝对安全。编译器通过 `auto trait` 自动为这 99% 的普通类型实现了 `Unpin`——对实现了 `Unpin` 的类型来说，`Pin<&mut T>` 就像一层透明玻璃纸，你随时可以调用 `pin.get_mut()` 拿出普通的 `&mut T` 自由修改；
+2. **`!Unpin`（编译器为 `async fn` 自引用状态机打上的保护标签，「严禁解除地址固定」）**：
+   只有当编译器把 `async fn` 展开成可能包含内部自引用的匿名状态机时（或者手动在结构体里放入 `PhantomPinned` 标记时），该类型才会是 **`!Unpin`**。只有面对 `!Unpin` 类型时，`Pin<P>` 的地址锁死防线才会真正生效。
+
+我们通过一段可运行的实验代码，直观验证自引用状态机在固定前后的行为，以及编译器如何拦截对 `Pin<&mut SelfRefStateMachine>` 的非法搬移：
+
+<small class="code-source">源文件：<code>examples/concurrency/async-and-pin/src/bin/pin-and-self-reference.rs</code>（节选：模拟自引用状态机与 Pin 防护）</small>
+<Code
+  code={pinSource.split('// ANCHOR: self_ref_sim\n')[1].split('\n// ANCHOR_END: self_ref_sim')[0]}
+  lang="rust"
+  title="一旦通过 Pin<&mut Self> 建立内部自引用，编译器即锁死 get_mut() 防止 mem::swap 搬家"
+/>
+
+如果你尝试解开实验源码里的注释，对已经固定的 `pinned_a` 调用 `pinned_a.get_mut()` 传给 `std::mem::swap`，编译器会当场报出 `E0277` 错误拦住你：
+
+```text
+error[E0277]: `PhantomPinned` cannot be unpinned
+  --> src/bin/pin-and-self-reference.rs:72:29
+   |
+72 |     std::mem::swap(pinned_a.get_mut(), pinned_b.get_mut());
+   |                             ^^^^^^^ within `SelfRefStateMachine`, the trait `Unpin` is not implemented for `PhantomPinned`
+   |
+   = note: consider using `Box::pin` or `std::pin::pin!`
+```
+
+---
+
+## 工程实战：遇到 `cannot be unpinned` 时怎么处理？
+
+在日常编写 Rust 异步业务代码时，99% 的情况下你只需要写 `.await` 和 `tokio::spawn`——因为 `.await` 语法糖在编译期展开时，以及 `tokio::spawn` 在把状态机放上堆内存时，已经在内部自动帮你做好了 `Pin` 固定，你甚至感觉不到 `Pin` 的存在。
+
+只有在极少数高阶工程场景下（比如你要手动调用 `.poll()`，或者要把一个返回的未命名 `Future` 存进变量并传给要求 `Unpin` 的组合子函数），编译器才会提示你 `` `impl Future` cannot be unpinned ``。
+
+遇到这个报错时，标准库为你准备了两把现成的钥匙，按场景二选一即可：
+
+1. **零堆分配固定在当前栈帧上：`std::pin::pin!(fut)`**
+   如果这个 `Future` 只在当前函数内部使用，直接用标准库宏 `let mut pinned = std::pin::pin!(parse_packet_header());`。它利用块作用域隐藏原变量，零成本地在当前栈上交出一个 `Pin<&mut impl Future>`；
+2. **分配并固定在堆内存上：`Box::pin(fut)`**
+   如果你需要把这个未实现 `Unpin` 的 `Future` 作为返回值传出函数、塞进结构体字段，或者擦除具体类型变成动态的 `Pin<Box<dyn Future<Output = T>>>`，直接调用 `Box::pin(parse_packet_header())`。由于数据稳稳地住在堆内存地址上，外层拿着 `Pin<Box<...>>` 指针随便怎么传递移动，堆上的状态机本体都纹丝不动。
+
+我们运行实验源码的后半部分，验证这两种工程固定方式：
+
+<small class="code-source">源文件：<code>examples/concurrency/async-and-pin/src/bin/pin-and-self-reference.rs</code>（节选：栈固定与堆固定实战）</small>
+<Code
+  code={pinSource.split('// ANCHOR: real_async_pin\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+  title="使用 std::pin::pin!（栈固定）与 Box::pin（堆固定）驱动自引用 async fn"
+/>
+
+运行输出：
+
+```text
+=== 1. 阶段 0（尚未建立内部自引用前）：状态机可以自由 Move ===
+
+=== 2. 进入首次 poll 建立内部自引用，并通过 Pin<&mut Self> 锁死内存地址 ===
+[pinned_a] 当前 buf 实际地址 = 0x16ae58108 | slice_ptr 内部记录的地址 = 0x16ae58108 | 地址是否一致: true
+
+=== 3. 工程实战中固定 !Unpin 异步状态机的两种标准方式 ===
+  [方式 A: std::pin::pin! 栈固定] 轮询结果 = 104
+  [方式 B: Box::pin 堆固定]       轮询结果 = 104
+```
+
+---
+
+## 第五篇总结：跨越所有权、线程与同步栈帧的三级跃迁
+
+写完这一行代码，我们不仅走完了第 14 章，也正式完成了**第五篇《共享、并发与异步》**的全部推导。
+
+不妨回头看一眼我们从第一篇一路走来的全局地图：
+在前四篇（第 1～11 章）里，我们建立起了一套零运行时成本的默认主干规则：**同一时刻唯一所有者 + 编译期读写排他借用检查 + 同步连续调用栈帧**。
+
+而当真实世界的复杂工程逼着我们突破这三道边界时，第五篇通过第 12、13、14 三章，带你完成了三次严丝合缝的跨越：
+
+1. **第 12 章（在单线程内突破「唯一所有者」与「外层不可变限制」）**：
+   - 当图或链表中的多个上游节点必须共享同一个下游节点时，用 **`Rc<T>`**（配合打破循环引用的 **`Weak<T>`**）按需将所有权计数搬到运行时；
+   - 当共享持有者需要局部修改数据时，用 **`Cell<T>`**（值替换）与 **`RefCell<T>`**（运行时借用计数守卫 `Ref` / `RefMut`）实现内部可变性，并在复杂图结构中学会用 **`Vec` + 下标索引（Arena 模式）**规避运行时 `BorrowMutError` 风险。
+2. **第 13 章（跨操作系统多线程突破「单一线程边界」）**：
+   - 与第 12 章构成 **1:1 同构升级**——将非原子的 `Rc<T>` 升级为基于 CPU 硬件原子指令的 **`Arc<T>`**，将单线程的 `RefCell<T>` 升级为把被保护数据锁进盒子里的 **`Mutex<T>` / `RwLock<T>`**（或者通过 **`mpsc::channel`** 跨线程直接移交所有权）；
+   - 编译器则通过 **`Send`**（允许跨线程移交独占所有权）与 **`Sync`**（允许跨线程共享只读引用 `&T`）两个自动推导的标记 Trait，在编译期彻底拦截一切未加同步的跨线程数据竞争。
+3. **第 14 章（在海量高并发 I/O 下突破「同步阻塞栈帧」）**：
+   - 为了不在等待网络 I/O 时浪费昂贵的 MB 级操作系统线程栈，编译器将顺序编写的 **`async / await`** 自动切分为零堆分配的**内联 `enum` 状态机**，交由背后的**异步运行时（工作线程池 + Event Loop）**通过 **`Future::poll`** 与 **`Waker`** 按需推进；
+   - 而当跨过 `.await` 的局部借用让状态机变成**自引用结构体**时，标准库再用最后一枚智能指针包装器 **`Pin<P>`** 从类型层面锁死它的物理内存地址，完成了零 GC 异步并发的最后一块安全拼图。
+
+至此，Rust 语言关于**内存、类型、Trait 抽象、智能指针、生命周期、多线程并发与异步状态机**的核心内功，你已经全部融会贯通。
+
+在最后一篇（**第六篇：工程架构与系统边界**）中，我们将把视野投向大型工业级项目的组织与落地：看看如何用 `crate` 模块树、三维测试体系以及 `Newtype`、`Typestate` 等模式驱动架构设计（第 15 章），如何用编译期宏消除重复样板代码并替代运行时反射（第 16 章），以及如何潜入安全 Rust 脚下的最后一层基础——驾驭 `unsafe` 安全抽象契约与 C 语言 FFI 跨界通信（第 17 章）。
+
+---
+
+### 附：本节完整可运行实验源码
+
+<details>
+<summary>点击展开完整源码（<code>examples/concurrency/async-and-pin/src/bin/pin-and-self-reference.rs</code>）</summary>
+
+<Code
+  code={pinSource.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+  title="examples/concurrency/async-and-pin/src/bin/pin-and-self-reference.rs"
+/>
+
+</details>

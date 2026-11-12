@@ -1,0 +1,122 @@
+---
+title: Typestate 模式：把业务状态流转编码进编译期
+description: 利用零字节状态标签（PhantomData）与按值 self 所有权转移将协议调用顺序编译为静态类型铁轨，杜绝乱序调用与关闭后使用，并划清编译期 Typestate 与运行时 enum 状态机的工程边界。
+sidebar:
+  label: Typestate 类型状态机
+  order: 5
+---
+
+import { Code } from '@astrojs/starlight/components';
+import typestateSource from '../../../../../../../examples/architecture/type-driven-design/src/bin/typestate-pattern.rs?raw';
+
+前两节的 `Newtype` 与 `Builder` 解决的是**对象在构造那一刻的数据合法性与传参灵活性**。
+
+但在网络协议、硬件驱动、事务句柄等系统组件中，还有一类跨越对象整个存活期的架构难题：**严格的业务调用先后顺序**。
+
+假设你正在编写一个数据库客户端 `DbClient`。按照底层通信协议，它的状态流转必须严格遵守这条单行铁轨：
+`Disconnected（初始未连接）` → `Connected（已建立 TCP 连接）` → `Authenticated（已完成身份认证，允许发 SQL）` → `close（关闭销毁，禁止再次访问）`。
+
+---
+
+## 一、 传统运行时状态字段的两处遗憾
+
+在传统面向对象语言中，常规写法是在 `DbClient` 类内部放一个运行时的状态枚举字段 `private State state;`。每次调用方执行 `client.executeQuery(sql)` 时，方法开头都得先写一句运行时防御分支：
+
+```text
+if (this.state != State.AUTHENTICATED) {
+    throw new IllegalStateException("尚未完成认证，禁止查询");
+}
+```
+
+把协议先后顺序交给运行时字段去防守，有两处无法回避的工程代价：
+1. **错误暴露太晚**：如果某个业务分支漏调了 `authenticate()` 就直接调 `executeQuery()`，代码依然能顺利编译通过，只有等线上流量真的走到那条分支时才会抛出异常崩溃；
+2. **无法在编译期根除「关闭后继续使用（Use-After-Close）」**：调用完 `client.close()` 之后，变量 `client` 依然留在当前作用域里，后续代码依然能对它调用查询方法。
+
+在 Rust 中，我们可以调动**泛型类型构造器**与第 1 章的 **Move 所有权转移机制**，把这几个阶段直接提升为互不相容的**编译期类型实体**——这就是 **`Typestate`（类型状态机模式）**。
+
+---
+
+## 二、 三步造出零内存开销的 `Typestate`
+
+### 1. 用零字节单元结构体定义状态标签
+
+首先，我们为每个阶段定义一个没有任何字段的单元结构体，并把状态参数 `State` 挂在客户端构造器 `DbClient<State>` 头顶：
+
+<small class="code-source">源文件：<code>examples/architecture/type-driven-design/src/bin/typestate-pattern.rs</code>（节选：零字节状态标签与 PhantomData）</small>
+<Code
+  code={typestateSource.split('// ANCHOR: state_defs\n')[1].split('\n// ANCHOR_END: state_defs')[0]}
+  lang="rust"
+/>
+
+因为 `DbClient` 的物理字段里只有 `endpoint: String`，并没有直接存放类型为 `State` 的数据，Rust 编译器会提示泛型参数 `State` 未使用（报 `E0392`）。在结构体里放一个标准库的 **`std::marker::PhantomData<State>`**（幽灵数据标记），就是向编译器声明：「我在编译期类型层面上关联了 `State` 参数」。
+
+最关键的物理事实在于：**单元结构体 `Disconnected` 与 `PhantomData<State>` 在运行期的大小全都是 0 字节**。整个 `DbClient<State>` 在栈上的字节数与里面的单个 `String` 分毫不差（24 字节），没有增加哪怕 1 个比特的运行时状态标记。
+
+### 2. 为不同状态的类型实体挂载专属方法
+
+在编译器眼里，填入不同状态参数后的 `DbClient<Disconnected>`、`DbClient<Connected>` 和 `DbClient<Authenticated>` 是**三个完全独立的类型实体**。我们分别为它们编写各自的 `impl` 块——只在 `Authenticated` 状态上挂载 `execute_query` 方法：
+
+<small class="code-source">源文件：<code>examples/architecture/type-driven-design/src/bin/typestate-pattern.rs</code>（节选：按状态隔离方法与按值跃迁）</small>
+<Code
+  code={typestateSource.split('// ANCHOR: typestate_impls\n')[1].split('\n// ANCHOR_END: typestate_impls')[0]}
+  lang="rust"
+/>
+
+### 3. 用按值接收 `self`（Move）销毁旧状态
+
+请特别留意状态跃迁方法的第一个参数：`connect(self)`、`authenticate(self, ...)` 以及最后的 `close(self)`，接收的全都是**按值移动的 `self`**（而不是借用 `&mut self`）。
+
+这一下就把第 1 章的所有权规则发挥到了极致：
+1. **乱序调用在编译期根本不存在**：刚调用 `new` 拿到的 `raw` 类型是 `DbClient<Disconnected>`。如果直接对它写 `raw.execute_query("SELECT 1")`，编译器当场报出 **`error[E0599]`**：
+   ```text
+   error[E0599]: no method named `execute_query` found for struct `DbClient<Disconnected>` in the current scope
+   ```
+   无需任何运行时 `if` 判断，因为在未认证的类型实体上，连 `execute_query` 这个方法名都不存在；
+2. **旧状态自动失效，彻底封死 Use-After-Close**：当你执行 `let connected = raw.connect();` 时，`raw` 的所有权被按值移走并当场失效，你不可能再拿着旧的 `raw` 重复发起第二次连接；当你最后调用 `authed.close();` 时，`authed` 被按值消费释放，后续若再写 `authed.execute_query(...)`，直接被第 1 章的 **`error[E0382]`（移动后使用）** 拦截。
+
+*(工程延伸：如果在上一节的 `Builder` 模式中也叠加 `Typestate`——例如令 `Builder<MissingHost>` 只有在调用 `.host(...)` 转变为 `Builder<HasHost>` 后才暴露 `.build()` 方法，就能做出连必填项缺失都在编译期报错的「类型安全 Builder」。)*
+
+---
+
+## 三、 架构裁决边界：何时用 `Typestate`，何时用 `enum`？
+
+初见 `Typestate` 时，不少开发者会产生一种冲动：试图把项目里所有的业务状态（比如电商订单的「待支付 / 已支付 / 已发货」）全都改写成泛型 `Order<Unpaid>`、`Order<Paid>`。
+
+在真实工程中，这里有一条必须守住的分界线。**编译期 `Typestate` 与第 6 章的运行时 `enum` 状态机各司其职，不能互相替代**：
+
+| 决策维度 | 编译期类型状态机（`Typestate`：`Client<State>`） | 运行时枚举状态机（`enum OrderState`） |
+| --- | --- | --- |
+| **状态由谁决定？** | 由**源码中的调用顺序**静态决定（写代码时就明确第 1 步连接、第 2 步认证、第 3 步查询） | 由**运行期的外部输入**动态决定（从数据库查出一批历史订单，或收到随机网络事件，运行前未知） |
+| **同构集合存储** | `Client<Connected>` 与 `Client<Authenticated>` 是**不同类型**，无法直接装进同一个 `Vec` | 所有变体同属**唯一一个 `OrderState` 类型**，可直接装进 `Vec<OrderState>` 批量遍历 |
+| **典型适用场景** | 网络握手协议、HTTP 响应构造（先写 Header 再写 Body）、读写权限句柄、必填项 `Builder` | 业务工单/订单流转、UI 交互状态、解析器词法状态、编译器生成的 `async fn` 状态机 |
+
+一句话收束这条架构判据：**调用顺序在写代码时是确定单行道的，用 `Typestate` 在编译期锁死；状态在运行期随外部输入动态分叉或需要放进同一个集合管理的，用闭合 `enum` + `match` 穷尽检查。**
+
+运行下面的完整源码，核对零字节内存断言与完整状态跃迁流程：
+
+<small class="code-source">源文件：<code>examples/architecture/type-driven-design/src/bin/typestate-pattern.rs</code></small>
+<Code
+  code={typestateSource.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+  collapse={24}
+/>
+
+运行输出：
+
+```text
+[1/3] TCP connected -> postgres://127.0.0.1:5432
+[2/3] Authenticated -> Ready for queries
+[postgres://127.0.0.1:5432] `SELECT id, email FROM accounts` -> 3 rows
+[3/3] Connection closed cleanly
+```
+
+---
+
+## 小结
+
+1. **`Typestate` 三要素**：零字节状态单元结构体（配合 `PhantomData<State>` 零内存开销）+ 按状态参数分别编写的 `impl` 块 + 按值接收 `self` 销毁旧状态的状态转换签名；
+2. **恪守动静边界**：静态源码调用序列用 `Typestate` 消除运行时状态检查与 `Use-After-Close`；动态外部数据驱动的状态流转用 `enum`。
+
+下一节，我们将填平第 10 章智能指针全景表留下的最后一块拼图——拆解如何在「99% 情况只读借用、1% 情况需要修改」的工程场景中，运用第 7 章学过的 `ToOwned` 与写时复制智能指针 **`Cow<'a, B>`** 消除防御性克隆。
+
+[继续：写时复制智能指针 `Cow<'a, B>` →](/architecture/cow-clone-on-write/)

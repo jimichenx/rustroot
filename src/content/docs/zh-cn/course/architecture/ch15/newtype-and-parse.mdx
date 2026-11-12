@@ -1,0 +1,168 @@
+---
+title: Newtype 模式与「解析而非校验」
+description: 对比类型别名 type 与零内存开销的 Newtype（单字段元组结构体），结合模块私有字段将业务校验锁定在构造入口，掌握防止参数混淆、落地 Parse don't validate 与跨越孤儿规则的三大工程用法。
+sidebar:
+  label: Newtype 模式
+  order: 3
+---
+
+import { Code } from '@astrojs/starlight/components';
+import newtypeSource from '../../../../../../../examples/architecture/type-driven-design/src/bin/newtype-and-parse.rs?raw';
+
+在日常后端与系统开发中，我们经常用同一个基础类型（如 `u64` 或 `String`）去表示几十种完全不同的业务概念：用户 ID 是 `u64`，订单 ID 是 `u64`，商品 ID 也是 `u64`；普通文本是 `String`，邮箱地址是 `String`，加密后的密码哈希还是 `String`。
+
+只要这些不同的业务概念在代码里全都裸奔着写成 `u64` 和 `String`，工程里就会反复出现两类顽疾：
+1. **同类型参数传反了，编译器却一声不吭**；
+2. **下游业务函数不敢信任传入的 `String` 是否合法，只能在每个函数开头一遍又一遍地重复写格式校验**。
+
+在 Rust 中，解决这两类问题的标准架构武器，就是把我们在第 5 章学过的**单字段元组结构体**与 `15.1` 节学过的**模块私有字段边界**组合起来——形成零运行时成本的 **`Newtype` 模式**。
+
+---
+
+## 类型别名 vs `Newtype`
+
+我们先来看一个因为参数类型相同而极易引发线上事故的函数签名：
+
+```rust
+// 用户 ID 和订单 ID 全都是 u64
+fn bind_order_to_user(user_id: u64, order_id: u64) { /* ... */ }
+
+// 调用方一时手滑，把订单 ID 和用户 ID 的顺序传反了：
+let uid: u64 = 1001;
+let oid: u64 = 9527;
+bind_order_to_user(oid, uid); // 编译完全通过，直到线上把订单绑错人
+```
+
+为了给数字加上业务名字，很多人的第一反应是使用 `type` 关键字定义**类型别名（Type Alias）**：
+
+```rust
+type UserId = u64;
+type OrderId = u64;
+
+fn bind_order_to_user(user_id: UserId, order_id: OrderId) { /* ... */ }
+```
+
+请问：改成 `type` 别名之后，再写 `bind_order_to_user(oid, uid)` 把参数传反，编译器会报错吗？
+
+**完全不会报错。**
+因为正如我们在第 3 章所讲，类型别名 `type UserId = u64;` **并没有创建新的编译期类型实体**，它仅仅是给原有的 `u64` 起了一个人类可读的绰号。在类型检查器眼里，`UserId`、`OrderId` 和 `u64` 自始至终都是同一个类型，互相混传畅通无阻。
+
+要想让编译器把「用户 ID」和「订单 ID」当成两个水火不容的独立类型来核对，我们需要使用**单字段元组结构体**来包一层——这就是 Rust 社区熟知的 **`Newtype` 模式**：
+
+<small class="code-source">源文件：<code>examples/architecture/type-driven-design/src/bin/newtype-and-parse.rs</code>（节选：定义 Newtype）</small>
+<Code
+  code={newtypeSource.split('// ANCHOR: id_newtypes\n')[1].split('\n// ANCHOR_END: id_newtypes')[0]}
+  lang="rust"
+  title="用单字段元组结构体定义独立的编译期类型实体 UserId 与 OrderId"
+/>
+
+一旦换成了 `pub struct UserId(pub u64);` 和 `pub struct OrderId(pub u64);`，如果调用方再手滑把参数顺序写反成 `bind_order_to_user(oid, uid)`，编译器会当场报出 `E0308` 类型不匹配错误把代码拦下来：
+
+```text
+error[E0308]: mismatched types
+  --> src/bin/newtype-and-parse.rs:64:24
+   |
+64 |     bind_order_to_user(oid, uid);
+   |     ------------------ ^^^ expected `UserId`, found `OrderId`
+```
+
+### 物理内存的零成本承诺
+
+在 Java 或 Python 等面向对象语言里，如果你为了类型安全去定义一个包装类 `class UserId { long value; }`，往往意味着每次创建一个 ID 都要在堆上多分配一个对象头、多一次指针跳转，在高频循环里会产生可观的内存与 GC 开销。
+
+而在 Rust 中，**`Newtype` 是 100% 的零成本抽象（Zero-Cost Abstraction）**：
+- 在**编译期**，`UserId` 和 `u64` 是两个严格隔离的独立类型实体；
+- 在**运行期**，编译器生成机器码时会直接剥掉 `UserId` 这层外壳。`UserId(1001)` 在栈帧和 CPU 寄存器里的物理内存布局，与裸 `u64` 整数一模一样，严丝合缝地只占 **8 个字节**（`size_of::<UserId>() == 8`），没有任何额外包装头或指针开销。
+
+*(注：在未来第 17 章与 C 语言进行 FFI 跨语言交互时，还可以在 `Newtype` 头顶加上 `#[repr(transparent)]` 标注，向外部语言做出 ABI 层面的内存布局透明保证。)*
+
+---
+
+## 解析而非校验
+
+上面的 `pub struct UserId(pub u64);` 把内部字段标成了 `pub`，解决的是「两个合法的 `u64` 不要传混位置」的问题。
+
+如果我们的需求更进一步：**并非所有的字符串都是合法的邮箱（必须非空且包含 `@`），也并非所有的整数都是合法的端口号或百分比**——我们该怎么防止非法数据混进核心业务逻辑？
+
+在传统工程代码里，最常见的做法是**「防御性校验（Validate）」**：
+参数类型依然写成裸 `String` 或 `&str`。在 Web 控制器入口校验一次还不够，下游的 `register_user(email: &str)`、`send_welcome_email(email: &str)`、`bind_notification(email: &str)` 因为从类型签名上根本看不出传入的 `&str` 到底有没有校验过，每个函数的作者只能战战兢兢地在函数开头再写一遍 `if !email.contains('@')`——既冗余啰嗦，又随时可能因为某个新同事漏写校验而让脏数据流入数据库。
+
+现在，我们把 `Newtype` 与 `15.1` 节学过的**模块私有字段边界**结合起来，就能将「到处重复校验」升级为类型驱动架构的核心范式——**「解析而非校验（Parse, don't validate）」**：
+
+<small class="code-source">源文件：<code>examples/architecture/type-driven-design/src/bin/newtype-and-parse.rs</code>（节选：用私有字段 Newtype 锁定合法不变量）</small>
+<Code
+  code={newtypeSource.split('// ANCHOR: parse_dont_validate\n')[1].split('\n// ANCHOR_END: parse_dont_validate')[0]}
+  lang="rust"
+  title="隐藏内部 String 字段，迫使外部只能通过 Email::parse 唯一入口构造实例"
+/>
+
+请仔细体会这段代码里「模块边界 + 类型签名」配合出的化学反应：
+
+1. **封死后门（私有内部字段）**：
+   `pub struct Email(String);` 定义在 `account` 模块内部，里面的 `0` 号字段 `String` **没有标 `pub`**。根据我们在 `15.1` 节学过的规则，跨出 `account` 模块后，全项目没有任何一段代码能直接写出 `Email(String::from("bad_input"))` 来绕过检查；
+2. **唯一安检口（`Email::parse`）**：
+   外部拿到一段原始字符串后，想要获得 `Email` 实例，全天下只有一条路可走——调用 `Email::parse(raw)`。这个函数的签名不是返回 `bool` 的校验器，而是一个**类型提升器**：如果格式合法，它就把不受信任的原始 `String` 包装提升为受信任的 `Ok(Email)`；如果格式非法，当场返回 `Err` 拒之门外；
+3. **下游免检通行（签名即保证）**：
+   一旦下游业务函数的签名写成了 `fn send_welcome_email(addr: &Email)`，**这个函数体内部连一行格式检查代码都不需要写**。因为只要调用方手里能拿出一个 `&Email` 引用，编译器就已经向你 100% 担保了它一定在入口处通过了 `Email::parse` 的安检。
+
+这就是「解析而非校验（Parse, don't validate）」的精髓：**不要在校验完数据后把证明结果随手扔掉、继续传递原始的 `String`；而要在校验通过的那一刻，直接把数据「解析」装进一个带有编译期类型证明的 `Newtype` 里传递下去。**
+
+---
+
+## 跨越孤儿规则
+
+除了「防参数混淆」和「锁定合法不变量」之外，`Newtype` 在 Rust 工程中还有第三个高频用途：**合法跨越孤儿规则（Orphan Rule）**。
+
+我们在第 7 章 `7.2` 节学过，为了防止两个互不相识的库对同一个类型实现同一个 Trait 造成冲突，Rust 编译器强制执行孤儿规则：**只有当「Trait」或「要实现该 Trait 的类型」至少有一方定义在当前 `crate` 内部时，才允许编写 `impl Trait for Type`**。
+
+因此，如果你想直接为标准库的 `Vec<String>` 实现标准库的 `fmt::Display` 以便直接用 `{}` 打印路由路径，编译器会报错拦住你（因为 `Display` 和 `Vec` 都属于外部标准库）。
+
+此时，只需定义一个本地 `Newtype` 把 `Vec<String>` 包起来，它就立刻变成了属于当前 `crate` 的全新本地类型，可以自由实现任何外部 Trait：
+
+<small class="code-source">源文件：<code>examples/architecture/type-driven-design/src/bin/newtype-and-parse.rs</code>（节选：包装外部类型实现外部 Trait）</small>
+<Code
+  code={newtypeSource.split('// ANCHOR: orphan_rule_wrapper\n')[1].split('\n// ANCHOR_END: orphan_rule_wrapper')[0]}
+  lang="rust"
+  title="用本地 Newtype PathList 包装 Vec<String> 以实现 fmt::Display"
+/>
+
+运行完整实验代码，核对 `Newtype` 在这三大场景下的工作表现：
+
+```text
+[参数防呆] 成功将订单 OrderId(9527) 绑定至用户 UserId(1001)
+[解析而非校验] 无需重复检查格式，直接向合法地址 `alice@example.com` 发送欢迎邮件
+[边界拦截] 非法输入被唯一构造入口拦下: Err("邮箱格式非法：必须非空且包含 `@` 符号")
+[跨越孤儿规则] 路由路径: [/home -> /course -> /architecture]
+```
+
+---
+
+## 小结
+
+作为类型驱动设计的第一块基石，`Newtype` 模式（单字段元组结构体）以**零运行时内存开销**为你提供了三道编译期保障：
+
+1. **区分同构基础类型**：告别形同虚设的 `type` 别名，为 `UserId`、`OrderId` 或物理量纲（如 `Meters`、`Seconds`）生成独立的编译期类型实体，从根源上杜绝同类型参数传反；
+2. **落地「解析而非校验」**：配合 `mod` 私有字段收走外部字面量构造权限，强制所有原始输入在系统边界通过 `parse / try_new` 唯一入口转化为强类型实例，让内部核心业务函数彻底告别重复防御校验；
+3. **跨越孤儿规则**：在当前 `crate` 中为外部类型包裹一层本地身份，合法挂载外部 Trait 实现。
+
+`Newtype` 锁死的是**「单个数据值在构造时的静态合法性」**。
+但在面对拥有众多可选配置项、且语言又不支持函数重载与默认参数的真实模块接口时，我们该怎么设计灵活清晰的构造与调用签名？
+
+下一节，我们就来建立无函数重载下的 API 签名设计体系与 **`Builder` 建造者模式**。
+
+[继续：灵活 API 签名设计与 Builder 模式 →](/architecture/api-design-and-builder/)
+
+---
+
+### 附：本节完整可运行实验源码
+
+<details>
+<summary>点击展开完整源码（<code>examples/architecture/type-driven-design/src/bin/newtype-and-parse.rs</code>）</summary>
+
+<Code
+  code={newtypeSource.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+  title="examples/architecture/type-driven-design/src/bin/newtype-and-parse.rs"
+/>
+
+</details>

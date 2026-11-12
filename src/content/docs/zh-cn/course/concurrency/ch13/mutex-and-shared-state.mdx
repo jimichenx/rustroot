@@ -1,0 +1,245 @@
+---
+title: 共享状态与锁：Mutex<T> 与 RwLock<T>
+description: 从多线程共同修改同一块内存的场景出发，认识互斥锁 Mutex 的排队机制，通过跨语言对照看清 Rust 如何将「被保护的数据」直接装进 Mutex<T> 类型构造器内部，利用 MutexGuard 的 DerefMut 与 Drop 杜绝忘加锁与忘解锁，并掌握 Arc<Mutex<T>> 与 RwLock<T> 的工程裁决。
+sidebar:
+  label: 互斥锁 Mutex 与 RwLock
+  order: 4
+---
+
+import { Code } from '@astrojs/starlight/components';
+import MutexGuardFlowDiagram from '../../../../../../components/diagrams/MutexGuardFlowDiagram.astro';
+import mutexAndSharedStateSource from '../../../../../../../examples/concurrency/threads-and-concurrency/src/bin/mutex-and-shared-state.rs?raw';
+
+在上一节（`13.3`）末尾我们厘清了一个重要的架构边界：`Channel` 是用来在线程之间「传递数据与发号施令」的通信管道。但在真实系统里，还有另一大类完全不同的并发需求——**多个线程需要高频、直接地共同读写同一份内存数据**（比如 4 个工作线程共同累加同一个全局统计计数器，或者共同维护同一张在线会话路由表）。
+
+在 `13.2` 节我们已经亲眼见过，如果让多个 CPU 核心同时在没有任何保护的情况下去改同一个内存槽位（比如同时执行 `+ 1`），就会发生指令交错与结果覆盖（数据竞争）。
+
+那么，怎么让多个线程围着同一块堆内存原地修改，又保证它们绝不会在同一微秒撞车把数据改乱？
+
+这就需要请出并发编程中最经典的工具——**互斥锁（`Mutex`，Mutual Exclusion 的缩写）**。
+
+---
+
+## 什么是互斥锁（Mutex）？
+
+如果你之前很少接触多线程编程，不用被「互斥锁」这个术语吓到。它的运行规则和现实生活中的**单人试衣间**完全一样：
+
+1. **同一时刻只准一人进入（互斥）**：
+   为了保护公共房间里的那份数据，我们在房门口装一把锁（`Mutex`）。不管外面有多少个线程想读写这份数据，同一时刻**全场只有唯一一个线程**能拿到钥匙进屋操作；
+2. **后来者在门外排队等待（阻塞）**：
+   当线程 A 已经锁门在屋里修改数据时，如果线程 B 和线程 C 此时也跑过来想操作这份数据，它们去拧门把手（调用 `.lock()`）会发现门锁着——此时线程 B 和线程 C 会**自动在门外暂停休眠（阻塞等待，让出 CPU）**；
+3. **出门归还钥匙，唤醒下一位（解锁）**：
+   等线程 A 把数据改完、走出房间把锁解开的那一刻，操作系统会自动唤醒门外排在最前面的线程 B，把钥匙交给它进屋操作。
+
+靠着这套「进门加锁、冲突排队、出门解锁」的机制，原本在时间上杂乱无章的多核并发读写，就被规规矩矩地排成了**同一时刻永远只有一个人动内存**的安全序列。
+
+---
+
+## 跨语言对照：把数据装进 `Mutex<T>` 内部
+
+所有的主流编程语言（C++、Java、Go、Python）都有 `Mutex` 互斥锁。但如果你写过这些语言的多线程代码，你一定深知传统互斥锁有多容易出错。
+
+我们以 Go 或 C++ 的惯用写法为例，看看传统语言是怎么设计锁的：
+
+```go
+// Go / C++ 等传统语言的设计：锁（mu）与被保护的数据（list）是分离的两个变量
+var mu sync.Mutex
+var sharedList []int
+
+func worker() {
+    // 隐患 1：如果程序员（或 AI）忘了写 mu.Lock()，直接写 sharedList = append(...)，
+    //        编译器完全不会报错，直接在线上裸奔引发数据竞争。
+    mu.Lock()
+    sharedList = append(sharedList, 1)
+    // 隐患 2：如果中间某个 if 分支提前 return，忘了调 mu.Unlock()，
+    //        这把锁就永远解不开了，其他所有排队的线程当场永久死锁。
+    mu.Unlock()
+}
+```
+
+仔细审视传统语言的这个设计，你会发现它的病根在于：**「锁（`mu`）」和「它要保护的数据（`sharedList`）」在类型系统里是毫无关系的两个独立变量。**
+这把锁到底保不保护 `sharedList`，全靠程序员自己在脑子里记着「访问 `sharedList` 前一定要先调 `mu.Lock()`」。只要团队里有一个新人（或者一段 AI 生成的代码）在某个角落忘了写 `mu.Lock()` 就直接去读写 `sharedList`，编译器根本无从察觉。
+
+### `Mutex<T>` 与 `MutexGuard<T>`
+
+来到 Rust，标准库设计者利用我们在第 3 章建立的**类型构造器**与第 10 章建立的**智能指针契约（`DerefMut` + `Drop`）**，对互斥锁做了一次彻底的重塑：
+
+**在 Rust 中，互斥锁不是一个孤立的 `Mutex`，而是一个接收类型参数 `T` 的类型构造器 `std::sync::Mutex<T>`——被保护的数据 `T` 被严严实实地装在 `Mutex<T>` 盒子内部。**
+
+| 安全维度 | 传统语言（C++ / Go / Java `Lock`） | Rust 的 `Mutex<T>` 类型构造器 |
+| --- | --- | --- |
+| **锁与数据的关系** | **分离**。锁是锁，变量是变量，靠文档或注释约定「用变量前请先加锁」。 | **包裹绑定**。数据 `T` 直接住在 `Mutex<T>` 肚子里，外部根本不存在裸露的变量 `T`。 |
+| **忘加锁怎么办？** | **编译照常通过**，线上运行时发生数据竞争。 | **编译期根本写不出来**。因为 `Mutex<T>` 本身不提供读写 `T` 的方法，你不调用 `.lock()` 就拿不到内部的 `T`。 |
+| **忘解锁怎么办？** | 线程卡死，引发线上死锁。 | **自动解锁**。`.lock()` 返回守卫智能指针 `MutexGuard<T>`，离开作用域时触发 `Drop` 自动释放锁。 |
+
+我们来看一段最基础的 `Mutex<Vec<i32>>` 代码，体会一下「钥匙即数据访问入口」的过程：
+
+<small class="code-source">源文件：<code>examples/concurrency/threads-and-concurrency/src/bin/mutex-and-shared-state.rs</code></small>
+<Code
+  code={mutexAndSharedStateSource.split('// ANCHOR: basic_mutex\n')[1].split('\n    // ANCHOR_END: basic_mutex')[0]}
+  lang="rust"
+  title="把数据封装进 Mutex<T> 内部，通过 MutexGuard 安全读写并自动解锁"
+/>
+
+运行输出：
+
+```text
+单线程解锁后读取: [1, 2, 3]
+```
+
+观察这短短几行代码，我们在第 6 章和第 10 章学过的三块拼图在这里严丝合缝地扣在了一起：
+
+1. **为什么 `.lock()` 返回的是 `Result`，后面要跟一个 `.unwrap()`？**
+   这叫**锁中毒（Lock Poisoning）保护**。假设线程 A 拿到锁进屋把 `Vec` 改到一半时，突然因为数组越界触发了 `panic!` 崩溃。虽然线程 A 退场时 `MutexGuard` 的 `Drop` 会把门锁打开，但屋里的数据很可能停留在「改了一半、前后不一致」的残缺状态。为此，`Mutex` 一旦发现持锁线程发生了 `panic!`，就会把这把锁标记为「已中毒（Poisoned）」，后续其他线程再调用 `.lock()` 时就会收到 `Err(PoisonError)`，第一时间获知前任出了事故（日常开发中直接写 `.unwrap()` 即可：如果前任线程都崩了，当前线程也跟着终止）。
+2. **`MutexGuard<T>` 如何复用 `Deref` 与 `DerefMut`？**
+   `.lock().unwrap()` 拆包后拿到的 `guard`，类型是 **`MutexGuard<Vec<i32>>`**（即我们在 `10.1` 全景表里见过的第 4 类守卫智能指针）。它实现了 `Deref` 和 `DerefMut`，所以你拿着这把钥匙，就能直接调用 `guard.push(3)` 修改盒子里的 `Vec`。
+3. **`MutexGuard<T>` 如何复用 `Drop` 自动解锁？**
+   你不需要手写任何 `unlock()` 方法。只要 `guard` 走到大括号 `}` 离开作用域，编译器自动插入的 `Drop::drop` 就会立即释放底层的操作系统互斥锁。
+
+`Mutex<Vec<i32>>` 把锁状态和 `Vec` 放在同一个值里。不调用 `lock` 就碰不到里面的 `Vec`；`guard` 离开作用域时，`Drop` 放开锁。
+
+<MutexGuardFlowDiagram />
+
+---
+
+## 多线程共享修改：`Arc<Mutex<T>>`
+
+现在，我们要把 `Mutex<T>` 真正放进多线程里，让 4 个子线程共同把一个计数器从 `0` 累加到 `4000`。
+
+稍微想一想就会明白：既然 4 个子线程和主线程都要访问同一个 `Mutex<i32>`，那就意味着这个 `Mutex<i32>` 需要被**多个线程共同持有所有权**。
+而在 `13.2` 节我们已经学过，负责在多线程间共享所有权的工具正是原子引用计数智能指针 **`Arc<T>`**。
+
+把负责「多线程共同持有」的 **`Arc<...>`** 套在最外层，把负责「排队加锁修改」的 **`Mutex<...>`** 装在中间，我们就拼出了 Rust 多线程编程中出镜率最高的黄金搭档——**`Arc<Mutex<T>>`**（与第 12 章单线程下的 `Rc<RefCell<T>>` 恰好构成 1:1 的跨线程镜像）：
+
+<small class="code-source">源文件：<code>examples/concurrency/threads-and-concurrency/src/bin/mutex-and-shared-state.rs</code></small>
+<Code
+  code={mutexAndSharedStateSource.split('// ANCHOR: arc_mutex\n')[1].split('\n    // ANCHOR_END: arc_mutex')[0]}
+  lang="rust"
+  title="用 Arc<Mutex<i32>> 让 4 个线程安全并发累加同一个计数器"
+/>
+
+运行输出：
+
+```text
+4 个线程并发累加结果 = 4000
+```
+
+注意看循环里的那一行 `*counter_clone.lock().unwrap() += 1;`：
+1. `counter_clone` 是 `Arc<Mutex<i32>>`，利用 `Arc` 的 `Deref` 自动拿到内部的 `&Mutex<i32>`；
+2. 调用 `.lock().unwrap()` 排队拿到临时的 `MutexGuard<i32>` 守卫；
+3. 利用 `MutexGuard` 的 `DerefMut`，用 `*` 解引用定位到内部的 `i32` 位置并执行 `+= 1`；
+4. 这条语句的分号 `;` 一结束，临时的 `MutexGuard` 当场销毁触发 `Drop`，立刻把锁解开让给其他线程。
+
+---
+
+## 读写锁：`RwLock<T>`
+
+`Mutex<T>` 的规则非常严格：**不管是读还是写，每次只放 1 个线程进去。**
+哪怕有 10 个线程全都只是想进去看一眼配置数据、谁也不修改，用 `Mutex<T>` 也会逼着这 10 个只读线程在门外一个接一个排队串行读取。
+
+这难道不违背我们在第 4 章学过的「共享不可变（允许多个只读借用并存）、可变不共享（只允许唯一一个可变借用独占）」的原则吗？
+
+为了在「99% 时间大家只是并发读取、只有 1% 时间需要修改」的场景下释放多核读取性能，标准库提供了**读写锁 `std::sync::RwLock<T>`**（Read-Write Lock）：
+- **申请只读锁（调用 `.read().unwrap()`）**：只要当前没有线程在写，允许**任意多个线程同时拿到 `RwLockReadGuard<T>` 并行读取**，互不阻塞；
+- **申请独占写锁（调用 `.write().unwrap()`）**：必须等当前所有的读锁和写锁全部退场后，才允许**唯一一个线程拿到 `RwLockWriteGuard<T>` 独占修改**。
+
+<small class="code-source">源文件：<code>examples/concurrency/threads-and-concurrency/src/bin/mutex-and-shared-state.rs</code></small>
+<Code
+  code={mutexAndSharedStateSource.split('// ANCHOR: rwlock_demo\n')[1].split('\n    // ANCHOR_END: rwlock_demo')[0]}
+  lang="rust"
+  title="用 RwLock<T> 支持多线程并发只读与独占写入"
+/>
+
+运行输出：
+
+```text
+并发读取缓存: r1 = v1.0_config, r2 = v1.0_config
+更新后缓存: v1.0_config_updated
+```
+
+---
+
+## 工程裁决：持锁粒度与死锁审查
+
+虽然 `MutexGuard` 的 `Drop` 帮我们消除了「忘解锁」的隐患，但在实际工程与审查 AI 生成的并发代码时，恰恰因为解锁是自动在作用域末尾发生的，初学者和 AI 极易写出两类严重的退化代码：
+
+### 1. 持锁跨越耗时操作
+
+看看下面这段在 Code Review 中非常典型的低效代码：
+
+```rust
+// ❌ 反模式：在函数开头拿到锁守卫 guard，一直攥在手里不放，直到函数结束才自动释放
+fn handle_request(state: &Arc<Mutex<Vec<String>>>) {
+    let mut guard = state.lock().unwrap(); // <--- 1. 在这里就把门锁上了
+    let task_url = guard.pop().unwrap();
+
+    // ⚠️ 灾难：拿着锁守卫去执行耗时的网络下载或磁盘读写（耗时 500ms）！
+    // 在这 500ms 期间，其他所有想从 state 里取任务的工作线程全都被死死堵在门外干等！
+    let body = slow_http_download(&task_url);
+
+    guard.push(body);
+} // <--- 2. 直到这里 guard 才离开作用域解锁
+```
+
+**重构铁律（最小化持锁粒度）**：
+只把真正读写共享内存的那一两行代码包在小代码块 `{ ... }` 里，或者用完立即调用 `drop(guard)` 主动交出钥匙，**绝不带着 `MutexGuard` 跨越任何网络 I/O、磁盘读写或复杂计算**：
+
+```rust
+// ✅ 正确写法：取完数据立刻释放锁，再去执行耗时操作
+fn handle_request(state: &Arc<Mutex<Vec<String>>>) {
+    // 1. 进屋取走任务，离开小括号立即触发 Drop 解锁（耗时仅几纳秒）
+    let task_url = {
+        let mut guard = state.lock().unwrap();
+        guard.pop().unwrap()
+    };
+
+    // 2. 此时手里没有任何锁，多个工作线程可以 100% 并行执行耗时下载
+    let body = slow_http_download(&task_url);
+
+    // 3. 下载完成后，再次短暂加锁把结果塞回去
+    state.lock().unwrap().push(body);
+}
+```
+
+### 2. 同一线程连续加锁导致死锁
+
+还记得我们在 `12.3` 节看到的 `RefCell` 同一线程重入 `BorrowMutError` 吗？如果换成 `Mutex<T>`，后果不是 `panic!`，而是**当前线程自己等自己，当场永久死锁（Deadlock）**：
+
+```rust
+let mut guard1 = data.lock().unwrap(); // 第 1 次拿走钥匙
+// 💥 死锁：guard1 还没离开作用域，当前线程又去调用 data.lock() 排队等 guard1 释放！
+let mut guard2 = data.lock().unwrap();
+```
+
+因此在审查代码时，一旦看到某个变量绑定了 `let guard = xxx.lock().unwrap();`，务必紧盯它的存活范围，确保在它销毁前不会直接或通过辅助函数再次对同一个 `Mutex` 调用 `.lock()`。
+
+---
+
+## 小结
+
+到这里，我们已经把多线程并发的实战工具箱全部配齐了：
+- 独占移交或局部借用：用 `move` 闭包、`thread::scope` 或 `Channel`；
+- 多线程共享只读：用原子引用计数 `Arc<T>`；
+- 多线程共享修改：用 `Arc<Mutex<T>>` 或 `Arc<RwLock<T>>`。
+
+现在，让我们退后一步，问出那个从 `13.1` 一直留到现在的底层问题：
+- 为什么当我们把 `Rc<T>` 塞进子线程时，编译器能在 1 秒内拦住我们说 `Rc<T> cannot be sent between threads safely`？
+- 为什么当我们把普通的 `i32`、`String`、`Vec<T>` 或者 `Arc<Mutex<T>>` 塞进子线程时，编译器却一路绿灯放行？
+- **编译器到底是怎么在编译期认出成千上万种自定义类型里，谁在多线程下安全、谁会引发数据竞争的？**
+
+下一节（`13.5`），我们就来认识支撑这套编译期检查的两张标签——**`Send` 与 `Sync`**。
+
+---
+
+### 附：本节完整可运行实验源码
+
+<details>
+<summary>点击展开完整源码（<code>examples/concurrency/threads-and-concurrency/src/bin/mutex-and-shared-state.rs</code>）</summary>
+
+<Code
+  code={mutexAndSharedStateSource.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+  title="examples/concurrency/threads-and-concurrency/src/bin/mutex-and-shared-state.rs"
+/>
+
+</details>

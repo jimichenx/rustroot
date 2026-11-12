@@ -1,0 +1,170 @@
+---
+title: 过程宏祛魅：#[derive]、属性宏与函数式宏
+description: 看清过程宏作为「运行在编译器里的 TokenStream 转换函数」的物理真相，理解为何需要独立的 proc-macro 编译单元，并拆开 #[derive(Debug)]、#[tokio::main] 与 #[test] 的底层展开代码。
+sidebar:
+  label: 过程宏祛魅
+  order: 3
+---
+
+import { Code } from '@astrojs/starlight/components';
+import procMacrosSource from '../../../../../../../examples/architecture/macros/src/bin/procedural-macros.rs?raw';
+
+如果说上一节的声明宏 `macro_rules!` 是编译期的「填空模板」，那么**过程宏（Procedural Macros）**就是真正撑起现代 Rust 工业生态半壁江山的重型武器。
+
+在实际工程中，绝大多数业务开发者一辈子都不需要亲手从零编写一个过程宏库，但你每天都在成百上千次地调用它、阅读它的文档、排查它报出的编译错误。本节的目标不是带你背诵枯燥的语法树解析 API，而是帮你彻底撕掉过程宏头上的神秘标签——让你一眼看穿 `#[derive(...)]`、`#[tokio::main]` 和 `#[test]` 在幕后到底对你的代码动了什么手术。
+
+---
+
+## 物理真相：运行在编译器里的普通 Rust 函数
+
+抛开所有术语包装，过程宏在物理层面上到底是什么？
+
+**它就是一个由你（或第三方库作者）编写的、在 `cargo build` 编译期间被 `rustc` 编译器直接加载并调用的普通 Rust 函数。**
+
+这个函数的输入和输出类型都是编译器内置的 **`TokenStream`（语法词条流）**：
+
+```rust
+// 过程宏在概念上的唯一核心签名：吃进一段源码词条流，吐出一段新源码词条流
+pub fn my_proc_macro(input: TokenStream) -> TokenStream {
+    // 在这里写任意正常的 Rust 代码（循环、分支、字符串处理）分析 input，拼装并返回新代码
+}
+```
+
+当你编译项目时，遇到过程宏调用，`rustc` 就会把被标注的结构体或函数源码切成一串 `TokenStream` 喂给这个函数，等函数运行完毕返回新的 `TokenStream`，再把返回的代码塞回编译流水线继续做类型检查和借用检查。
+
+### 顺带解开一个常见疑惑：为什么几乎所有项目都在编译 `syn` 和 `quote`？
+
+如果你留心观察过第一次运行 `cargo build` 时的终端滚屏，会发现不管你引的是 Web 框架、数据库库还是命令行工具，Cargo 几乎总会下载并编译三个叫 **`proc-macro2`**、**`syn`** 和 **`quote`** 的基础包。
+
+原因就在上面那个 `TokenStream` 签名里：
+标准库自带的 `TokenStream` 只是一串扁平粗糙的词条流，直接手写代码从中挑出「哪个是泛型生命周期、哪个是结构体字段名」非常繁琐。于是社区打造了黄金搭档：
+- **`syn`（解析器）**：把粗糙的输入 `TokenStream` 解析成结构清晰的 Rust 语法树对象（比如 `DeriveInput`，里面直接给你分好了 `ident` 名字、`generics` 泛型和 `fields` 字段列表），方便宏作者用 `for field in fields` 遍历；
+- **`quote`（生成器）**：让宏作者直接用接近普通源码的模板 `quote! { impl Debug for #name { ... } }` 把拼好的 Rust 代码重新转回输出 `TokenStream`。
+
+### 为什么过程宏必须单独建一个 `proc-macro` crate？
+
+回想我们在上一章[编译单元 crate 与模块封装边界](/architecture/crates-and-modules/)建立的规则：`crate` 是 `rustc` 一次编译的最小原子单元。
+
+假设你正在编写业务包 `my_app`，如果允许你在 `my_app/src/main.rs` 里当场定义一个过程宏函数，并在下一行直接调用它，就会发生死循环悖论：
+- 要想完成 `my_app` 的语法解析和编译，编译器必须**先在当前开发机上运行**那个过程宏函数拿到展开代码；
+- 可那个过程宏函数本身还躺在尚未编译完成的 `my_app` 源码里，根本还没变成可执行的二进制机器码。
+
+为了解开这个「先有鸡还是先有蛋」的时序死结，Rust 规定：**所有过程宏必须单独放在一个在 `Cargo.toml` 中声明了 `proc-macro = true` 的独立库 `crate` 里**（这也是为什么你在开源项目里常看到 `serde` 配一个 `serde_derive`、`tokio` 配一个 `tokio-macros`）。
+当你构建项目时，Cargo 会先把 `tokio-macros` 编译成当前开发机操作系统的动态链接库插件（`.so` / `.dylib` / `.dll`）挂载进编译器，然后再用它去展开你的 `my_app` 业务代码。
+
+---
+
+## 掀开三大过程宏的底牌
+
+按照挂载位置与对原代码的改造权限，Rust 将过程宏严格划分为**三种形态**。看清这三种形态的权限边界，你阅读任何第三方框架代码时心里都会无比踏实。
+
+### 第一种：派生宏 `#[derive(...)]` —— 只追加 `impl`，绝不篡改原类型
+
+这是你从第 5 章就开始用的老朋友：`#[derive(Debug, Clone, PartialEq)]`，以及第三方库的 `#[derive(Serialize, Deserialize)]`。
+
+关于 `#[derive]`，有一条对代码阅读者至关重要的**安全铁律**：
+**派生宏只有「只读查看权」和「追加代码权」，没有「修改权」。它绝对无法删改你写的原 `struct` 或 `enum` 里的任何一个字段或可见性，它吐出的 `TokenStream` 只会被编译器原封不动地追加在原类型定义的正下方。**
+
+比如当你写下 `#[derive(Debug, PartialEq)] struct DerivedPoint { x: i32, y: i32 }` 时，原结构体分毫未动，编译器只是在它下方自动追加了两段标准 `impl` 块。我们在实验源码中将自动派生版本与手动还原版本并排核对：
+
+<small class="code-source">源文件：<code>examples/architecture/macros/src/bin/procedural-macros.rs</code>（节选：#[derive] 自动追加的 impl 代码还原）</small>
+<Code
+  code={procMacrosSource.split('// ANCHOR: derive_desugar\n')[1].split('\n// ANCHOR_END: derive_desugar')[0]}
+  lang="rust"
+  title="派生宏完整保留原 struct，并在下方自动追加对应的 Trait 实现块"
+/>
+
+*(这也是为什么当结构体的某个内部字段自身没有实现 `Debug` 时，`#[derive(Debug)]` 会准确报错指向那个字段——因为自动生成的 `field("x", &self.x)` 在随后的类型检查阶段触发了 Trait 未实现错误。)*
+
+### 第二种：属性宏 `#[...]` —— 吞掉整个原项，脱胎换骨重写
+
+与老实本分的 `#[derive]` 不同，不带 `derive` 字样的自定义属性宏（Attribute Macro）拥有大得多的手术权限：
+它接收两个 `TokenStream`（属性括号里的配置参数 + 被标注的整个函数或结构体），并且**它会把你写的原代码整个吞掉，完全替换成它新吐出来的代码**。
+
+我们在第 14 章和第 15 章天天用的两个核心标记，全都是属性宏的杰作：
+
+#### 1. 拆开第 14 章的 `#[tokio::main]`
+
+在第 14 章编写异步程序时，你可能好奇过：操作系统的进程入口明明只认识同步的 `fn main()`，为什么加上一行 `#[tokio::main]` 后，我们就能直接写 `async fn main()` 了？
+
+因为 `#[tokio::main]` 属性宏把你写的 `async fn main()` 整个吞掉，在编译期把它改写成了一个标准的同步 `fn main()`，并在里面自动创建了多线程异步运行时来驱动你的代码块：
+
+```rust
+// 你在源码里写的 4 行代码：
+#[tokio::main]
+async fn main() {
+    println!("hello async");
+}
+
+// #[tokio::main] 属性宏吞掉原函数后，实际替换成的同步 Rust 代码：
+fn main() {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("Failed building the Runtime")
+        .block_on(async {
+            println!("hello async");
+        })
+}
+```
+
+#### 2. 拆开第 15 章的 `#[test]`
+
+同样，你在上一章[测试体系](/architecture/testing-system/)里写的 `#[test] fn parses_valid_email() { ... }`，也是编译器内置的属性机制：在常规 `cargo build` 时直接剔除，而在 `cargo test` 模式下，将其包装并自动生成一段测试描述符（记录测试函数名、路径、是否预期 `should_panic` 以及函数指针），统一注册进测试运行器的全局列表里。
+
+我们在实验源码的后半部分用最小化的 `mini_block_on` 还原了属性宏将异步函数体包裹进同步入口的完整过程：
+
+<small class="code-source">源文件：<code>examples/architecture/macros/src/bin/procedural-macros.rs</code>（节选：还原 #[tokio::main] 将 async 函数改写为同步入口的机制）</small>
+<Code
+  code={procMacrosSource.split('// ANCHOR: attr_desugar\n')[1].split('\n// ANCHOR_END: attr_desugar')[0]}
+  lang="rust"
+  title="属性宏把原 async 函数体抽出来放进 async 块，外层替换为同步入口函数"
+/>
+
+运行实验程序，验证派生宏还原与属性包装还原的执行结果：
+
+<small class="code-source">运行输出</small>
+```text
+[#[derive] 自动生成] DerivedPoint { x: 3, y: 4 } | 相等核验 = true
+[手动还原展开结果]   ExpandedPoint { x: 3, y: 4 } | 相等核验 = true
+[属性宏包装还原] 同步入口驱动 async 块返回端口 = 8081
+```
+
+### 第三种：函数式过程宏 `foo!(...)` —— 编译期任意语法解析器
+
+最后一种过程宏在调用长相上与上一节的 `macro_rules!` 完全一样，都是名字后面跟一个感叹号 `foo!(...)`。
+
+既然长相一样，什么时候库作者不用 `macro_rules!`，而要写成函数式过程宏？
+答案是：**当括号里装的根本不是常规 Rust 语法，或者需要在编译期执行复杂计算与外部校验的时候**。
+比如在括号里直接写一段 HTML 模板 `html! { <div class="card">"Hello"</div> }`，或者写一条原生 SQL 查询语句 `sqlx::query!("SELECT id, email FROM users WHERE id = ?", user_id)`——`macro_rules!` 的固定模式分支根本解析不了 SQL 语法，而函数式过程宏可以在编译期间直接调用真正的 SQL 解析器甚至连接开发数据库核对列名，最后吐出强类型的 Rust 结构体代码。
+
+---
+
+## 小结
+
+把声明宏与三类过程宏放在一起，前十五章遇到过的所有编译期魔法都已经彻底透明了：
+
+1. **过程宏的物理本质**：运行在 `rustc` 编译期里的普通 Rust 函数（`TokenStream -> TokenStream`）；因为必须先编译成开发机可执行插件才能展开下游代码，所以必须放在独立的 `proc-macro = true` 编译单元中。
+2. **三类过程宏的权限刻度**：
+   - **派生宏 `#[derive(...)]`**：最克制、最安全，原封不动保留你的类型定义，仅在下方追加 `impl` 块；
+   - **属性宏 `#[...]`**：吞掉被标注的函数或结构体并整体改写（如 `#[tokio::main]` 将异步入口改写为同步运行时构建器）；
+   - **函数式过程宏 `name!(...)`**：接纳任意自定义语法词条流，在编译期完成跨语言解析与代码合成。
+
+现在，我们已经摸清了声明宏与过程宏的工作原理。在本章最后一节中，我们将走进真实的开源工业现场——做一次 **Rust 社区宏应用场景全景巡礼**，并站在架构师与 Code Review 的立场上回答一个关键问题：**既然宏这么能干，为什么资深 Rust 工程师却总是告诫团队「克制写宏」？**
+
+[继续：生态全景与工程边界 →](/architecture/macros-in-ecosystem/)
+
+---
+
+### 附：本节完整可运行实验源码
+
+<details>
+<summary>点击展开完整源码（<code>examples/architecture/macros/src/bin/procedural-macros.rs</code>）</summary>
+
+<Code
+  code={procMacrosSource.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+  title="examples/architecture/macros/src/bin/procedural-macros.rs"
+/>
+
+</details>
