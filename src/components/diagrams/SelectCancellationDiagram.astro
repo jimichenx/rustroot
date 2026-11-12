@@ -1,0 +1,119 @@
+---
+/**
+ * 18.4「select! 里落败的分支在挂起点被 Drop」。
+ * 左列是同一次 poll：B 先 Ready，A 变成虚线。右列对比多步 .await 和单步 recv。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+const copy = {
+	zh: {
+		caption:
+			'select! 同时轮询各分支。B 先返回 Ready 之后，A 停在挂起点，状态机被 Drop。分支条件里如果已经把值取进局部变量、又停在下一步 .await，这个值会一起释放。条件位只放单步的 recv。',
+		title: 'select! 落败的分支在挂起点被 Drop',
+		desc: '左列是同一次 poll。分支 B 的 shutdown.changed 先返回 Ready，分支体得以执行。分支 A 的 rx.recv 还停在 .await，状态机被 Drop，里面的局部变量一起释放。右列上面是多步写法：recv 已经把 item 取进状态机，send 再 .await 时若落败，item 随之释放。右列下面是单步写法：条件位只有 recv，值进入分支体之后再发送或 spawn。',
+		leftTitle: '同一次 poll',
+		leftSub: '谁先 Ready，其余被 Drop',
+		winKicker: '分支 B · 先就绪',
+		winCode: 'shutdown.changed()',
+		winMain: 'Poll::Ready',
+		winNote: '执行这个分支体',
+		loseKicker: '分支 A · 落败',
+		loseCode: 'rx.recv().await',
+		loseMain: '停在挂起点',
+		loseNote: '状态机被 Drop',
+		loseNote2: '局部变量一起释放',
+		rightTitle: '条件位里放什么',
+		rightSub: '循环每一轮都会重新构造',
+		badKicker: '跨了两步 .await',
+		badCode1: 'item = recv().await',
+		badCode2: 'send(item).await',
+		badNote: 'item 已取进状态机',
+		badNote2: '第二步落败，值被释放',
+		goodKicker: '只放单步原语',
+		goodCode: 'item = recv().await',
+		goodNote: '值进了分支体',
+		goodNote2: '再发送，或 spawn',
+	},
+	en: {
+		caption:
+			'select! polls every branch together. After B returns Ready, A is still at its await point and that state machine is dropped. If the branch already moved a value into a local and then waits again, the value is dropped with it. Keep a single recv in the condition.',
+		title: 'The branch that loses select! is dropped at its await point',
+		desc: 'Left side, one poll. Branch B, shutdown.changed, returns Ready first and its body runs. Branch A, rx.recv, is still awaiting and is dropped, locals included. Right side, top: recv has already stored item, and a later send await drops it if the branch loses. Right side, bottom: the condition is only recv. The value enters the branch body, then the code sends it or spawns.',
+		leftTitle: 'one poll',
+		leftSub: 'the first Ready wins, the rest are dropped',
+		winKicker: 'branch B · ready first',
+		winCode: 'shutdown.changed()',
+		winMain: 'Poll::Ready',
+		winNote: 'its body runs',
+		loseKicker: 'branch A · loses',
+		loseCode: 'rx.recv().await',
+		loseMain: 'still at the await',
+		loseNote: 'the state machine is dropped',
+		loseNote2: 'its locals go with it',
+		rightTitle: 'what sits in the condition',
+		rightSub: 'each loop builds it again',
+		badKicker: 'two awaits',
+		badCode1: 'item = recv().await',
+		badCode2: 'send(item).await',
+		badNote: 'item already sits in the future',
+		badNote2: 'the second await drops it',
+		goodKicker: 'one step only',
+		goodCode: 'item = recv().await',
+		goodNote: 'the value enters the body',
+		goodNote2: 'then send, or spawn',
+	},
+} as const;
+
+const locale = SITE_LOCALE === 'en' ? 'en' : 'zh';
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 468" role="img" aria-labelledby="seldrop-title seldrop-desc">
+		<title id="seldrop-title">{t.title}</title>
+		<desc id="seldrop-desc">{t.desc}</desc>
+
+		<rect class="panel" x="16" y="12" width="296" height="440" rx="10"></rect>
+		<text class="name" x="32" y="40">{t.leftTitle}</text>
+		<text class="edge-sub" x="32" y="60">{t.leftSub}</text>
+
+		<rect class="slot" x="32" y="76" width="264" height="132" rx="8"></rect>
+		<text class="edge-sub" x="164" y="102" text-anchor="middle">{t.winKicker}</text>
+		<text class="code" x="164" y="130" text-anchor="middle">{t.winCode}</text>
+		<text class="name" x="164" y="158" text-anchor="middle">{t.winMain}</text>
+		<text class="edge-sub" x="164" y="184" text-anchor="middle">{t.winNote}</text>
+
+		<path class="arrow danger" d="M 164 214 V 246" marker-end="url(#seldrop-muted)"></path>
+
+		<rect class="freed" x="32" y="252" width="264" height="180" rx="8"></rect>
+		<text class="edge-sub" x="164" y="282" text-anchor="middle">{t.loseKicker}</text>
+		<text class="code" x="164" y="312" text-anchor="middle">{t.loseCode}</text>
+		<text class="name" x="164" y="344" text-anchor="middle">{t.loseMain}</text>
+		<text class="edge-sub" x="164" y="372" text-anchor="middle">{t.loseNote}</text>
+		<text class="edge-sub" x="164" y="396" text-anchor="middle">{t.loseNote2}</text>
+
+		<rect class="panel" x="328" y="12" width="296" height="440" rx="10"></rect>
+		<text class="name" x="344" y="40">{t.rightTitle}</text>
+		<text class="edge-sub" x="344" y="60">{t.rightSub}</text>
+
+		<rect class="freed" x="344" y="76" width="264" height="168" rx="8"></rect>
+		<text class="edge-sub" x="476" y="102" text-anchor="middle">{t.badKicker}</text>
+		<text class="code" x="476" y="132" text-anchor="middle">{t.badCode1}</text>
+		<text class="code" x="476" y="156" text-anchor="middle">{t.badCode2}</text>
+		<text class="edge-sub" x="476" y="188" text-anchor="middle">{t.badNote}</text>
+		<text class="edge-sub" x="476" y="212" text-anchor="middle">{t.badNote2}</text>
+
+		<rect class="slot" x="344" y="264" width="264" height="168" rx="8"></rect>
+		<text class="edge-sub" x="476" y="294" text-anchor="middle">{t.goodKicker}</text>
+		<text class="code" x="476" y="328" text-anchor="middle">{t.goodCode}</text>
+		<text class="edge-sub" x="476" y="360" text-anchor="middle">{t.goodNote}</text>
+		<text class="edge-sub" x="476" y="384" text-anchor="middle">{t.goodNote2}</text>
+
+		<defs>
+			<marker id="seldrop-muted" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line-muted)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

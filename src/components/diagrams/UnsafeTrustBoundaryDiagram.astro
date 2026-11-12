@@ -1,0 +1,70 @@
+---
+/**
+ * 19.2「unsafe 的审查范围是整个 mod，不是花括号里那几行」。
+ * 三层嵌套。高亮只落在最里面的裸指针块上，外两层用普通外框区分远近。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+const copy = {
+	zh: {
+		caption:
+			'最里面是几行 unsafe，按偏移读内存。包住它的模块用私有字段和 assert! 守住前提，同模块里的其他函数也在审查范围内。模块外的代码只能调用公开函数，改不到这些字段。',
+		title: 'unsafe 的信任边界是整个模块',
+		desc: '外层是模块外的 Safe Rust，只能调用公开函数，碰不到私有字段。中层是包住这段 unsafe 的 mod，私有字段、前置 assert! 和同模块的其他函数一起守住不变量，这是人工审查范围。内层是 get_unchecked 那几行裸指针读写。',
+		outerTitle: '外层 · 模块外的调用方',
+		outerSub: 'Safe Rust，只调用公开函数，改不到私有字段',
+		midTitle: '中层 · 包住 unsafe 的 mod',
+		midSub: '审查范围：私有字段、assert!、同模块的其他函数',
+		innerCode1: 'unsafe {',
+		innerCode2: 'get_unchecked(i)',
+		innerCode3: '}',
+		innerNote: '按偏移读内存，不检查下标',
+		foot1: '同模块的安全代码也能改 active_len',
+		foot2: '所以要审的是整个 mod，不是花括号里那几行',
+	},
+	en: {
+		caption:
+			'The innermost lines are unsafe and read memory by offset. The module around them keeps the invariant with private fields and assert!, and every other function in that module is inside the review. Callers outside the module only see the public functions and cannot touch those fields.',
+		title: 'The trust boundary of unsafe is the whole module',
+		desc: 'The outer ring is Safe Rust outside the module. It can only call public functions and cannot write private fields. The middle ring is the mod that contains the unsafe block. Private fields, the assert! in front, and the other functions in the same module keep the invariant. That is the review boundary. The inner block is the get_unchecked read.',
+		outerTitle: 'outer · callers outside the module',
+		outerSub: 'Safe Rust. Public functions only. Private fields stay out of reach.',
+		midTitle: 'middle · the mod that holds the unsafe',
+		midSub: 'review: private fields, assert!, other fns in the mod',
+		innerCode1: 'unsafe {',
+		innerCode2: 'get_unchecked(i)',
+		innerCode3: '}',
+		innerNote: 'read by offset, no bounds check',
+		foot1: 'safe code in the same mod can write active_len',
+		foot2: 'review the whole mod, not only the braces',
+	},
+} as const;
+
+const locale = SITE_LOCALE === 'en' ? 'en' : 'zh';
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 480" role="img" aria-labelledby="ubound-title ubound-desc">
+		<title id="ubound-title">{t.title}</title>
+		<desc id="ubound-desc">{t.desc}</desc>
+
+		<rect class="panel" x="16" y="12" width="608" height="452" rx="12"></rect>
+		<text class="name" x="36" y="42">{t.outerTitle}</text>
+		<text class="edge-sub" x="36" y="64">{t.outerSub}</text>
+
+		<rect class="panel" x="36" y="84" width="568" height="364" rx="10"></rect>
+		<text class="name" x="56" y="114">{t.midTitle}</text>
+		<text class="edge-sub" x="56" y="136">{t.midSub}</text>
+
+		<rect class="slot" x="150" y="160" width="340" height="156" rx="8"></rect>
+		<text class="code" x="320" y="198" text-anchor="middle">{t.innerCode1}</text>
+		<text class="code" x="320" y="224" text-anchor="middle">{t.innerCode2}</text>
+		<text class="code" x="320" y="250" text-anchor="middle">{t.innerCode3}</text>
+		<text class="edge-sub" x="320" y="292" text-anchor="middle">{t.innerNote}</text>
+
+		<text class="edge-label" x="320" y="368" text-anchor="middle">{t.foot1}</text>
+		<text class="edge-sub" x="320" y="396" text-anchor="middle">{t.foot2}</text>
+	</svg>
+</figure>

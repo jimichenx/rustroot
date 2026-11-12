@@ -1,0 +1,101 @@
+---
+/**
+ * 18.3「ThreadLocal 跟着线程走，Span 跟着 Future 的 poll 走」。
+ * 上排三格是串台和丢失。下排同一组三个时刻，Span 在进出 poll 时挂上、卸下。
+ * 失效的格子用虚线，不另加颜色。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+const copy = {
+	zh: {
+		caption:
+			'上排的 ThreadLocal 写在线程上。任务挂起后，同一条线程改跑另一个任务就会串台；换到另一条线程，上下文留在原地。下排的 Span 挂在 Future 上：进入 poll 时挂上，返回 Pending 时卸下，换线程恢复时再挂上。',
+		title: 'ThreadLocal 绑在线程上，Span 绑在每次 poll 的进出上',
+		desc: '上排是 ThreadLocal。T1 轮询任务 A 时把 order_id 写成 1001。A 返回 Pending 后，同一条 T1 改去轮询任务 B，槽位仍是 1001，B 的日志串台。之后 T2 恢复 A，T2 的槽位是空的，1001 留在 T1。下排是 Span。进入 poll 时挂上，日志带 1001；返回 Pending 时卸下，线程槽位清空；T2 再次进入 poll 时重新挂上，日志仍是 1001。',
+		topTitle: 'ThreadLocal 绑在线程上',
+		topSub: '上下文跟着线程走，不跟着任务走',
+		botTitle: 'Span 绑在 Future 上',
+		botSub: '每次 poll 进出时挂上、卸下',
+		moments: ['T1 轮询 A', 'A 挂起，T1 跑 B', 'T2 恢复 A'],
+		topMain: ['槽位 = 1001', '槽位仍是 1001', 'T2 槽位为空'],
+		topNote: ['写在线程 T1 上', 'B 的日志串台', '1001 留在 T1'],
+		botMain: ['进入时挂上 Span', 'Pending 时卸下', '再进入时挂上'],
+		botNote: ['日志带 1001', '线程槽位清空', '日志仍是 1001'],
+	},
+	en: {
+		caption:
+			'The top row stores a ThreadLocal on the worker thread. After the task parks, the same thread running another task mixes the ids, and a different thread resumes with an empty slot. The bottom row keeps the Span on the future: mounted on entering poll, removed when it returns Pending, mounted again when another thread resumes it.',
+		title: 'A ThreadLocal stays on the thread. A Span is mounted for each poll',
+		desc: 'Top row: ThreadLocal. While T1 polls task A, the slot holds order_id 1001. After A returns Pending, T1 polls task B and the slot still says 1001, so B logs the wrong id. Later T2 resumes A with an empty slot, and 1001 stays on T1. Bottom row: the Span is mounted when poll is entered, removed when it returns Pending, and mounted again when T2 enters poll, so the log still carries 1001.',
+		topTitle: 'ThreadLocal stays on the thread',
+		topSub: 'the context follows the worker, not the task',
+		botTitle: 'the Span stays on the future',
+		botSub: 'mounted on the way in, removed on the way out',
+		moments: ['T1 polls A', 'A parks, T1 runs B', 'T2 resumes A'],
+		topMain: ['slot = 1001', 'slot still 1001', 'T2 slot empty'],
+		topNote: ['written on thread T1', 'B logs the wrong id', '1001 stayed on T1'],
+		botMain: ['mount on entry', 'remove on Pending', 'mount on resume'],
+		botNote: ['log carries 1001', 'thread slot cleared', 'log still says 1001'],
+	},
+} as const;
+
+const locale = SITE_LOCALE === 'en' ? 'en' : 'zh';
+const t = copy[locale];
+
+const cellX = [32, 228, 424];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 500" role="img" aria-labelledby="spanpoll-title spanpoll-desc">
+		<title id="spanpoll-title">{t.title}</title>
+		<desc id="spanpoll-desc">{t.desc}</desc>
+
+		<rect class="panel" x="16" y="12" width="608" height="228" rx="10"></rect>
+		<text class="name" x="32" y="38">{t.topTitle}</text>
+		<text class="edge-sub" x="32" y="58">{t.topSub}</text>
+		{
+			t.moments.map((moment, index) => {
+				const x = cellX[index];
+				const broken = index > 0;
+				return (
+					<g>
+						<rect class={broken ? 'freed' : 'panel'} x={x} y="74" width="184" height="148" rx="8"></rect>
+						<text class="edge-sub" x={x + 92} y="102" text-anchor="middle">
+							{moment}
+						</text>
+						<text class="name" x={x + 92} y="136" text-anchor="middle">
+							{t.topMain[index]}
+						</text>
+						<text class="edge-sub" x={x + 92} y="164" text-anchor="middle">
+							{t.topNote[index]}
+						</text>
+					</g>
+				);
+			})
+		}
+
+		<rect class="panel" x="16" y="256" width="608" height="228" rx="10"></rect>
+		<text class="name" x="32" y="282">{t.botTitle}</text>
+		<text class="edge-sub" x="32" y="302">{t.botSub}</text>
+		{
+			t.moments.map((moment, index) => {
+				const x = cellX[index];
+				return (
+					<g>
+						<rect class="slot" x={x} y="318" width="184" height="148" rx="8"></rect>
+						<text class="edge-sub" x={x + 92} y="346" text-anchor="middle">
+							{moment}
+						</text>
+						<text class="name" x={x + 92} y="380" text-anchor="middle">
+							{t.botMain[index]}
+						</text>
+						<text class="edge-sub" x={x + 92} y="408" text-anchor="middle">
+							{t.botNote[index]}
+						</text>
+					</g>
+				);
+			})
+		}
+	</svg>
+</figure>

@@ -7,6 +7,7 @@ sidebar:
 ---
 
 import { Code } from '@astrojs/starlight/components';
+import UnsafeTrustBoundaryDiagram from '../../../../../../components/diagrams/UnsafeTrustBoundaryDiagram.astro';
 import safeAbstractionSource from '../../../../../../../examples/architecture/unsafe-and-boundaries/src/bin/safe-abstractions-and-ub.rs?raw';
 
 在上一节中我们看到，`unsafe` 是程序员向编译器逻辑推理机提交的「人工安全公理证明」。
@@ -112,7 +113,7 @@ pair.last_valid();       // 触发越界读取野内存，内存安全防线彻�
 
 还要牢记一条曾引发 2015 年 Rust 1.0 前夕安全危机的底层公理：**安全抽象绝不能把「防悬垂、防数据竞争」建立在「某个守卫的 `Drop::drop` 一定会被执行」这个假设上**——因为外部调用方完全可以在 100% 安全的 Rust 代码里通过 `Rc` 循环引用或 `std::mem::forget` 合法跳过 `Drop`（关于这场著名的 Leakpocalypse 事件以及标准库 `thread::scope` 如何避开 `Drop` 守卫实现安全抽象，可延伸阅读[附录：`thread::scope` 与 1.0 泄漏危机](/appendix/mechanisms/scoped-threads/)）。
 
-`[插图：unsafe 信任边界同心圆图（最内层红色核心为几行 unsafe 裸指针块；中间橙色护城河为同模块 mod 的私有字段与前置 assert! 检查——标注「人工审查边界」；最外层绿色广阔区域为数十万行调用公开安全 API 的 Safe Rust 业务代码）]`
+<UnsafeTrustBoundaryDiagram />
 
 ---
 

@@ -1,0 +1,120 @@
+---
+/**
+ * 18.1「serde 用一层数据模型把 M 个类型和 N 种格式拆开」。
+ * 左列是业务类型，中列是 29 种原语，右列是格式库。高亮只落在中间这层契约上。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+const copy = {
+	zh: {
+		caption:
+			'左边的业务类型只生成针对 Serializer 的代码，右边的格式库只实现这套契约，中间隔着 29 种原语。调用点写明具体格式之后，编译器单态化，机器码直接读写字节。',
+		title: '业务类型和格式库只在 serde 数据模型上见面',
+		desc: '左列是 M 个业务类型，derive 出针对 Serializer 和 Deserializer 的代码，不关心 JSON 还是 TOML。中列是数据模型，双方只交换字符串、整数、序列、映射表、枚举变体这些原语，一共 29 种。右列是 serde_json、toml、postcard，各自实现 Serializer。底部说明：调用点确定具体格式后，单态化把中间层内联掉。',
+		leftTitle: '业务类型 · M',
+		leftSub: '只认抽象契约',
+		types: ['struct User', 'struct AppConfig', 'enum OrderEvent'],
+		leftFoot: '生成针对 Serializer 的代码',
+		midTitle: '数据模型',
+		midSub: '双方只交换这些原语',
+		prims: ['字符串 · 整数', '序列 · 映射表', '枚举变体', '共 29 种'],
+		rightTitle: '格式库 · N',
+		rightSub: '只认基础原语',
+		formats: ['serde_json', 'toml', 'postcard'],
+		rightFoot: '各自实现 Serializer',
+		rule1: '调用点写明具体格式后，编译器按这个类型单态化。',
+		rule2: '中间这一层被内联掉，机器码直接读写字节。',
+	},
+	en: {
+		caption:
+			'Business types only generate code against Serializer. Format crates only implement that contract. The 29 primitives sit between them. Once the call site names a format, monomorphization inlines the middle layer and the machine code reads and writes bytes directly.',
+		title: 'Business types and format crates meet only at the serde data model',
+		desc: 'The left column is M business types. derive emits code against Serializer and Deserializer, with no knowledge of JSON or TOML. The middle column is the data model: strings, integers, sequences, maps, and enum variants, 29 primitives in all. The right column is serde_json, toml, and postcard, each implementing Serializer. The note says that once the call site picks a format, monomorphization inlines the middle.',
+		leftTitle: 'types · M',
+		leftSub: 'the abstract contract',
+		types: ['struct User', 'struct AppConfig', 'enum OrderEvent'],
+		leftFoot: 'code against Serializer',
+		midTitle: 'data model',
+		midSub: 'shared primitives',
+		prims: ['string · integer', 'seq · map', 'enum variant', '29 primitives'],
+		rightTitle: 'formats · N',
+		rightSub: 'primitives only',
+		formats: ['serde_json', 'toml', 'postcard'],
+		rightFoot: 'implement Serializer',
+		rule1: 'Name the format at the call site, and the compiler monomorphizes it.',
+		rule2: 'The middle layer is inlined. Machine code touches bytes.',
+	},
+} as const;
+
+const locale = SITE_LOCALE === 'en' ? 'en' : 'zh';
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 460" role="img" aria-labelledby="serde-title serde-desc">
+		<title id="serde-title">{t.title}</title>
+		<desc id="serde-desc">{t.desc}</desc>
+
+		<rect class="panel" x="16" y="16" width="178" height="300" rx="10"></rect>
+		<text class="name" x="105" y="44" text-anchor="middle">{t.leftTitle}</text>
+		<text class="edge-sub" x="105" y="64" text-anchor="middle">{t.leftSub}</text>
+		{
+			t.types.map((item, index) => {
+				const y = 80 + index * 52;
+				return (
+					<g>
+						<rect class="panel" x="28" y={y} width="154" height="44" rx="8"></rect>
+						<text class="code" x="105" y={y + 28} text-anchor="middle">
+							{item}
+						</text>
+					</g>
+				);
+			})
+		}
+		<text class="edge-sub" x="105" y="292" text-anchor="middle">{t.leftFoot}</text>
+
+		<rect class="panel" x="230" y="16" width="180" height="300" rx="10"></rect>
+		<text class="name" x="320" y="44" text-anchor="middle">{t.midTitle}</text>
+		<text class="edge-sub" x="320" y="64" text-anchor="middle">{t.midSub}</text>
+		<rect class="slot" x="246" y="80" width="148" height="176" rx="8"></rect>
+		{
+			t.prims.map((item, index) => (
+				<text class="code" x="320" y={112 + index * 36} text-anchor="middle">
+					{item}
+				</text>
+			))
+		}
+
+		<rect class="panel" x="446" y="16" width="178" height="300" rx="10"></rect>
+		<text class="name" x="535" y="44" text-anchor="middle">{t.rightTitle}</text>
+		<text class="edge-sub" x="535" y="64" text-anchor="middle">{t.rightSub}</text>
+		{
+			t.formats.map((item, index) => {
+				const y = 80 + index * 52;
+				return (
+					<g>
+						<rect class="panel" x="458" y={y} width="154" height="44" rx="8"></rect>
+						<text class="code" x="535" y={y + 28} text-anchor="middle">
+							{item}
+						</text>
+					</g>
+				);
+			})
+		}
+		<text class="edge-sub" x="535" y="292" text-anchor="middle">{t.rightFoot}</text>
+
+		<path class="arrow" d="M 198 166 H 226" marker-end="url(#serde-head)"></path>
+		<path class="arrow" d="M 414 166 H 442" marker-end="url(#serde-head)"></path>
+
+		<rect class="panel" x="16" y="332" width="608" height="64" rx="8"></rect>
+		<text class="edge-label" x="320" y="358" text-anchor="middle">{t.rule1}</text>
+		<text class="edge-label" x="320" y="380" text-anchor="middle">{t.rule2}</text>
+
+		<defs>
+			<marker id="serde-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

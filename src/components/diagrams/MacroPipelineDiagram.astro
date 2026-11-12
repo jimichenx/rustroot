@@ -1,0 +1,104 @@
+---
+/**
+ * 17.1「宏展开排在类型检查和借用检查之前」。
+ * 六步从上到下。只有宏展开那一步用高亮块，其余是普通外框。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+const copy = {
+	zh: {
+		caption:
+			'源码先被切成语法树。宏展开插在这一步，把 println! 和 #[derive] 并进普通 AST。类型检查和借用检查都排在后面，展开出来的代码仍要过。',
+		title: '宏展开排在类型检查和借用检查之前',
+		desc: '六道工序从上到下：源码文本，词法与语法解析得到 TokenStream 和 AST，宏展开把 println! 和 #[derive] 并入普通 AST，然后是类型检查、借用检查，最后单态化生成机器码。宏展开是其中被标出的一步。底部说明：展开在类型检查和借用检查之前结束，生成的代码仍要通过这两项检查。',
+		stages: [
+			{ title: '1  源码文本', sub: '你写下的 .rs', hot: false },
+			{ title: '2  词法与语法解析', sub: 'TokenStream，然后是 AST', hot: false },
+			{ title: '3  宏展开', sub: 'println! 与 #[derive] 并入普通 AST', hot: true },
+			{ title: '4  类型检查', sub: '名字、类型、Trait 实现', hot: false },
+			{ title: '5  借用检查', sub: 'NLL：所有权与借用', hot: false },
+			{ title: '6  单态化', sub: 'LLVM 机器码', hot: false },
+		],
+		rule1: '宏展开在这一步结束，排在类型检查和借用检查之前。',
+		rule2: '展开出来的每一行，仍要通过后面的这两项检查。',
+	},
+	en: {
+		caption:
+			'Source is parsed into a syntax tree first. Macro expansion sits here and merges println! and #[derive] into ordinary AST. Type checking and borrow checking come after, and the generated code still has to pass them.',
+		title: 'Macro expansion runs before type checking and borrow checking',
+		desc: 'Six stages, top to bottom: source text, lexing and parsing into a TokenStream and an AST, macro expansion merging println! and #[derive] into ordinary AST, type checking, borrow checking, then monomorphization to machine code. Macro expansion is the marked stage. The note underneath says expansion finishes before the later checks, and the generated code still has to pass them.',
+		stages: [
+			{ title: '1  source text', sub: 'the .rs file you wrote', hot: false },
+			{ title: '2  lex and parse', sub: 'TokenStream, then an AST', hot: false },
+			{ title: '3  macro expansion', sub: 'println! and #[derive] join the AST', hot: true },
+			{ title: '4  type check', sub: 'names, types, trait impls', hot: false },
+			{ title: '5  borrow check', sub: 'NLL: ownership and borrows', hot: false },
+			{ title: '6  monomorphize', sub: 'LLVM machine code', hot: false },
+		],
+		rule1: 'Expansion finishes here, before type and borrow checks.',
+		rule2: 'Every generated line still has to pass both.',
+	},
+} as const;
+
+const locale = SITE_LOCALE === 'en' ? 'en' : 'zh';
+const t = copy[locale];
+
+const boxX = 48;
+const boxW = 544;
+const boxH = 52;
+const step = 68;
+const startY = 12;
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 500" role="img" aria-labelledby="macpipe-title macpipe-desc">
+		<title id="macpipe-title">{t.title}</title>
+		<desc id="macpipe-desc">{t.desc}</desc>
+
+		{
+			t.stages.map((stage, index) => {
+				const y = startY + index * step;
+				return (
+					<g>
+						<rect
+							class={stage.hot ? 'slot' : 'panel'}
+							x={boxX}
+							y={y}
+							width={boxW}
+							height={boxH}
+							rx="8"
+						></rect>
+						<text class="name" x={boxX + 20} y={y + 22}>
+							{stage.title}
+						</text>
+						<text class="edge-sub" x={boxX + 20} y={y + 42}>
+							{stage.sub}
+						</text>
+						{index < t.stages.length - 1 && (
+							<path
+								class="arrow"
+								d={`M ${boxX + boxW / 2} ${y + boxH + 2} V ${y + step - 6}`}
+								marker-end="url(#macpipe-head)"
+							></path>
+						)}
+					</g>
+				);
+			})
+		}
+
+		<rect class="panel" x="48" y="424" width="544" height="60" rx="8"></rect>
+		<text class="edge-label" x="320" y="448" text-anchor="middle">
+			{t.rule1}
+		</text>
+		<text class="edge-label" x="320" y="470" text-anchor="middle">
+			{t.rule2}
+		</text>
+
+		<defs>
+			<marker id="macpipe-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>
