@@ -202,7 +202,7 @@ error[E0277]: `?` couldn't convert the error to `ParseIntError`
   |                -------------------------------------^ the trait `From<std::io::Error>` is not implemented for `ParseIntError`
 ```
 
-看报错原因：第 7 行的 `?` 试图把文件读取失败的 `std::io::Error` 通过 `From::from(e)` 转换成函数签名声明的 `ParseIntError`，但标准库并没有定义这两种无关错误之间的转换关系（关于 `From` Trait 与跨错误类型转换的完整机制，我们将在第 7 章 Trait 契约中深入拆解；在现阶段，你也可以用 `.map_err(|e| format!("io error: {e}"))?` 把不同错误统一转成 `Result<T, String>` 或自定义错误枚举）。
+看报错原因：第 7 行的 `?` 试图把文件读取失败的 `std::io::Error` 通过 `From::from(e)` 转换成函数签名声明的 `ParseIntError`，但标准库并没有定义这两种无关错误之间的转换关系（关于 `From` 转换契约的底层机制将在[第 7 章](/abstraction/conversions-and-from/)拆解；而在真实生产工程里，你并不需要手写大量转换样板——全生态普遍采用 **`thiserror` + `anyhow`** 分层架构，等学完 Trait、动态分发与宏之后，我们会在[工业级错误处理架构](/architecture/error-architecture/)专门展开；现阶段也可用 `.map_err(|e| format!("io error: {e}"))?` 临时转为字符串）。
 
 ---
 

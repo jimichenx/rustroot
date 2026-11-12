@@ -1,0 +1,150 @@
+---
+title: 从 Log4j 到 tracing：门面解耦、结构化日志与异步 Span 追踪
+description: 对照 Java SLF4J + Log4j2 门面架构看清 Rust 日志分层，推演为什么 ThreadLocal 上下文在多线程 async/await 下会串台失效，掌握 tracing 结构化键值与 Span 区间追踪及单边界错误记录规范。
+sidebar:
+  label: 从 Log4j 到异步 tracing
+  order: 2
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import tracingSource from '../../../../../../../examples/architecture/observability/src/bin/logging-and-tracing.rs?raw';
+
+有 Java 服务端背景的工程师刚写 Rust 项目时，往往会问：「`println!` 只能用来做本地实验，到了正式工程里，对应 Java `SLF4J + Log4j2 / Logback` 的标准日志方案是什么？为什么 Rust 标准库 `std` 里连一个 `logger` 模块都没有？」
+
+顺着我们在[章末视野：Rust 语言到底有多小？](/abstraction/kernel-and-library/)确立的「机制与策略分离」原则，标准库不内置日志器的原因非常清晰：嵌入式裸机程序需要往串口打二进制码，命令行工具需要往 `stderr` 打彩色文本，而云原生微服务需要往标准输出刷高吞吐的 JSON 流——如果标准库硬编码一套日志格式与配置规范，所有场景都会受制于它。
+
+在 Rust 生态中，日志与可观测性经历了从第一代平面日志门面 **`log`** 到现代异步结构化标准 **`tracing`** 的清晰演进。
+
+---
+
+## 一、 跨语言对位：门面（Facade）与收集器（Subscriber）彻底解耦
+
+如果你熟悉 Java 中「库代码只调用 `SLF4J` 接口、最终应用在启动时绑定 `Logback` 或 `Log4j2` 实现」的设计模式，就能立刻看懂 Rust 的日志分层架构：
+
+| 架构角色 | Java 生态对位 | Rust 第一代（纯同步平面日志） | Rust 现代事实标准（结构化与异步追踪） |
+| --- | --- | --- | --- |
+| **1. 门面层（Facade）**<br/>所有底层库与业务模块共同依赖，只负责发出日志事件，不包含任何落盘逻辑 | `slf4j-api` | **`log`** crate<br/>（提供 `info!`、`warn!`、`error!`、`debug!`、`trace!` 五级宏） | **`tracing`** crate<br/>（兼容五级事件宏，新增时间区间 **`Span`** 与结构化键值） |
+| **2. 收集实现层（Backend / Subscriber）**<br/>**仅在顶层可执行程序 `main.rs` 中初始化一次**，决定过滤级别、文本/JSON 格式与输出目的地 | `Logback` / `Log4j2` | `env_logger` / ` fern` | **`tracing-subscriber`**<br/>（可扩展接入 OpenTelemetry、滚动文件与 JSON 格式化） |
+
+这套解耦规则带来了一条严格的工程纪律：**当你编写一个库 `crate` 时，只允许在 `Cargo.toml` 中依赖轻量的门面库 `tracing`（或 `log`），绝不能在库内部擅自初始化全局收集器**。只有最终组装出二进制程序的 `main` 函数，才有权决定把全进程所有第三方库发出的日志写成终端文本还是发往分布式追踪系统（而且 `tracing-subscriber` 内置了兼容桥接层，第三方旧库里写的 `log::info!` 会被自动接管统一输出）。
+
+---
+
+## 二、 为什么现代 Rust 从平面 `log` 进化到了 `tracing`？
+
+如果只是打印一行行文本，`log` + `env_logger` 已经够用了。为什么今天以 `tokio`、`axum` 为代表的现代 Rust 生态全面转向了 **`tracing`**？
+
+这背后有两股实打实的物理推力——其中第二股直接源自我们在[第 14 章：异步并发与 `Future` 状态机](/concurrency/async-and-pin/)中学过的底层运行机制。
+
+### 1. 从「拼字符串」走向「结构化键值（Structured Logging）」
+
+在传统的平面日志中，我们习惯把业务变量格式化拼进一整句长字符串里：
+
+```rust
+// 传统平面文本日志：变量被烤死在纯文本字符串里
+log::info!("order {} settled, amount_cents={}", order_id, amount_cents);
+```
+
+当线上每天产生数亿条日志并汇入 Elasticsearch、Loki 或 ClickHouse 时，日志采集端不得不耗费大量 CPU 去跑脆弱的正则表达式，才能把文本里的 `1001` 和 `250000` 重新抠出来做聚合检索。
+
+而在 `tracing` 中，日志事件原生就是一张**带类型的结构化键值表**——业务字段单独写在前面，人类可读的消息摘要写在最后：
+
+```rust
+// tracing 结构化事件：字段保持原始数值与键值结构，切换 .json() 收集器即可直接输出标准 JSON
+tracing::info!(order_id = 1001, amount_cents = 250_000, "order settled");
+```
+
+### 2. 核心破局：为什么 Java 的 `ThreadLocal（MDC）` 在 `async / await` 下会当场串台？
+
+这才是 `tracing` 最关键的设计突破。
+
+在微服务排障中，单个请求往往会跨越五六个内部函数。我们不可能为了打日志，给每一个底层辅助函数的签名都硬塞一个 `trace_id: &str, order_id: u64` 参数。
+在传统 Java 同步 Servlet 模型中，主流做法是**「一个请求独占一个操作系统线程」**，因此 `Log4j2 / SLF4J` 利用 **`MDC`（底层即线程局部变量 `ThreadLocal`）**：在请求进入线程时把 `order_id = 1001` 存进当前线程的私有槽位里，后续该线程调用的所有子函数打日志时自动从当前线程读取 `1001`。
+
+现在请你在脑海里推演一下：**如果把这套基于 `ThreadLocal` 的方案直接搬进第 14 章的 `tokio` 多线程异步运行时，会发生什么事故？**
+
+回想 `Future::poll` 的物理执行过程：
+1. **单线程内多任务穿插（串台污染）**：工作线程 T1 先轮询「订单 #1001」的状态机，把线程 T1 的 `ThreadLocal` 设成了 `1001`；紧接着订单 #1001 遇到数据库 I/O 返回 `Poll::Pending` 挂起让出线程；下一微秒，**同一个工作线程 T1** 立刻抓起队列里的「订单 #1002」开始轮询——如果忘记在每次返回 `Pending` 的瞬间清理线程槽位，订单 #1002 打出的日志就会顶着 #1001 的帽子；
+2. **跨 `.await` 工作窃取迁移（上下文丢失）**：几毫秒后数据库响应返回，此时线程 T1 正忙，空闲的**工作线程 T2** 把「订单 #1001」偷过去恢复执行——而线程 T2 的 `ThreadLocal` 里空空如也，`order_id = 1001` 当场丢失。
+
+`[插图：ThreadLocal MDC 与 tracing Span 在异步轮询中的对比图（上半部分画传统绑定在线程 T1 上的上下文在 Task A 挂起切到 Task B 或迁移到线程 T2 时发生串台与丢失；下半部分画 tracing Span 绑定在 Task A 的 Future 状态机外层——每次进入 poll 时自动挂载 Span，返回 Pending 让出线程时自动卸下，跨线程恢复 poll 时重新挂载，上下文始终精确隔离）]`
+
+为了彻底解决异步并发下的上下文追踪，`tracing` 引入了核心抽象——**`Span`（跨度 / 时间区间上下文）**：
+
+- 传统日志只有没有厚度的**「时间点（Event）」**（某时某刻发生了一件事）；
+- 而 **`Span`** 代表一段**有起点、有终点的执行区间**（比如「处理订单 #1001 的完整过程」），身上挂载着这段区间的公共键值（`order_id = 1001`）。
+
+对于 `async fn`，当你使用属性宏 **`#[tracing::instrument]`**（或对普通 `Future` 手动调用 `.instrument(info_span!("..."))`）时，宏在编译期会把原 `Future` 包装进一个 `Instrumented<F>` 状态机里：
+- 每当运行时工作线程调用 `poll` 进入该任务时，自动将当前 `Span` 压入当前线程的活跃栈；
+- 只要在这次 `poll` 期间调用任何普通同步子函数（哪怕子函数根本没接收 `order_id` 参数），里面发出的 `info!` / `warn!` 事件都会**自动继承外层活跃 `Span` 的全部键值**；
+- 一旦遇到 `.await` 返回 `Poll::Pending`（或任务完成返回 `Poll::Ready`），包装器在退出 `poll` 的同一纳秒利用 RAII 守卫自动将该 `Span` 从线程上卸下——无论成千上万个并发 `Future` 如何在线程池里穿插跳跃，每个任务的因果上下文都隔离得滴水不漏。
+
+---
+
+## 三、 工程黄金铁律：错误传播与日志记录如何配合才不刷屏？
+
+把上一节的 `anyhow` 与本节的 `tracing` 放进同一个项目后，我们在 Code Review 中最常拦截的一种跨语言坏习惯就是**「Log-and-Throw（边打错误日志边往外抛错误）」**：
+
+```rust
+// 典型反模式：底层已经打了 error!，紧接着又把同一个错误 return Err 往上抛
+fn read_db() -> anyhow::Result<()> {
+    if let Err(e) = do_query() {
+        tracing::error!("db query failed: {e}"); // 第 1 次刷屏
+        return Err(e).context("read_db failed"); // 往上抛后，中层和顶层又各打一遍，同一故障刷出三四条孤立错误日志
+    }
+    Ok(())
+}
+```
+
+一旦每一层函数都在 `if let Err` 里自己打一遍 `error!` 再往外返回，线上发生一次数据库抖动，日志系统里就会瞬间涌出四五条内容残缺的重复报错，严重干扰告警统计与问题定位。
+
+在生产级 Rust 工程中，请严格遵守**「沿途挂上下文，单点记日志」**的职责分工：
+
+1. **所有内层与中间层函数**：遇到无法原地恢复的错误时，**绝不调用 `tracing::error!`**，只用上一节的 `.context(...)` / `.with_context(|| ...)` 把当前层的参数线索挂到错误链上，直接用 `?` 向上返回；
+2. **唯一记录点（处理决策边界）**：只有当错误一路冒泡到**最终消化它的顶层边界**（例如 HTTP 框架的统一错误响应中间件、后台定时任务的顶层循环或 `main` 出口）时，才结合格式化占位符 `%format!("{err:#}")` **集中打印唯一一条包含完整因果链的 `tracing::error!`**。
+
+### 完整实战核对：异步 `Span` 隔离、敏感参数脱敏与顶层单次记录
+
+下面这份真实可运行的工程示例，同时演示了 `#[tracing::instrument]` 跨 `.await` 自动继承 `order_id`、用 **`skip(api_token)` 防止密码或密钥泄露进日志**，以及在顶层出口统一记录 `anyhow` 完整错误链的标准做法：
+
+<small class="code-source">源文件：<code>examples/architecture/observability/src/bin/logging-and-tracing.rs</code></small>
+<Code
+  code={tracingSource.split('// ANCHOR: full\n')[1].split('\n// ANCHOR_END: full')[0]}
+  lang="rust"
+/>
+
+实测运行输出：
+
+<small class="code-source">运行输出</small>
+```text
+ INFO order_flow{order_id=1001 amount_cents=250000}: starting async order pipeline amount_cents=250000
+ INFO order_flow{order_id=1002 amount_cents=0}: starting async order pipeline amount_cents=0
+ WARN order_flow{order_id=1001 amount_cents=250000}: high-value order flagged for review amount_cents=250000
+ INFO order_flow{order_id=1001 amount_cents=250000}: order settled
+ERROR top-level handler caught failure error=request aborted for order #1002: zero-amount order rejected
+```
+
+对照这五行输出，你可以逐项核对刚才推导的机制：
+1. **并发穿插不串台**：`tokio::join!` 并发推进 `1001` 与 `1002` 两笔订单；即便中间经历了 `yield_now().await` 挂起切换，第 3 行由同步子函数 `audit_amount`（它并未接收 `order_id` 参数）发出的 `WARN` 依然精准佩戴着外层的 `order_flow{order_id=1001 amount_cents=250000}` 上下文；
+2. **敏感字段零泄漏**：`#[tracing::instrument]` 默认会自动用 `Debug` 记录函数的所有入参，一旦函数参数含有密码、Token 或大体积二进制切片，**必须显式写上 `skip(api_token)`**（或 `skip_all` 后按需挑选安全字段），输出中果然没有任何 `secret-token` 的踪迹；
+3. **错误单点收口**：`1002` 号零金额订单在 `audit_amount` 内部静默通过 `bail!` 早退，全程没有产生冗余报错，最终在顶层边界合并为一整条因果清晰的 `ERROR ... request aborted for order #1002: zero-amount order rejected`。
+
+<Aside type="caution" title="切勿在普通 async fn 体内长期持有 Span::enter() 守卫">
+如果你不在函数头顶贴 `#[tracing::instrument]`，而是手动创建 `let span = info_span!("work");`，请千万不要在 `async fn` 里写 `let _guard = span.enter();` 并带着 `_guard` 跨过 `.await` 挂起点——那样做就退化回了前文分析的线程绑定串台陷阱。在手动为异步代码块附加 `Span` 时，一律导入 `use tracing::Instrument;`，写成 **`my_async_op().instrument(span).await`**。
+</Aside>
+
+---
+
+## 小结
+
+走完第 17 章，我们已经补齐了将 Safe Rust 投入真实生产服务的全套工程基建：
+
+1. **门面与收集器分离**：库与业务模块只依赖 `tracing` 门面发出结构化键值事件与 `Span`，仅由顶层二进制入口通过 `tracing-subscriber` 绑定一次输出策略（本地可读文本或线上 JSON / OpenTelemetry）；
+2. **`Span` 守护异步因果链**：通过 `#[tracing::instrument(skip(敏感参数))]` 或 `.instrument(span)` 将上下文绑定到 `Future::poll` 的进出周期，彻底解决 `ThreadLocal` 在多线程异步调度下的串台与丢失问题；
+3. **错误与日志各司其职**：领域层用 `thiserror` 定枚举契约，编排层用 `anyhow` 沿途挂 `.with_context(...)`，顶层边界统一输出一次 `tracing::error!`。
+
+至此，我们在 **Safe Rust（安全 Rust）** 世界里的全部拼图——从底层栈与堆的内存模型、类型与 Trait 体系、并发与异步状态机，一直到类型驱动架构、编译期宏与生产级错误日志基建——已经悉数贯通。
+
+翻过这一页，我们将进入全指南的压轴终章（**第 18 章：`unsafe` 安全抽象与系统边界**）：潜入安全 Rust 脚下的最后一层物理基础，看清标准库是如何用极小范围的裸指针与安全抽象撑起整座大厦，并与外部 C ABI 世界自由握手的。
+
+[继续：unsafe 安全抽象与系统边界 →](/architecture/unsafe-and-boundaries/)
