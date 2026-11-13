@@ -1,5 +1,3 @@
-//! Lesson 17.1: Layered error handling with `thiserror` (domain library) and `anyhow` (application boundary).
-
 // ANCHOR: full
 // ANCHOR: domain_thiserror
 pub mod billing {

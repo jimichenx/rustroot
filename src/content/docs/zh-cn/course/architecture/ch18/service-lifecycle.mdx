@@ -1,0 +1,114 @@
+---
+title: 服务状态与并发韧性：显式依赖装配、select! 超时取消与平滑停机
+description: 掌握用 Arc<AppState> 替代运行时反射 DI 容器，从 Drop 状态机即取消任务的物理机制理解 timeout 与 tokio::select! 取消安全性，并实现排空在途任务的平滑停机。
+sidebar:
+  label: 状态装配、超时取消与停机
+  order: 4
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import SelectCancellationDiagram from '../../../../../../components/diagrams/SelectCancellationDiagram.astro';
+import lifecycleSource from '../../../../../../../examples/architecture/observability/src/bin/service-lifecycle.rs?raw';
+
+当配置解析、错误链与追踪日志全部就绪，准备把一个长生命周期的异步服务部署到生产集群时，从 Java（Spring Boot）或 Go 转过来的工程师往往还会卡在三个运行期治理问题上：
+
+1. **共享依赖怎么注入？** Rust 没有运行时反射，自然也没有 Spring `@Autowired` 那样的控制反转（IoC）容器。第一节加载好的 `AppConfig`、数据库连接池和监控指标，该怎么传给成千上万个并发请求任务？
+2. **超时与取消怎么控制？** 在 Go 中，为了在请求超时或客户端断开时取消下游操作，几乎每个异步函数的第一个参数都要写成 `ctx context.Context`；为什么翻遍 Rust 异步库，函数签名里却看不到 `ctx` 参数？
+3. **进程退出怎么避免截断事务？** 当 Kubernetes 或系统发来退出信号时，如果直接终止进程，执行到一半的扣款或落盘任务就会半途中断，工程上如何做**平滑停机（Graceful Shutdown）**？
+
+## 一、 告别运行时 DI 容器：用 `Arc<AppState>` 显式装配共享状态
+
+在传统面向对象框架中，为了把配置与连接池塞进深层业务控制器，框架通常在进程启动期扫描字节码注解、在运行时维护一张全局哈希表做反射注入。代价是依赖关系隐藏在注解背后，漏配某个组件往往要等服务启动甚至请求打进来时才抛出运行时异常。
+
+Rust 服务端工程直接用已有的类型与所有权工具完成依赖装配：
+- 将启动期校验完毕的只读配置、内部自带连接池句柄的数据库客户端及原子统计量，组合成一个普通的 `struct AppState`；
+- 外层套上我们在[跨线程共享所有权：`Arc<T>`](/concurrency/arc-atomic-sharing/)中学过的原子引用计数指针 **`Arc<AppState>`**，在派生每个工作任务或路由处理器时显式传入 `Arc::clone(&state)`（运行时仅复制 8 字节地址并执行一次原子加一，不深拷贝底层资源）；
+- 若个别底层工具函数确需进程级延迟初始化的全局只读单例（如全局编译一次的正则表达式），直接使用标准库的 `std::sync::LazyLock<T>` 或 `OnceLock<T>`，无需引入任何第三方依赖注入框架。
+
+## 二、 `Drop` 即取消：为什么 Rust 异步不需要传 `context.Context`？
+
+回到第二个问题：当下游接口卡死超过 50 毫秒时，没有 `ctx` 参数的 Rust 异步函数是怎么被外层中止的？
+
+答案直接藏在[Future 与 poll：状态机的推进契约](/concurrency/future-and-poll/)建立的惰性物理模型里：
+在 Go 中，启动一个 `goroutine` 后它就由运行时独立调度推进，外层无法从外部直接销毁它，只能传一个 `ctx` 通道进去让它自己轮询检查退出信号；而在 Rust 中，**`async` 代码块或函数返回的只是一个被动的 `Future` 状态机值**——只有外层继续调用 `.poll()`，它才会往下推进到下一个挂起点。
+
+这意味着：**在任意 `.await` 挂起点上，只要外层决定不再 `poll` 这个状态机，并直接让它离开作用域触发 `Drop`，该异步任务当场就被取消了**，状态机内部持有的套接字、缓冲区与锁守卫也会顺着[确定性清理规则](/pointers/drop-and-raii/)立即释放。
+
+标准超时包装器 **`tokio::time::timeout(duration, future)`** 正是利用了这一点：它把你的业务 `Future` 与一个定时器合绑在同一个外层状态机里同时轮询；一旦定时器先到期返回 `Poll::Ready`，`timeout` 直接把未完成的业务 `Future` 原地 `Drop` 销毁并返回 `Err(Elapsed)`，内层函数签名无需做任何改动：
+
+<small class="code-source">源文件：<code>examples/architecture/observability/src/bin/service-lifecycle.rs</code>（节选：Arc 共享状态装配与 timeout 超时自动销毁状态机）</small>
+<Code code={lifecycleSource} lang="rust" anchor="app_state_and_timeout" />
+
+## 三、 `tokio::select!` 取消安全性与平滑停机
+
+除单一超时外，后台常驻服务还经常需要「同时等待多个异步事件，谁先就绪就处理谁」——比如一边从任务通道接收新请求，一边监听系统停机信号。这由多路竞争宏 **`tokio::select!`** 承担。
+
+`tokio::select!` 在同一次 `poll` 中轮询列出的所有分支：**一旦某个分支率先返回 `Poll::Ready`，执行完该分支对应的代码块后，其余所有未完成分支的 `Future` 状态机都会被当场 `Drop` 丢弃**。
+
+<SelectCancellationDiagram />
+
+正是这个「落败分支立即 `Drop`」的物理行为，在循环中使用 `select!` 时引出了一条关键的 Code Review 判据——**取消安全性（Cancellation Safety）**：
+
+```rust
+// 高危反模式：在 loop + select! 的竞争分支里直接放包含多步状态积累的 async 函数
+async fn read_and_forward(rx: &mut mpsc::Receiver<u64>, net: &Socket) {
+    let item = rx.recv().await; // 第 1 步：已从通道取走数据，保存在当前状态机局部变量 item 中
+    net.send(item).await;       // 第 2 步：在此处挂起等待网络时，若另一分支胜出，整个状态机连同 item 被直接 Drop，数据丢失
+}
+```
+
+如果一个异步函数内部跨越了多个 `.await`、且在前半段已经从通道取走了消息或读了一半字节流存在局部变量里，一旦它在后半段 `.await` 处因输掉 `select!` 竞争而被 `Drop`，下一轮循环重新构造新状态机时，那半截数据就已经永久丢失了。
+
+**工程防坑准则**：在 `loop { tokio::select! { ... } }` 的竞争条件位置，**只放单步无中间残留的取消安全原语**（如 `mpsc::Receiver::recv`、`watch::Receiver::changed`），拿到数据后再在分支体内部执行后续处理或调用 `tokio::spawn` 派生独立任务。
+
+顺着这条规则，我们就能写出结构清晰的**平滑停机（Graceful Shutdown）**主循环：
+1. **广播停机信号**：使用一对多的 `tokio::sync::watch` 通道（或 `tokio_util::sync::CancellationToken`）向各后台循环广播退出指令；
+2. **切断新流量接入**：工作循环在 `tokio::select!` 中监听到 `shutdown_rx.changed()` 后立即 `break` 跳出接收循环，不再接纳新任务；
+3. **排空在途任务（Drain）**：已在独立 `JoinHandle` 中运行的在途任务不会被粗暴截断，主循环逐一 `.await` 等待它们走完正常提交或超时收尾逻辑，最后平滑退出进程：
+
+<small class="code-source">源文件：<code>examples/architecture/observability/src/bin/service-lifecycle.rs</code>（节选：select! 信号监听与排空在途任务平滑停机）</small>
+<Code code={lifecycleSource} lang="rust" anchor="select_and_shutdown" />
+
+运行本节完整实验（主函数投递一个耗时 20ms 的快任务与一个耗时 90ms 的慢任务，并在 5ms 后触发停机信号），核对输出时序：
+
+<small class="code-source">运行输出（<code>examples/architecture/observability/src/bin/service-lifecycle.rs</code>）</small>
+```text
+shutdown signal received: stop accepting new jobs
+[billing-svc] job #1 committed (total=1)
+[billing-svc] job #2 timed out and dropped
+worker drained cleanly, completed=1
+```
+
+输出清晰印证了整套运行期保护机制：收到停机信号后接入层立即停止收新请求；此前已派生的在途任务继续推进——1 号任务在 20ms 正常落盘提交，2 号慢任务在 50ms 触碰超时上限被自动 `Drop` 回收，最终工作器排空全部句柄后干净退出。
+
+<Aside type="caution" title="独立 tokio::spawn 任务不会被父函数自动取消">
+注意区分普通未派生的 `Future` 与 `tokio::spawn` 派生的后台任务：直接 `.await` 的子 `Future` 嵌在父状态机内部，父状态机被 `Drop` 时子状态机随之一起销毁；而一旦通过 `tokio::spawn` 提交给运行时线程池，即使你丢弃了返回的 `JoinHandle`，后台任务依然会继续运行到底（即分离执行 Detach）。若需强制中止已派生的后台任务，需显式调用 `handle.abort()` 或传入取消信号通道。
+</Aside>
+
+## 小结
+
+走完本节，生产级服务的全链路工程基建已悉数合拢：
+
+1. **显式共享状态**：用 `Arc<AppState>`（配合局部 `OnceLock` / `LazyLock`）在编译期清晰传递配置与连接池，替代隐藏依赖关系的运行时反射容器；
+2. **`Drop` 驱动超时与取消**：利用惰性 `Future` 停止轮询即销毁的机制，通过 `tokio::time::timeout` 与 `tokio::select!` 实现无签名侵入的超时控制；
+3. **取消安全与平滑停机**：在循环 `select!` 条件位坚守单步取消安全原语，结合 `watch` 信号切断新请求并等待在途任务排空，保障部署重启期间零状态损坏。
+
+至此，我们在 **Safe Rust（安全 Rust）** 世界里的全部拼图——从底层栈与堆的内存模型、类型构造器与 Trait 体系、并发与异步状态机，一直到多包工程架构、类型驱动设计、编译期宏与生产级服务基建——已经全部贯通。
+
+翻过这一页，我们将进入本指南的压轴终章：**[`unsafe` 安全抽象与系统边界](/architecture/unsafe-and-boundaries/)**，探明标准库是如何用极小范围的裸指针与安全抽象撑起上述一切安全承诺，并与外部 C ABI 世界直接互通的。
+
+[继续：`unsafe` 安全抽象与系统边界 →](/architecture/unsafe-and-boundaries/)
+
+### 附：本节完整可运行实验源码
+
+<details>
+<summary>点击展开完整源码（<code>examples/architecture/observability/src/bin/service-lifecycle.rs</code>）</summary>
+
+<Code
+  code={lifecycleSource}
+  lang="rust"
+  anchor="full"
+  title="examples/architecture/observability/src/bin/service-lifecycle.rs"
+/>
+
+</details>

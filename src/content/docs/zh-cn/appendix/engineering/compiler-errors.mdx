@@ -61,7 +61,7 @@ error[E0382]: borrow of moved value: `tag`
 | **`E0308`** | `mismatched types` | 静态类型不匹配（高频诱因：函数末尾多写分号变成单元类型 `()`，或混淆 `String` 与 `&str`） | [函数、语句与表达式](/appendix/basics/functions/)、[字符串](/types/strings/) |
 | **`E0277`** | `the trait bound ... is not satisfied`（含 `cannot be sent between threads safely`） | 类型未实现目标函数要求的 Trait（如缺 `Debug` / `From`，或跨线程/`async` 持有未实现 `Send` 的 `Rc` / `MutexGuard`） | [Trait 与约束](/abstraction/traits-and-bounds/)、[Send 与 Sync](/concurrency/send-and-sync/) |
 | **`E0038`** | `the trait ... is not dyn compatible`（旧版称 `cannot be made into an object`） | Trait 含有泛型方法、无 `&self` 关联函数或返回 `Self`，编译器无法生成固定布局的虚表 `vtable` | [dyn Trait 与虚表](/abstraction/dyn-trait-and-vtable/) |
-| **`E0117`** | `only traits defined in the current crate can be implemented for external types` | 违反孤儿规则：禁止在当前 `crate` 为外部类型实现外部 Trait，防止多包链接时产生实现冲突 | [类型转换与孤儿规则](/abstraction/conversions-and-from/)、[Newtype 模式](/architecture/newtype-and-parse/) |
+| **`E0117`** | `only traits defined in the current crate can be implemented for external types` | 违反孤儿规则：禁止在当前 `crate` 为外部类型实现外部 Trait，防止多包链接与容器不变量冲突 | [孤儿规则与全局一致性](/abstraction/orphan-rule-and-coherence/)、[Newtype 模式](/architecture/newtype-and-parse/) |
 
 ---
 

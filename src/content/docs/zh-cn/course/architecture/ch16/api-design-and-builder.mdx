@@ -3,7 +3,7 @@ title: 灵活 API 签名设计：为什么没有函数重载与默认参数？
 description: 从双向类型推断机制推导为什么 Rust 拒绝同名函数重载与默认参数，并系统掌握具名关联构造、转换契约泛型、Default 结构体更新与 Builder 建造者模式的工程选型。
 sidebar:
   label: 灵活 API 与 Builder
-  order: 4
+  order: 2
 ---
 
 import { Aside, Code } from '@astrojs/starlight/components';
@@ -14,7 +14,7 @@ import apiDesignSource from '../../../../../../../examples/architecture/type-dri
 1. **禁止同名函数重载（No Function Overloading）**：在同一个作用域或同一个 `impl` 块里，绝不允许定义两个名字相同、但参数类型或参数个数不同的函数（报 `error[E0428]`）；
 2. **禁止函数默认参数（No Default Arguments）**：不能写 `fn connect(host: &str, port: u16 = 8080)`。
 
-本节先从编译器类型系统的底层机制出发，推演为什么在拥有双向类型推断的语言里引入同名函数重载会破坏整个泛型生态；随后结合[模块私有封装边界](/architecture/crates-and-modules/)与[生态约定契约](/abstraction/ecosystem-traits/)，建立覆盖四大工程场景的灵活接口设计体系。
+本节先从编译器类型系统的底层机制出发，推演为什么在拥有双向类型推断的语言里引入同名函数重载会破坏整个泛型生态；随后结合[模块私有封装边界](/architecture/crates-and-modules/)、[借用视图与只读 API 设计](/abstraction/asref-and-borrow/)及[受检转换、切片升级与默认契约](/abstraction/ecosystem-traits/)，建立覆盖四大工程场景的灵活接口设计体系。
 
 ---
 
@@ -62,9 +62,9 @@ process(42u16.into());
 1. **多个构造函数重载 → 具名关联函数（Named Constructors）**
    Java 与 C++ 强迫所有构造函数必须与类名相同，导致一个类常堆满五六个参数各异的 `new Client(...)`，调用点看到 `new Client("a", 80, 3000)` 时很难一眼分辨最后两个数字的含义。Rust 没有 `new` 关键字，直接把构造差异写进关联函数名（如 `Vec::new()` vs `Vec::with_capacity(10)`，或下例的 `RetryPolicy::with_retries(5)`），调用意图在字面上一目了然。
 2. **同义不同载体的参数重载 → 泛型 + `Into<T>` / `AsRef<T>`**
-   当函数希望同时接纳 `&str` 与 `String`（或 `&Path` 与 `PathBuf`）时，它们表达的是同一个业务含义，只是调用方手里的容器不同。按第 7 章准则：只读借用写 `fn ping_host<S: AsRef<str>>(target: S)`，消费所有权写 `fn new(host: impl Into<String>)`，一份函数体即可对所有载体开放。
+   当函数希望同时接纳 `&str` 与 `String`（或 `&Path` 与 `PathBuf`）时，它们表达的是同一个业务含义，只是调用方手里的容器不同。按[借用视图与只读 API 设计](/abstraction/asref-and-borrow/)准则：只读借用写 `fn ping_host<S: AsRef<str>>(target: S)`，消费所有权写 `fn new(host: impl Into<String>)`，一份函数体即可对所有载体开放。
 3. **同类型变长参数（如 `int... ports`）→ 切片引用 `&[T]`**
-   需要一次接收任意数量的同类型元素时，直接将形参声明为只读切片 `ports: &[u16]`。调用方只需写 `allow_ports(&[80, 443, 8443])`，在栈上传递一个 16 字节胖指针，零堆内存分配。（若变长参数连类型都不相同，如 `println!("{}: {}", host, port)`，则属于第 16 章编译期宏的职责范围。）
+   需要一次接收任意数量的同类型元素时，直接将形参声明为只读切片 `ports: &[u16]`。调用方只需写 `allow_ports(&[80, 443, 8443])`，在栈上传递一个 16 字节胖指针，零堆内存分配。（若变长参数连类型都不相同，如 `println!("{}: {}", host, port)`，则属于第 17 章编译期宏的职责范围。）
 
 <small class="code-source">源文件：<code>examples/architecture/type-driven-design/src/bin/api-design-and-builder.rs</code>（节选：轻量级签名三件套与 Default 更新）</small>
 <Code

@@ -1,15 +1,15 @@
 ---
 title: 测试体系：单元测试、集成测试与文档测试
-description: 顺应上一节的 mod 与 crate 边界，理解为什么单元测试作为同文件子模块能直接测试私有函数、为什么 tests/ 目录下的集成测试是独立外部 crate，以及文档测试如何防止注释示例过期。
+description: 顺应本章立好的 mod、crate 与 #[cfg] 边界，理解为什么单元测试作为同文件子模块能直接测试私有函数、为什么 tests/ 目录下的集成测试是独立外部 crate，以及文档测试如何防止注释示例过期。
 sidebar:
   label: 测试体系
-  order: 2
+  order: 3
 ---
 
 import { Code } from '@astrojs/starlight/components';
 import testingSystemSource from '../../../../../../../examples/architecture/type-driven-design/src/bin/testing-system.rs?raw';
 
-在上一节（`15.1`）中，我们理清了 Rust 代码组织的两道物理边界：对内以模块 **`mod`** 为容器树（子模块对父模块的一切私有项无条件全透明），对外以 **`crate`** 为最小编译单元（只向外部暴露标了 `pub` 的顶层接口）。
+在前两节中，我们已经掌握了 Rust 工程组织的三项核心规则：对内以模块 **`mod`** 为容器树（子模块对父模块的一切私有项无条件全透明），对外以 **`crate`** 为最小编译单元（只向外部暴露标了 `pub` 的顶层接口），并通过 **`#[cfg(...)]`** 在编译期按需裁剪代码块。
 
 如果你直接顺着这两道边界往下想，就会发现 Rust 内置的自动化测试体系（运行一条 `cargo test` 即可全部触发）根本不是随便定下的工程规矩，而是**直接生长在 `mod` 与 `crate` 可见性规则之上的自然产物**。
 
@@ -132,8 +132,11 @@ pub fn settle_amount(gross_cents: u64, fee_bps: u64) -> Result<u64, &'static str
 | **集成测试** | 项目根目录 `tests/*.rs` | **独立的外部 Crate**（仅能访问 `lib.rs` 导出的 `pub` 接口） | 黑盒验证对外公开 API 门面的完整性与多模块协作流 |
 | **文档测试** | 公开项头顶的 `///` Markdown 代码块 | **独立的外部调用代码**（由 `cargo test` 自动提取编译并运行） | 确保公开 API 文档中的示例代码永远可编译、永不过期 |
 
-现在，我们已经掌握了如何用模块 `mod` 藏住私有字段、并用三维测试守住模块边界。
-下一节（`15.3`），我们将把模块私有字段与元组结构体结合起来，引出 Rust 类型驱动架构中最核心的第一种设计模式——**`Newtype` 模式与「解析而非校验（Parse, don't validate）」**。
+至此，第 15 章的物理工程骨架——从单文件 `mod` 容器树、多包 `Workspace` 缓存与条件编译，一直到三维自动化测试防线——已经全部就位。
+
+翻过这一章，我们将进入代码内部的领域建模核心（**第 16 章：API 签名与类型驱动设计**）：把刚刚立稳的模块私有字段边界与元组结构体、泛型和所有权移动结合起来，掌握 **`Newtype`（解析而非校验）**、**`Builder`**、**`Typestate`（编译期类型状态机）**与 **`Cow<'a, B>`**，让业务不变量直接在编译期生根。
+
+[继续：API 签名与类型驱动设计 →](/architecture/type-driven-design/)
 
 ---
 

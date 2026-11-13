@@ -1,24 +1,24 @@
 ---
-title: Cargo 工程化：Workspace、Features 条件编译与工具链
-description: 拆解 Cargo 多包工作空间的缓存共享机制、Features 条件编译的加法合并规则、Cargo.lock 提交准则，以及日常工程检查与构建调优工具。
+title: 多包工作空间、Features 条件编译与依赖治理
+description: 拆解 Cargo 多包 Workspace 的编译缓存共享与版本池机制、三类依赖边界与 Cargo.lock 提交准则、Features 条件编译的加法合并铁律，以及日常检查与 Release 调优。
 sidebar:
-  label: Cargo 工程化与条件编译
-  order: 1
+  label: Workspace 与条件编译
+  order: 2
 ---
 
 import { Aside, Code } from '@astrojs/starlight/components';
-import cargoToml from '../../../../../../examples/appendix/engineering/Cargo.toml?raw';
-import cargoFeatures from '../../../../../../examples/appendix/engineering/src/bin/cargo-features.rs?raw';
+import cargoToml from '../../../../../../../examples/appendix/engineering/Cargo.toml?raw';
+import cargoFeatures from '../../../../../../../examples/appendix/engineering/src/bin/cargo-features.rs?raw';
 
-在[编译单元 crate 与模块封装边界](/architecture/crates-and-modules/)中我们看到，`rustc` 的最小编译单元是一整棵 `crate` 模块树，而包含 `Cargo.toml` 的工程目录叫做 **Package（包）**。当项目从单人练习走向真实生产服务时，立刻会遇到多包拆分、可选功能裁剪、依赖版本锁定与生产编译调优四件事。
+在上一节中我们看到，`rustc` 的最小编译单元是一整棵 `crate` 模块树，而包含 `Cargo.toml` 的工程目录叫做 **Package（包）**（如果你对 `rustup`、`rustc` 与 `cargo` 的整体分工尚不熟悉，可先查阅[附录：Rust 工具链全景地图](/appendix/engineering/toolchain-overview/)）。
 
-本节按工程落地的先后顺序，拆解 Cargo 在这些环节背后的编译期机制与团队协作准则。
+当项目从单包原型走向几万行的真实生产系统时，立刻会遇到四件工程架构决策：如何拆分多个子包并共享编译缓存、如何管理依赖版本锁、如何按需裁剪可选功能特性，以及如何权衡线上 Release 构建参数。本节逐一把背后的编译期机制讲透。
 
 ---
 
 ## 一、 从单包到 Workspace：为什么中型项目都拆成多包工作空间？
 
-如果把几万行服务端代码全部塞进同一个 `crate` 里，每一次修改内部任意一行代码，`rustc` 都必须以整个 `crate` 为单位重新走一遍前端检查与依赖重连，增量编译耗时迅速拉长。此外，在[过程宏：编译期的代码重写插件](/architecture/procedural-macros/)中我们也看到，一旦项目需要编写自定义过程宏，编译器架构强制要求过程宏必须放在一个标有 `proc-macro = true` 的独立库包中。
+如果把几万行服务端代码全部塞进同一个 `crate` 里，由于 `crate` 是 `rustc` 的最小编译原子单元，每次修改内部任意一行代码，编译器都必须以整棵 `crate` 树为单位重新走一遍前端检查与依赖重连，增量编译耗时迅速拉长。此外，我们将在第 17 章看到，一旦项目需要编写自定义过程宏，编译器机制强制要求过程宏必须放在一个标有 `proc-macro = true` 的独立库包中。
 
 但如果你只是新建几个平行文件夹、各自放一份独立的 `Cargo.toml`，又会引发另外两个工程问题：
 1. **重复编译与磁盘膨胀**：每个子包都会在各自目录下生成独立的 `target/` 目录，把 `serde`、`tokio` 等上百个第三方依赖重复编译多遍；
@@ -64,14 +64,12 @@ tokio.workspace = true
 | 配置区块 | 参与编译与链接的时机 | 是否进入最终生产二进制 | 典型用途 |
 | --- | --- | --- | --- |
 | **`[dependencies]`** | 所有构建模式始终参与编译链接 | **是** | 核心运行期依赖（如 `serde`、`tokio`） |
-| **`[dev-dependencies]`** | 仅在执行 `cargo test`、`cargo bench` 或编译 `examples/` 时链接 | **否** | 测试断言库、Mock 工具、基准测试框架（关联[三维测试体系](/architecture/testing-system/)） |
+| **`[dev-dependencies]`** | 仅在执行 `cargo test`、`cargo bench` 或编译 `examples/` 时链接 | **否** | 测试断言库、Mock 工具、基准测试框架（紧接下一节测试体系） |
 | **`[build-dependencies]`** | 仅在编译项目前构建并运行 `build.rs` 脚本时使用 | **否** | C 语言源码编译辅助库 `cc`、Protobuf 代码生成工具 `prost-build` |
 
 ### `Cargo.toml` 与 `Cargo.lock` 的分工
 
-在版本管理上，许多有前端 `package-lock.json` 或 Go `go.sum` 经验的开发者常会问：`Cargo.lock` 到底该不该提交进 Git 仓库？
-
-先看两者的物理分工：
+在团队版本管理上，先看清这两个文件的物理分工：
 - **`Cargo.toml` 声明的是「语义化兼容区间」**：写下 `serde = "1.0"` 时，它等价于 `>=1.0.0, <2.0.0`。只要上游发布了 `1.0.215`，允许在不破坏公开签名的前提下演进；
 - **`Cargo.lock` 记录的是「某次解析出的精确版本与哈希快照」**：只要锁文件存在，普通 `cargo build` 就严格按锁文件里的精确版本号构建，不会擅自联网拉取新版（除非你显式执行 `cargo update`）。
 
@@ -81,20 +79,20 @@ tokio.workspace = true
 
 ---
 
-## 三、 `Features` 条件编译与「加法合并原则」
+## 三、 `Features` 条件编译与「加法合并铁律」
 
-一个成熟的库往往需要支持可选能力——例如默认只提供轻量级数据结构，只有当调用方显式开启 `json` 特性时才引入 `serde` 序列化实现，或者按操作系统裁剪平台专属的系统调用。
+一个成熟的库往往需要支持可选能力——例如默认只提供轻量级数据结构，只有当调用方显式开启 `json` 特性时才引入序列化代码，或者按操作系统裁剪平台专属的系统调用。
 
 Rust 通过编译期属性 **`#[cfg(...)]`** 与内置宏 **`cfg!(...)`** 实现零运行时开销的**条件编译（Conditional Compilation）**：
 
 1. **条目级裁剪属性 `#[cfg(...)]`**：标注在函数、`struct`、`mod` 或 `impl` 块上方。如果条件不成立，编译器在解析语法树阶段就直接将该条目整块丢弃——未开启的代码不仅不生成机器码，甚至不会参与后续的类型检查，对应的可选依赖包也不会被下载编译。
 2. **表达式级布尔宏 `cfg!(...)`**：写在函数体内部，在编译期直接展开为字面量 `true` 或 `false`。注意与 `#[cfg(...)]` 的关键差异：用 `if cfg!(feature = "json") { ... }` 编写的两个分支都会完整走完语法与类型检查，只是未命中的分支会在后端优化时作为死代码消去。
 
-除了自定义 `feature`，`cfg` 还常用于操作系统与架构判断，例如 `#[cfg(target_os = "linux")]`、`#[cfg(unix)]`、`#[cfg(target_pointer_width = "64")]`，以及单元测试专用的 `#[cfg(test)]`。
+除了自定义 `feature`，`cfg` 还常用于操作系统与架构判断，例如 `#[cfg(target_os = "linux")]`、`#[cfg(unix)]`、`#[cfg(target_pointer_width = "64")]`，以及下一节单元测试专用的 **`#[cfg(test)]`**。
 
 ### 工程核心禁忌：为什么严禁把 `features` 设计成互斥开关？
 
-在设计 `[features]` 时，初学者最常踩的一个架构陷阱是：把两个特性当成「二选一」的互斥单选框来写——例如同时定义 `mysql` 和 `postgres` 两个特性，并在代码里为它们分别导出同名的 `pub type DbConn`：
+在设计 `[features]` 时，最常见的一个架构陷阱是把两个特性当成「二选一」的互斥单选框来写——例如同时定义 `mysql` 和 `postgres` 两个特性，并在代码里为它们分别导出同名的 `pub type DbConn`：
 
 ```rust
 // 错误示范：把 Cargo features 当成互斥开关使用
@@ -107,15 +105,15 @@ pub type DbConn = PgConnection; // 一旦两个特性同时开启，当场报重
 
 这段代码在单独测试 `--features mysql` 或 `--features postgres` 时看似正常，但一旦放进真实的 Workspace 或大型依赖树就会编译失败。原因在于 Cargo 的**特性合并（Feature Unification）**规则：
 
-假设在一个工作空间里，子包 `order-service` 开启了 `db-core` 的 `postgres` 特性，而另一个子包 `legacy-sync` 开启了同一个 `db-core` 的 `mysql` 特性。当你执行 `cargo build --workspace` 时，Cargo 为了保证同一个版本的 `db-core` 在同一次构建目标下只编译一遍，会对整个依赖树请求的所有特性取**并集（Union）**——即同时传入 `--cfg feature="postgres"` 与 `--cfg feature="mysql"` 来编译 `db-core`。一旦库内部存在互斥定义，编译当场中断。
+假设在刚才的工作空间里，子包 `order-service` 开启了 `db-core` 的 `postgres` 特性，而另一个子包 `legacy-sync` 开启了同一个 `db-core` 的 `mysql` 特性。当你执行 `cargo build --workspace` 时，Cargo 为了保证同一个版本的 `db-core` 在同一次构建目标下只编译一遍，会对整个依赖树请求的所有特性取**并集（Union）**——即同时传入 `--cfg feature="postgres"` 与 `--cfg feature="mysql"` 来编译 `db-core`。一旦库内部存在互斥定义，编译当场中断。
 
 <Aside type="caution" title="Feature 设计的加法铁律（Additive Rule）">
-Cargo 官方规范要求：**所有 `feature` 都必须是纯增量的（Additive）**——开启任意一个特性，只能新增模块、新增公开类型或新增 Trait 实现，不能删除已有项，也不能改变已有公开签名的类型。因此，库作者在 CI 中必须固定运行一条 **`cargo check --all-features`**，专门检验所有特性同时开启时能否正常编译。如果业务上确实需要互斥的底层后端，应当拆分为两个独立的驱动包（如 `db-mysql` 与 `db-postgres`），或者把后端差异收敛为运行期的枚举配置。
+Cargo 官方规范要求：**所有 `feature` 都必须是纯增量的（Additive）**——开启任意一个特性，只能新增模块、新增公开类型或新增 Trait 实现，不能删除已有项，也不能改变已有公开签名的类型。因此，库作者在 CI 中必须固定运行一条 **`cargo check --all-features`**，专门检验所有特性同时开启时能否正常编译。（这也正是解决[孤儿规则与全局一致性](/abstraction/orphan-rule-and-coherence/)中「Workspace 兄弟包互卡 `E0117`」的标准工程手法：无需在 `http-api` 子包里套包装类型，直接在 `core-domain` 中增加一个可选特性 `serde` 或 `http`，按需为领域类型开启外部契约实现。）如果业务上确实需要互斥的底层后端，应当拆分为两个独立的驱动包（如 `db-mysql` 与 `db-postgres`），或者把后端差异收敛为运行期的枚举配置。
 </Aside>
 
 ### 代码实验：核对增量特性开关
 
-下面这份本指南示例仓库中的真实 `Cargo.toml` 与配套源码，演示了符合加法原则的 `[features]` 配置与 `#[cfg]` / `cfg!` 组合用法：
+下面这份 `Cargo.toml` 与配套源码，演示了符合加法原则的 `[features]` 配置与 `#[cfg]` / `cfg!` 组合用法：
 
 <small class="code-source">源文件：<code>examples/appendix/engineering/Cargo.toml</code></small>
 <Code code={cargoToml} lang="toml" />
@@ -126,7 +124,7 @@ Cargo 官方规范要求：**所有 `feature` 都必须是纯增量的（Additiv
   lang="rust"
 />
 
-在 `site/examples/` 目录下分别用三组特性参数运行，可以直观核对编译期裁剪效果：
+分别用三组特性参数运行，可以直观核对编译期裁剪效果：
 
 <small class="code-source">终端运行对照</small>
 ```text
@@ -145,11 +143,11 @@ encoding header: gzip
 
 ---
 
-## 四、 日常工程护栏与 Release 构建调优速查
+## 四、 日常工程护栏与 Release 构建调优
 
-### 1. 开发与 CI 常用工具链分工
+### 1. 开发与 CI 常用检查命令
 
-在日常编码与审查 AI 生成的代码时（关联[设计模式与 AI 时代的编译期护栏](/architecture/patterns-and-ai-rails/)），合理组合以下子命令能显著缩短反馈周期：
+在日常编码与审查 AI 生成的代码时，合理组合以下子命令能显著缩短反馈周期：
 
 | 命令 | 底层行为与工程定位 |
 | --- | --- |
@@ -157,13 +155,12 @@ encoding header: gzip
 | **`cargo clippy --all-targets -- -D warnings`** | 官方静态分析工具，内置数百条惯用法、性能冗余（如不必要的 `.clone()`、低效集合查找）与安全隐患检查。`-D warnings` 将所有警告升级为硬性编译错误，适合作为 CI 门禁 |
 | **`cargo fmt --check`** | 按官方统一排版规则检查代码格式，消除团队代码风格争议 |
 | **`cargo tree -i <包名> -e features`** | 反向追踪依赖树，查明到底是哪个上游依赖包引入了某个特定库或开启了它的某项 `feature` |
-| **`cargo test --doc`** | 单独抽取并编译运行公开 API 文档注释（`///`）中的示例代码，防止文档示例随代码重构而过期失效 |
 
 ### 2. `[profile.release]` 生产编译权衡
 
-需要注意的是，直接运行不带参数的 `cargo build` 默认使用 **`dev` 配置**——为了追求最快的本地编译速度，编译器默认关闭了几乎所有内联与循环优化（`opt-level = 0`），运行速度可能比优化后慢一个数量级。压测性能与线上部署必须使用 **`cargo build --release`**。
+直接运行不带参数的 `cargo build` 默认使用 **`dev` 配置**——为了追求最快的本地编译速度，编译器默认关闭了几乎所有内联与循环优化（`opt-level = 0`），运行速度可能比优化后慢一个数量级。压测性能与线上部署必须使用 **`cargo build --release`**。
 
-若对线上产物的吞吐性能或二进制文件体积有进一步要求，可在顶层 `Cargo.toml` 中按需调整 `[profile.release]`：
+若对线上产物的吞吐性能或二进制文件体积有进一步要求，可在顶层 Workspace 的 `Cargo.toml` 中按需调整 `[profile.release]`：
 
 ```toml
 [profile.release]
@@ -172,4 +169,16 @@ codegen-units = 1  # 将每个 crate 合并为单个代码生成单元交给 LLV
 strip = "symbols"  # 剥离二进制文件中的符号表，显著缩减最终可执行文件体积
 ```
 
-这三项参数同样遵循没有免费午餐的工程交换：开启 `lto` 与设置 `codegen-units = 1` 会明显延长 Release 打包耗时并增加编译期内存占用，通常只在最终发布流水线中开启，不在本地 `dev` 配置中启用。
+这三项参数同样遵循工程交换：开启 `lto` 与设置 `codegen-units = 1` 会延长 Release 打包耗时并增加编译期内存占用，通常只在最终发布流水线中开启，不在本地 `dev` 配置中启用。
+
+---
+
+## 小结
+
+1. **多包共享用 Workspace**：顶层 `[workspace]` 让所有成员子包共享唯一一份 `target/` 编译缓存、`[workspace.dependencies]` 版本池与 `Cargo.lock`；可执行服务与工作空间必须提交 `Cargo.lock` 并在 CI 开启 `--locked`；
+2. **条件编译守住加法铁律**：`#[cfg(...)]` 在语法树阶段整块剔除未启用代码；因 Cargo 会对整个依赖树请求的特性取并集，所有 `feature` 必须是纯增量的，严禁做成互斥开关；
+3. **日常用 `check` / `clippy`，上线调 `release`**：开发反馈跑 `cargo check` 与 `clippy -D warnings`，线上打包开启 `--release` 并按需配置 `lto = "thin"`。
+
+掌握了 `mod`、`crate`、多包 `Workspace` 与 `#[cfg(...)]` 条件裁剪这四块工程基石后，下一节我们就来看 Rust 是如何把 **`mod` 子模块可见性**与 **`#[cfg(test)]` 条件编译**巧妙结合在一起，长出一套独具一格的**单元测试、集成测试与文档测试三维体系**的。
+
+[继续：测试体系 · 单元测试、集成测试与文档测试 →](/architecture/testing-system/)

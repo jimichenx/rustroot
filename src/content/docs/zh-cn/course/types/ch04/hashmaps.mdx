@@ -100,7 +100,7 @@ Blue: Some(10), Green: None
    - 查询的键在表里可能根本不存在（例如 `"Green"`），Rust 没有 `null`，因此用枚举构造器 `Option` 包裹结果——找到时返回 `Some(&10)`，找不到时返回 `None`（第 6 章将全面展开 `Option<T>` 的拆包与组合用法）。
 2. **用 `&str` 直接查询 `HashMap<String, V>`（零堆分配查询）**：
    - `scores` 的键类型明明是 `String`，但查询时我们直接传了字符串字面量 `"Blue"`（类型是 `&str`），并没有为了查一次表而专门调用 `String::from("Blue")` 去堆上申请内存。
-   - 这是因为标准库的 `get` 签名允许传入任何能借用为键等价形式的类型：既然 `String` 可以借用出 `&str`，哈希表就能直接拿 `"Blue"` 计算哈希值并比对内容。
+   - 这是因为标准库的 `get` 签名允许传入任何能借用为键等价形式的类型：既然 `String` 可以借用出 `&str`，哈希表就能直接拿 `"Blue"` 计算哈希值并比对内容（底层的 `Borrow` 契约将在[借用视图与只读 API 设计](/abstraction/asref-and-borrow/)拆解）。
 
 ### 扩容重哈希防线：与 `Vec::push` 同源的 `E0502`
 

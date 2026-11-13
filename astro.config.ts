@@ -33,6 +33,7 @@ export default defineConfig({
                                 '/ownership/summary/': '/memory/summary/',
                                 '/appendix/mechanisms/convention-traits/': '/abstraction/ecosystem-traits/',
                                 '/appendix/comparisons/function-overloading/': '/architecture/api-design-and-builder/',
+                                '/appendix/engineering/cargo-and-features/': '/architecture/cargo-and-features/',
                                 '/architecture/builder-and-typestate/': '/architecture/typestate-pattern/',
                         }
                         : {}),

@@ -1,0 +1,134 @@
+---
+title: "孤儿规则与全局一致性：泛型边界、实现冲突与扩展模式"
+description: 从单态化唯一性与容器逻辑不变量出发推导全局一致性（Coherence），看清为什么边界画在 crate 上，拆解泛型包裹陷阱（E0117）与一揽子实现重叠（E0119），掌握 Newtype 与扩展契约模式。
+sidebar:
+  label: 孤儿规则与全局一致性
+  order: 7
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import orphanRule from '../../../../../../../examples/types/traits/src/bin/orphan-rule.rs?raw';
+
+在前面的小节中，我们已经集齐了三项高自由度的抽象机制：在[Trait 契约与泛型约束](/abstraction/traits-and-bounds/)里，可以事后为标准库的 `String` 挂上本地契约 `Shout`；在[关联类型 vs 泛型 Trait](/abstraction/associated-types/)里，可以定义带类型参数的 `From<T>` 与 `AsRef<T>`；在前三节的标准库转换体系里，又见识了 `Into`、`TryInto`、`Borrow` 等多条对泛型参数 `T` 批量生效的**一揽子实现**。
+
+把这三项自由放在一起，一个工程安全问题立刻浮出水面：**既然任何包都能事后给已有类型挂载 Trait，甚至批量写 `impl<T>`，当成千上万个第三方包被组装进同一个程序时，编译器如何防止两份实现发生冲突？**
+
+我们直接写一段日常很想写的代码来触发这道防线：为了能用 `println!("{v}")` 直接打印整数数组，尝试给标准库的 `Vec<i32>` 实现标准库的格式化契约 `std::fmt::Display`：
+
+```rust
+impl std::fmt::Display for Vec<i32> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "vec")
+    }
+}
+```
+
+编译器当场报出 **`error[E0117]`** 拒绝编译：
+
+<small class="code-source">编译器诊断摘要</small>
+```text
+error[E0117]: only traits defined in the current crate can be implemented for types defined outside of the crate
+  --> src/main.rs:1:1
+   |
+1  | impl std::fmt::Display for Vec<i32> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^--------
+   |                            |
+   |                            `Vec` is not defined in the current crate
+   = note: define and implement a trait or new type instead
+```
+
+要读懂这条报错以及它在复杂泛型下的全部变体，需要从底层的**全局一致性（Coherence）**出发，沿着四步把前因后果算清。
+
+## 一、 为什么必须保证全局唯一？不只是防链接重名
+
+在类型系统理论中，**全局一致性（Coherence）**要求：**在整个编译后的程序里，任意一个具体类型对于同一个具体 Trait，最多只能存在唯一一份实现。**
+
+如果放任不同模块对同一组（`Trait`, `Type`）各写一份实现，会引发两重严重程度递增的事故：
+
+1. **单态化调用歧义**：假设你的服务同时引入了第三方包 `crate_a` 和 `crate_b`，两边各自写了一份 `impl Display for Vec<i32>`。当主程序调用 `println!("{v}")` 时，编译器在单态化阶段需要定位 `<Vec<i32> as Display>::fmt` 的函数地址，面对两份签名相同、逻辑相悖的机器码将无法抉择。
+2. **破坏容器的逻辑不变量（更隐蔽的数据损坏）**：回想我们在[借用视图与只读 API 设计](/abstraction/asref-and-borrow/)与[键值容器 `HashMap<K, V>`](/types/hashmaps/)中看到的哈希定位机制。假设 `crate_a` 为某个外部结构体 `UserKey` 实现了一套按小写字母计算的 `Hash`、`Eq` 与 `Borrow`，构造出一张 `HashMap<UserKey, Account>` 并作为返回值传给 `crate_b`；而 `crate_b` 内部却生效着另一套区分大小写的 `Hash` 实现。当 `crate_b` 调用 `map.get(&key)` 时，同一个键算出了截然不同的哈希槽位——原本存在的数据查不到，甚至在有序树集合中直接破坏二分查找的单调性前提。
+
+那么，编译器怎样才能确保全程序内不发生实现重叠？
+注意一个编译工程约束：`rustc` 的最小独立编译单元是一个包——即 **`crate`**（每个库或可执行目标各自构成一个 `crate`，完整编译模型将在[编译单元 crate 与模块封装边界](/architecture/crates-and-modules/)展开）。编译上游包 A 时，编译器无法预知未来会有哪些下游包 B、C 把它引入同一个项目。
+
+要想在**不做全网代码扫描**的前提下，仅凭当前包的局部检查就在逻辑上保证全局唯一性，唯一可行的授权规则就是**孤儿规则（Orphan Rule）**：
+
+**编写 `impl Trait for Type` 时，契约 `Trait` 或关联的类型中，至少有一方必须归属当前正在编译的 `crate`。** 既不拥有契约定义权、也不拥有类型定义权的跨界实现（就像没有归属的「孤儿」），一律在编译期拦截。
+
+## 二、 泛型深水区：明明带了本地类型，为什么还是报 `E0117`？
+
+基础四象限很清晰：本地契约配外部类型（`impl Shout for String`）合法，外部契约配本地类型（`impl Display for Article`）合法，双外部（`impl Display for Vec<i32>`）非法。
+
+真正让开发者困惑的，是带上泛型参数后的不对称现象。假设我们在当前包里定义了本地类型 `struct LocalId(u8);`，对比下面两个针对外部标准库契约与外部 `Vec` 的实现：
+
+<small class="code-source">源文件：<code>examples/types/traits/src/bin/orphan-rule.rs</code>（节选：裸露本地参数 vs 被外部容器包裹）</small>
+<Code code={orphanRule} lang="rust" anchor="generic_coverage" />
+
+两段代码里都出现了我们自己的 `LocalId`，为什么 `impl From<LocalId> for Vec<u8>` 顺利通过，而 `impl fmt::Display for Vec<LocalId>` 却报 `E0117`？
+
+顺着「防止上游版本升级破坏下游代码」的场景推演一下就能看清原因：
+- **为什么 `impl Display for Vec<LocalId>` 必须禁止？** 这里的 `LocalId` 被包裹在外部类型构造器 `Vec<...>` 内部。试想，如果标准库未来发布新版本，给自己的 `Vec<T>` 补上了一条合理的一揽子实现：`impl<T: Display> Display for Vec<T>`。一旦我们也给 `LocalId` 实现了 `Display`，两份实现就会在 `Vec<LocalId>` 上重叠冲突——这会导致标准库哪怕新增一个常规实现，都会变成破坏下游生态的兼容性事故。
+- **为什么 `impl From<LocalId> for Vec<u8>` 安全合法？** 因为在泛型契约 `From<LocalId>` 中，本地类型 `LocalId` **没有被任何外部容器包裹，直接裸露在类型参数顶层**。外部标准库并不认识你私有包里的 `LocalId`，只要它遵守孤儿规则不写无约束全称实现，就不可能与这行代码重叠。
+
+这就是编译器孤儿检查在泛型下的真实边界：**在 `impl` 涉及的契约参数与目标类型序列中，必须至少有一个未被外部类型包裹的本地类型（且出现在未受限泛型参数之前）**。（注：标准库的引用 `&LocalId` 与堆指针 `Box<LocalId>` 带有编译器特批的 `#[fundamental]` 基础包装标记，是个别允许直接视同本地类型看待的例外。）
+
+## 三、 一揽子实现的双生冲突（`E0119`）：自反重叠与上游演进保护
+
+除了跨包孤儿拦截，写一揽子实现时在**自己包内部**还常遇到另一类一致性错误 **`error[E0119]: conflicting implementations`**：
+
+1. **与标准库自反实现重叠**：假设你定义了业务错误 `MyError` 并为它实现了 `fmt::Display`。为了省事，你想写一行一揽子实现把所有可打印的类型一键转过来：
+   ```rust
+   impl<T: std::fmt::Display> From<T> for MyError { /* ... */ }
+   ```
+   编译器会报 `E0119` 并指出冲突源：`conflicting implementation in crate core: impl<T> From<T> for T`。原因很直接：因为 `MyError` 自己也满足 `: Display`，当泛型 `T` 代入 `MyError` 本身时，你的实现与标准库内置的「自己转自己」产生了两份重叠的 `From<MyError> for MyError`。
+2. **为上游库保留演进空间**：如果你先对本地契约写了泛化实现 `impl<T: fmt::Display> Summary for T`，接着又想给目前尚未实现 `Display` 的 `Vec<i32>` 单独写一份 `impl Summary for Vec<i32>`，编译器同样会报 `E0119`，并给出提示：`upstream crates may add a new impl of trait Display for type Vec<i32> in future versions`。编译器宁可在今天拦住你，也要保证上游库未来为已有类型补充 Trait 实现时属于安全的非破坏性更新。
+
+## 四、 工程破局方案：遇到孤儿规则限制怎么写？
+
+再看开头 `E0117` 报错最后一行官方给出的提示：`note: define and implement a trait or new type instead`。在真实工程中，我们按意图选择对应的标准解法：
+
+<small class="code-source">源文件：<code>examples/types/traits/src/bin/orphan-rule.rs</code>（节选：Newtype 包装与扩展契约模式）</small>
+<Code code={orphanRule} lang="rust" anchor="newtype_and_ext" />
+
+<small class="code-source">运行输出（<code>examples/types/traits/src/bin/orphan-rule.rs</code>）</small>
+```text
+uncovered generic impl: [42]
+newtype Display: [#1, #2, #3]
+extension trait: 10 -> 20 -> 30
+```
+
+| 工程诉求 | 标准解法 | 核心原理与适用边界 |
+| --- | --- | --- |
+| **需要让外部容器接入外部契约**<br/>（如让 `Vec<LocalId>` 支持 `{}` 打印或 `serde`） | **本地单字段元组结构体包装（Newtype）**<br/>`struct IdList(Vec<LocalId>);` | 外壳属于当前 `crate` 的全新类型，运行时与原 `Vec` 栈大小相同、零额外分配开销（完整架构用法见[Newtype 模式](/architecture/newtype-and-parse/)） |
+| **想给外部类型增加顺手的 `.` 调用方法**<br/>（如给所有切片 `&[i32]` 加 `.join_arrow()`） | **扩展契约模式（Extension Trait）**<br/>定义本地 `trait JoinArrowExt` 并对 `[i32]` 实现 | 契约归属当前 `crate`，符合孤儿规则；调用方只需 `use JoinArrowExt;` 即可在外部类型上直接点出新方法（社区常用库 `Itertools`、`AsyncReadExt` 均采用此模式） |
+| **想把多种底层错误转入自定义错误**<br/>（避免 `impl<T: Error> From<T>` 触发 `E0119`） | **按具体源错误枚举变体逐一实现 `From`** | 明确列出已知底层错误分支，避免与自反实现重叠（后续在[工业级错误处理架构](/architecture/error-architecture/)中可用派生宏消除手写样板） |
+
+<Aside type="note" title="多包工作空间（Workspace）预告：同一个仓库里的兄弟包也是外部 crate">
+当项目拆分为多个子包（例如 `core-domain` 定义领域类型，`http-api` 引入外部 Web 框架）时，即便两个子包住在同一个 Git 仓库里，在 `rustc` 眼里它们依然是两个独立的 `crate`——在 `http-api` 中直接为 `core-domain` 的类型实现外部框架 Trait 同样会触发 `E0117`。在[多包工作空间与 Features 条件编译](/architecture/cargo-and-features/)中，我们将看到如何通过在 `core-domain` 上配置可选特性开关，在不引入包装层的前提下打通跨包实现。
+</Aside>
+
+## 小结
+
+1. **一致性守护类型安全**：全局一致性不仅防止单态化符号重名，更防止同一类型在不同模块间出现冲突的 `Hash` / `Eq` / `Borrow` 等契约实现而破坏容器不变量。
+2. **孤儿规则与泛型裸露边界**：`impl` 中契约或未包裹的目标/参数类型至少有一方须归属当前 `crate`；把本地类型包在 `Vec<LocalId>` 内部仍视为外部类型（报 `E0117`），而裸露在 `From<LocalId>` 参数顶层则合法。
+3. **两条正道破局**：接入外部契约用零内存开销的本地元组结构体（Newtype）包一层；为外部类型扩充点号方法用扩展契约（Extension Trait，`...Ext`）。
+
+到这里，我们已经走完了从泛型单态化、Trait 约束、全套转换与借用契约到全局孤儿规则防线的完整体系。在结束本章之前，退后一步站在编程语言设计的顶层审视一个问题：**为什么在别的语言里需要做成编译器内置语法特性的能力，在 Rust 里全都变成了一个个普通的库级 Trait？编译器又是怎么在不硬编码标准库路径的前提下找到 `+` 号对应的 `Add` 的？**
+
+下一节，我们为本章做一个顶层架构收束。
+
+[继续：章末视野 · Rust 语言到底有多小？ →](/abstraction/kernel-and-library/)
+
+### 附：本节完整可运行实验源码
+
+<details>
+<summary>点击展开完整源码（<code>examples/types/traits/src/bin/orphan-rule.rs</code>）</summary>
+
+<Code
+  code={orphanRule}
+  lang="rust"
+  anchor="full"
+  title="examples/types/traits/src/bin/orphan-rule.rs"
+/>
+
+</details>

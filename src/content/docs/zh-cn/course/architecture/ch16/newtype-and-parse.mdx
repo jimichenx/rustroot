@@ -3,7 +3,7 @@ title: Newtype 模式与「解析而非校验」
 description: 对比类型别名 type 与零内存开销的 Newtype（单字段元组结构体），结合模块私有字段将业务校验锁定在构造入口，掌握防止参数混淆、落地 Parse don't validate 与跨越孤儿规则的三大工程用法。
 sidebar:
   label: Newtype 模式
-  order: 3
+  order: 1
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -74,7 +74,7 @@ error[E0308]: mismatched types
 - 在**编译期**，`UserId` 和 `u64` 是两个严格隔离的独立类型实体；
 - 在**运行期**，编译器生成机器码时会直接剥掉 `UserId` 这层外壳。`UserId(1001)` 在栈帧和 CPU 寄存器里的物理内存布局，与裸 `u64` 整数一模一样，严丝合缝地只占 **8 个字节**（`size_of::<UserId>() == 8`），没有任何额外包装头或指针开销。
 
-*(注：在未来第 18 章与 C 语言进行 FFI 跨语言交互时，还可以在 `Newtype` 头顶加上 `#[repr(transparent)]` 标注，向外部语言做出 ABI 层面的内存布局透明保证。)*
+*(注：在未来第 19 章与 C 语言进行 FFI 跨语言交互时，还可以在 `Newtype` 头顶加上 `#[repr(transparent)]` 标注，向外部语言做出 ABI 层面的内存布局透明保证。)*
 
 ---
 
@@ -113,7 +113,7 @@ error[E0308]: mismatched types
 
 除了「防参数混淆」和「锁定合法不变量」之外，`Newtype` 在 Rust 工程中还有第三个高频用途：**合法跨越孤儿规则（Orphan Rule）**。
 
-我们在第 7 章 `7.2` 节学过，为了防止两个互不相识的库对同一个类型实现同一个 Trait 造成冲突，Rust 编译器强制执行孤儿规则：**只有当「Trait」或「要实现该 Trait 的类型」至少有一方定义在当前 `crate` 内部时，才允许编写 `impl Trait for Type`**。
+我们在[孤儿规则与全局一致性](/abstraction/orphan-rule-and-coherence/)中学过，为了防止两个互不相识的库对同一个类型实现同一个 Trait 造成冲突，Rust 编译器强制执行孤儿规则：**只有当「Trait」或「未被外部类型包裹的目标/参数类型」至少有一方定义在当前 `crate` 内部时，才允许编写 `impl Trait for Type`**。
 
 因此，如果你想直接为标准库的 `Vec<String>` 实现标准库的 `fmt::Display` 以便直接用 `{}` 打印路由路径，编译器会报错拦住你（因为 `Display` 和 `Vec` 都属于外部标准库）。
 

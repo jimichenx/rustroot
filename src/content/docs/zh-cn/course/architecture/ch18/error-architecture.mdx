@@ -1,0 +1,132 @@
+---
+title: 工业级错误处理架构：Error 契约、thiserror 与 anyhow
+description: 理清标准库 std::error::Error 错误链契约与 Box<dyn Error> 动态擦除模型，从闭合枚举与开放分发的视角掌握领域层 thiserror 与应用层 anyhow 的协同准则。
+sidebar:
+  label: 错误架构：thiserror 与 anyhow
+  order: 2
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import errorArchSource from '../../../../../../../examples/architecture/observability/src/bin/error-architecture.rs?raw';
+
+在[错误即数据：`Result<T, E>` 与 `?` 短路传播](/types/result-and-try/)与[转换契约与一揽子实现](/abstraction/conversions-and-from/)中，我们已经打通了 Rust 错误处理的语言机制：用和类型 `Result<T, E>` 把失败写进签名，用 `impl From<SubError> for TopError` 配合 `?` 运算符向上归并错误。
+
+但当你真正编写一个包含上一节的 `serde_json::Error`、数据库驱动错误、外部网关超时与业务参数校验的中大型服务时，如果全靠纯手写标准库代码，很快会遇到两处工程摩擦：
+
+1. **样板代码膨胀**：每定义一个包含五六个变体的业务错误 `enum`，为了符合生态规范，都要手写几十行重复的 `fmt::Display` 格式化分支、`std::error::Error` 实现以及各个底层错误的 `From` 转换；
+2. **顶层组装冗余**：在 HTTP 路由入口或 CLI 的 `main` 函数里，调用方并不打算按具体错误变体写 `match` 分支恢复——无论是配置文件反序列化失败、SQL 超时还是网关断开，顶层做的事情都一样：**附加上当前正在处理哪个用户、哪笔订单的业务上下文，记录一条完整错误链并返回失败响应**。为了这种不需要分支匹配的顶层函数专门去维护一个大杂烩枚举，投入产出比很低。
+
+为了分别解决这两类工程诉求，Rust 社区形成了以标准库 **`std::error::Error`** 为共同基础协议、以 **`thiserror`** 与 **`anyhow`** 为左右手的分层错误处理架构。
+
+## 一、 先看清基础协议：标准库的 `std::error::Error` 与 `Box<dyn Error>`
+
+在引入第三方库之前，先看标准库（位于 `core::error::Error`）为全生态所有错误类型定下的公共契约：
+
+<small class="code-source">标准库源码结构示意（<code>core::error::Error</code>）</small>
+```rust
+pub trait Error: Debug + Display {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        None
+    }
+}
+```
+
+这份契约只规定了两件事：
+1. **双视角可读（`: Debug + Display`）**：任何合规的错误类型，必须同时支持面向开发者的调试输出 `{:?}`（`Debug`）和面向终端或日志摘要的自然语言描述 `{}`（`Display`）；
+2. **保留底层起因链（`fn source`）**：当高层错误包裹了一个底层错误（比如「订单扣款失败」是由底层的「TCP 连接超时」引起的）时，通过覆写 `.source()` 返回内层错误的动态引用 `&dyn Error`，顶层排障工具就能顺着链表把整串起因逐层打印出来。
+
+既然标准库里的 `io::Error`、`serde_json::Error` 乃至所有第三方库的错误都实现了 `Error` Trait，如果不关心具体是哪种错误，可以直接用[动态分发胖指针](/abstraction/dyn-trait-and-vtable/)把它们装进同一个盒子里。标准库内置了从任意具体错误 `E: Error` 转换到 **`Box<dyn Error>`**（多线程与异步下写作 `Box<dyn Error + Send + Sync>`）的 `From` 实现：
+
+```rust
+fn run_script() -> Result<(), Box<dyn std::error::Error>> {
+    let raw = std::fs::read_to_string("port.txt")?; // io::Error 自动装箱擦除
+    let _port: u16 = raw.trim().parse()?;           // ParseIntError 自动装箱擦除
+    Ok(())
+}
+```
+
+这行签名揭示了动态错误处理的物理模型：把大小各异的具体错误结构体搬到堆上，栈上统一返回 16 字节的虚表胖指针。但裸用 `Box<dyn Error>` 在大型生产服务里仍有三处短板：它默认不带 `Send + Sync`（进不了异步多线程任务）、不支持在 `?` 传播途中顺手挂载「读取哪个文件失败」的业务上下文字符串，也不便于自动捕获调用栈快照（Backtrace）。
+
+## 二、 架构分工：为什么需要 `thiserror` 和 `anyhow` 两个库？
+
+初学工程实战的开发者常问：「`thiserror` 和 `anyhow` 都是处理错误的，选哪一个装进项目？」
+
+答案是：**在绝大多数真实服务端项目里两个都会装，因为它们分别对应着我们在[多态选型](/abstraction/polymorphism-choice/)中确立的两类正交架构场景**。
+
+| 决策维度 | **`thiserror`**（面向库与核心领域模块） | **`anyhow`**（面向应用组装与顶层边界） |
+| --- | --- | --- |
+| **对应的多态模型** | **闭合集合：`enum`（代数数据类型）** | **开放集合：类型擦除容器**（精装版 `Box<dyn Error + Send + Sync>`） |
+| **调用方需要做什么？** | **需要编写代码 `match` 区分具体失败原因**（例如：余额不足引导降级，网关超时触发退避重试） | **不需要按变体分支恢复**，只需把任意底层错误统一归拢、附加业务现场上下文，最终上报日志或返回错误响应 |
+| **底层实现机制** | 派生过程宏 `#[derive(Error)]`，在编译期零额外运行时开销生成 `Display`、`Error::source` 与 `From` | 窄指针动态错误句柄 `anyhow::Error`，支持 `.context()` 串联多层原因链与捕获 `Backtrace` |
+
+可以用一句话定下分界线：**如果你关心调用方怎么用代码分支去处理这个错误，用 `thiserror` 造具体枚举；如果你只关心人类工程师在日志里怎么看懂这次失败，用 `anyhow` 擦除类型并挂上下文。**
+
+## 三、 领域内层实战：用 `thiserror` 消除枚举样板
+
+假设我们正在编写核心计费模块 `billing`。对于上游调用方而言，「可用余额不足」属于正常的业务规则拦截（可降级为待支付草稿单），而「支付网关 I/O 超时」则属于底层基础设施故障。由于上游必须区分这两种情况，我们用 `thiserror` 定义强类型枚举 `BillingError`：
+
+<small class="code-source">源文件：<code>examples/architecture/observability/src/bin/error-architecture.rs</code>（节选：领域模块用 thiserror 定义错误契约）</small>
+<Code code={errorArchSource} lang="rust" anchor="domain_thiserror" />
+
+结合我们在[过程宏祛魅](/architecture/procedural-macros/)中学过的派生宏规则，`#[derive(Debug, Error)]` 不会改动 `BillingError` 枚举自身的内存布局，只会在下方自动追加标准库契约实现：
+
+1. **`#[error("...")]` 自动生成 `fmt::Display`**：支持直接引用结构体变体字段（如 `{balance}`）或元组变体下标（如 `{0}`），省去手写格式化分支；
+2. **`#[from]` 同时生成 `From` 与 `Error::source`**：在 `GatewayIo(#[from] io::Error)` 上标 `#[from]`，宏不仅生成 `impl From<io::Error> for BillingError` 打通 `?` 转换，还会将该字段注册为 `Error::source(&self)` 的底层起因。（若有两个变体包装同一种 `io::Error`，不能同时标 `#[from]`，此时改标 **`#[source]`** 保留起因链并手写构造即可。）
+
+注意一个关键事实：`thiserror` 只在编译期生成标准库 `std::error::Error` 的实现代码，**不会出现在公开类型签名里**——外部调用方看到的就是一个普通 Rust `enum`，不感知你内部用了 `thiserror`。
+
+## 四、 应用顶层实战：用 `anyhow` 汇聚错误并挂载业务上下文
+
+来到外层的业务编排层（如接口控制器 `handle_checkout`）。我们需要先拦住未登录的匿名请求，再调用 `billing::charge`：遇到可恢复的 `InsufficientFunds` 走业务降级；遇到网关故障，就挂上「哪个用户、哪笔订单扣款失败」的现场信息向上汇报：
+
+<small class="code-source">源文件：<code>examples/architecture/observability/src/bin/error-architecture.rs</code>（节选：应用层用 anyhow 擦除类型并附加业务上下文）</small>
+<Code code={errorArchSource} lang="rust" anchor="app_anyhow" />
+
+在这段代码中，掌握 `anyhow` 日常出镜率最高的三项工具：
+
+1. **返回类型简写 `anyhow::Result<T>`**：等价于 `std::result::Result<T, anyhow::Error>`。任何实现了 `std::error::Error + Send + Sync + 'static` 的错误（包括 `BillingError` 与上一节的 `serde_json::Error`），都能直接通过 `?` 转入 `anyhow::Error`；
+2. **附加业务现场线索：`.context(...)` 与 `.with_context(|| ...)`**：
+   导入 `anyhow::Context` Trait 后，静态固定文案用 `.context("读取网关证书失败")?`；需要动态拼接变量（如 `format!("... user #{user_id}")`）时，**务必使用接收闭包的 `.with_context(|| format!(...))?`**——正常成功路径下闭包不会执行，避免无谓的 `String` 堆内存分配；
+3. **受检早退宏 `ensure!` 与 `bail!`**：
+   `ensure!(条件, "错误说明")` 等价于条件不满足时当场构造错误并 `return Err`；`bail!("错误说明")` 则无条件构造错误并提前返回。
+
+运行实验代码，核对顶层捕获错误后遍历 `.chain()` 打印出的三层因果链：
+
+<small class="code-source">运行输出（<code>examples/architecture/observability/src/bin/error-architecture.rs</code>）</small>
+```text
+order #1001 downgraded to unpaid draft (500 < 800)
+top error: checkout failed for user #42, order #1002
+  cause[0]: checkout failed for user #42, order #1002
+  cause[1]: payment gateway I/O failure
+  cause[2]: tcp connect timeout
+```
+
+从最外层的业务动作（用户 #42 的订单 #1002 下单失败），到中间层的模块归属（支付网关 I/O 故障），再到最底层的系统报错（TCP 连接超时），整条故障证据链逐层保留。（若线上需要查看底层错误发生点的函数调用栈帧，启动服务时设置环境变量 `RUST_BACKTRACE=1` 即可自动捕获。）
+
+<Aside type="caution" title="Code Review 红线：不要在公共库的公开签名里暴露 anyhow::Error">
+如果在底层通用库或核心领域模块的公开函数上全写 `-> anyhow::Result<T>`，一旦上游调用方需要针对「唯一键冲突」或「余额不足」做分支恢复，就会因为具体枚举类型已被擦除而难以处理（只能退回脆弱的运行时向下转型 `.downcast_ref::<BillingError>()`）。保持「内层模块对外用 `thiserror` 立契约，顶层应用入口用 `anyhow` 收口并补上下文」，模块职责才会清晰。
+</Aside>
+
+## 小结
+
+1. **统一基础协议**：标准库 `std::error::Error` 用 `Display + Debug + source()` 定下了跨库互通的错误链契约；
+2. **领域与库层用 `thiserror`**：通过派生宏生成强类型错误 `enum`，把可恢复的失败分支写进编译期签名供上游 `match`；
+3. **应用组装层用 `anyhow`**：通过 `anyhow::Result<T>` 接纳异构错误，在 `?` 传播沿途用惰性的 `.with_context(|| ...)` 挂载业务参数，保留完整因果链。
+
+当携带了多层因果链的 `anyhow::Error` 一路向上抵达接口边界时，该如何记录下来？在高并发异步服务里，又该如何把同一个请求途经的所有日志串联起来？下一节，我们进入 **`tracing` 结构化日志与异步追踪**。
+
+[继续：从 `Log4j` 到 `tracing` · 结构化日志与异步追踪 →](/architecture/logging-and-tracing/)
+
+### 附：本节完整可运行实验源码
+
+<details>
+<summary>点击展开完整源码（<code>examples/architecture/observability/src/bin/error-architecture.rs</code>）</summary>
+
+<Code
+  code={errorArchSource}
+  lang="rust"
+  anchor="full"
+  title="examples/architecture/observability/src/bin/error-architecture.rs"
+/>
+
+</details>

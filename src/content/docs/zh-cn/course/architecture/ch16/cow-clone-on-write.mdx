@@ -3,7 +3,7 @@ title: 写时复制智能指针 Cow<'a, B>
 description: 拆解标准库枚举智能指针 Cow<'a, B> 的 Borrowed / Owned 双变体结构与 Deref 机制，在读多写少场景中消灭防御性克隆，掌握返回端延迟分配与 to_mut 按需克隆。
 sidebar:
   label: 写时复制 Cow<'a, B>
-  order: 6
+  order: 4
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -39,7 +39,7 @@ pub enum Cow<'a, B: ?Sized + ToOwned> {
 }
 ```
 
-*(注：签名里的 `?Sized` 我们在第 8 章学过，是为了允许 `B` 填入编译期大小不固定的切片类型 `str` 或 `[T]`；而[第 7 章学过的 `ToOwned`](/abstraction/ecosystem-traits/) 负责把借用切片映射到对应的堆拥有者类型——`str` 的 `Owned` 关联类型是 `String`，`[u8]` 的 `Owned` 关联类型是 `Vec<u8>`。日常工程中最常写的两种形态就是 **`Cow<'a, str>`** 与 **`Cow<'a, [u8]>`**。)*
+*(注：签名里的 `?Sized` 我们在[动态分发与 `dyn Trait`](/abstraction/dyn-trait-and-vtable/)学过，是为了允许 `B` 填入编译期大小不固定的切片类型 `str` 或 `[T]`；而[受检转换、切片升级与默认契约](/abstraction/ecosystem-traits/)中的 `ToOwned` 负责把借用切片映射到对应的堆拥有者类型——`str` 的 `Owned` 关联类型是 `String`，`[u8]` 的 `Owned` 关联类型是 `Vec<u8>`。日常工程中最常写的两种形态就是 **`Cow<'a, str>`** 与 **`Cow<'a, [u8]>`**。)*
 
 看懂了这个 `enum` 结构，刚才那个「99% 原样返回、1% 替换字符」的两难困境当场迎刃而解：
 - 遇到 99% 不含 `\t` 的干净字符串，直接包进 **`Cow::Borrowed(raw)`** 返回——栈上只拷了一个胖指针，**零堆内存分配**；

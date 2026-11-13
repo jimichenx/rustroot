@@ -1,5 +1,3 @@
-//! Lesson 17.2: Structured observability with `tracing`, async `Span` propagation, and single-boundary error logging.
-
 // ANCHOR: full
 use anyhow::{Context, Result};
 use tracing::{error, info, warn};

@@ -1,0 +1,157 @@
+---
+title: "借用视图与只读 API 设计：AsRef、AsMut 与 Borrow"
+description: 针对只读接口消除无谓堆分配，掌握用 AsRef 兼容单参与切片多载体输入、规避按值传参的静默移动、用泛型薄壳消除单态化膨胀，并辨析 Borrow 如何保障 HashMap 查询的语义等价。
+sidebar:
+  label: 借用视图与只读 API
+  order: 5
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import asrefAndBorrow from '../../../../../../../examples/types/traits/src/bin/asref-and-borrow.rs?raw';
+
+在上一节中，我们用 `<T: Into<Endpoint>>` 让一个函数同时接纳了多种输入类型。但 `Into` 的前提是**函数确实需要拿走所有权或构造出新对象**。
+
+现在把场景切到日常更高频的**只读操作**：假设我们要写一个检查配置文件扩展名是否为 `.toml` 的函数 `has_toml_ext`。调用方手里拿的可能是字符串字面量 `"Cargo.toml"`（`&str`）、堆字符串 `String`、路径切片 `&Path`，或是动态拼接出来的路径缓冲区 `PathBuf`：
+
+- 如果照搬上一节写成 `fn has_toml_ext<S: Into<PathBuf>>(path: S) -> bool`，每次传入字面量 `"Cargo.toml"` 时，都会被迫在堆上新申请一块内存去构造 `PathBuf`；
+- 如果退回去写成固定引用 `fn has_toml_ext(path: &Path) -> bool`，虽然没有堆分配，但 `"Cargo.toml"` 的类型是 `&str` 而非 `&Path`，调用方每次传参都得手写一层 `has_toml_ext(Path::new("Cargo.toml"))`。
+
+既要像重载一样直接兼容多种参数载体，又要守住**零堆内存分配、不夺走原变量所有权**的底线——标准库为此专门定义了借用视图契约 **`AsRef<T>`** 与它的孪生契约 **`Borrow<T>`**。
+
+## 一、 零分配借用视图：`AsRef<T>` 与多载体参数兼容
+
+打开标准库 `core::convert::AsRef`（可变借用对应 **`AsMut<T>`**），定义只有三行：
+
+<small class="code-source">标准库源码结构示意（<code>core::convert::AsRef</code>）</small>
+```rust
+pub trait AsRef<T: ?Sized> {
+    fn as_ref(&self) -> &T;
+}
+```
+
+签名里的两处设计与上一节的 `Into<U>` 形成鲜明对照：
+1. **输入 `&self`，输出 `&T`**：函数只从原对象身上提取一层只读引用视图（8 字节瘦指针或 16 字节胖指针），不发生堆内存分配；
+2. **`T: ?Sized` 放宽固定大小约束**：允许目标视图 `T` 直接填入 `str`、`[u8]` 或文件系统路径 `Path` 等编译期大小未知的动态大小切片类型。
+
+在标准库中，`str`、`String`、`Path`、`PathBuf` 都预先实现了 `AsRef<Path>`（底层路径本身就是一段字节序列，转换时只需直接把字节地址和长度重解释为 `&Path` 胖指针）。这也是标准库文件打开函数 `std::fs::File::open<P: AsRef<Path>>(path: P)` 能同时直接接收 `"Cargo.toml"` 与 `&PathBuf` 的原因。
+
+### 进阶场景：用 `&[S]` 同时兼容 `&[&str]` 与 `&Vec<String>`
+
+除了单个参数兼容，`AsRef` 在设计**接收一组字符串或路径的批处理 API** 时尤为关键。
+
+假设你要写一个把多个主机名用逗号拼接起来的 `join_hosts` 函数。如果把签名写死成 `fn join_hosts(hosts: &[&str]) -> String`，当调用方手里有一个从配置文件解析出来的 `Vec<String>` 时，根本无法直接传进来——因为 `Vec<String>` 在堆上连续排列的是一个个 24 字节的 `(ptr, len, cap)` 控制头，物理内存布局与连续排列的 16 字节 `&str` 胖指针并不兼容，调用方只能被迫先分配一个临时 `Vec<&str>` 把引用收集一遍。
+
+只要将元素类型泛化为 `S: AsRef<str>`，写下 `hosts: &[S]`，这一处物理隔阂即可原地化解：
+- 当调用方传入字面量切片 `&["db-primary", "db-replica"]` 时，`S` 单态化为 `&str`；
+- 当调用方传入动态数组引用 `&vec![String::from("cache-01")]` 时，`S` 单态化为 `String`；
+- 函数内部统一调用 `host.as_ref()` 提取 `&str`，全程无需构造任何中间过渡容器。
+
+## 二、 用好 `AsRef` 的三条 API 设计防线
+
+`AsRef` 用起来顺手，但在真实工程与代码审查中，围绕它有三条必须把准的边界：
+
+### 1. 警惕不加 `&` 传参引发的「静默移动」
+
+观察 `pub fn has_toml_ext<P: AsRef<Path>>(path: P)` 的签名：形参 `path` 写的是按值接收的 `P`，而不是 `&P`。为什么后面我们传入借用 `&owned_path`（类型为 `&PathBuf`）时也能编译通过？
+
+因为标准库内置了一条桥接一揽子实现：
+
+<small class="code-source">标准库源码结构示意：引用类型的桥接实现</small>
+```rust
+impl<T: ?Sized, U: ?Sized> AsRef<U> for &T
+where
+    T: AsRef<U>,
+{
+    fn as_ref(&self) -> &U {
+        <T as AsRef<U>>::as_ref(*self)
+    }
+}
+```
+
+只要 `PathBuf` 实现了 `AsRef<Path>`，`&PathBuf` 就会自动获得 `AsRef<Path>`。但这也埋下了一个初学者常踩的陷阱：
+- 如果调用方写 **`has_toml_ext(&owned_path)`**，泛型 `P` 推导为 `&PathBuf`（只读引用实现 `Copy`），调用结束后 `owned_path` 完好无损；
+- 如果调用方漏写了 `&`，直接写 **`has_toml_ext(owned_path)`**，泛型 `P` 就会推导为拥有所有权的 `PathBuf`——**尽管函数内部仅仅调用了一次只读的 `path.as_ref()`，`owned_path` 的所有权依然被按值移进了函数栈帧，并在函数返回那一刻当场释放**，后续再访问 `owned_path` 就会触发 `error[E0382]`。
+
+因此，向 `<P: AsRef<...>>` 函数传递后续仍需使用的 `String` 或 `PathBuf` 变量时，务必养成传引用 `&val` 的习惯。
+
+### 2. 用「泛型薄壳 + 非泛型内层」消除单态化代码膨胀
+
+回想[泛型与单态化](/abstraction/generics-and-monomorphization/)的机器码生成规则：如果 `has_toml_ext<P: AsRef<Path>>` 内部包含 80 行文件解析逻辑，而项目各处分别用 `&str`、`String`、`&Path`、`PathBuf` 四种实参调用了它，编译器就会把这 80 行完全相同的逻辑复制四份编译进二进制文件，拖慢编译速度并增大产物体积。
+
+翻开标准库 `std::fs::File::open` 的真实源码，官方采用了一种固定惯用法——**外层泛型薄壳 + 内层私有非泛型函数**：
+
+<small class="code-source">源文件：<code>examples/types/traits/src/bin/asref-and-borrow.rs</code>（节选：薄壳去膨胀与切片元素兼容）</small>
+<Code code={asrefAndBorrow} lang="rust" anchor="path_and_slice" />
+
+外层公开的 `has_toml_ext<P: AsRef<Path>>` 只有一行 `has_toml_ext_inner(path.as_ref())`，在编译优化时直接内联消失；真正的业务代码全部集中在参数类型唯一固定的 `has_toml_ext_inner(path: &Path)` 中，整个程序里永远只编译唯一一份机器码。
+
+### 3. 克制边界：不要把所有 `&str` 参数都盲目改成 `AsRef<str>`
+
+既然 `AsRef` 这么灵活，是不是以后写任何接收单个字符串的函数，都该把 `fn parse(s: &str)` 改写成 `fn parse<S: AsRef<str>>(s: S)`？
+
+**不要这样做。** 如果函数只需要单个字符串切片 `&str` 或字节切片 `&[u8]`，按照我们在[字符串](/types/strings/)立下的准则，直接写 `fn parse(s: &str)` 就够了——调用方传 `"abc"` 或 `&my_string` 时，编译器本身就能零成本把 `&String` 自动转换为 `&str`（其底层的智能指针脱壳规则将在[Deref Coercion 与接口设计边界](/pointers/deref-coercion/)完整拆解）。只有在以下两类场景中，`AsRef<T>` 才是不可替代的正解：
+- **源类型与目标视图之间没有智能指针包含关系**（如 `String` / `&str` 转 `&Path`，或自定义包装结构体对外暴露内部 `&str` 视图）；
+- **容器或切片内部的元素需要多载体兼容**（如上面的 `hosts: &[S]`）。
+
+## 三、 孪生辨析：有了 `AsRef<T>`，为什么还需要签名相同的 `Borrow<T>`？
+
+打开标准库 `core::borrow::Borrow`（可变对应 `BorrowMut`），你会看到一个签名与 `AsRef` 如出一辙的契约：
+
+<small class="code-source">标准库源码结构示意（<code>core::borrow::Borrow</code>）</small>
+```rust
+pub trait Borrow<Borrowed: ?Sized> {
+    fn borrow(&self) -> &Borrowed;
+}
+```
+
+同样是从 `&self` 零分配借出 `&Borrowed`，标准库为什么要重复定义两套名字？因为它们向调用方承诺的**语义约束**与**一揽子实现覆盖面**截然不同：
+
+| 对比维度 | `AsRef<T>`（纯物理视图转换） | `Borrow<T>`（语义等价的数据借用） |
+| --- | --- | --- |
+| **等价性与哈希承诺** | **无额外承诺**：只要能零成本取出某个视图即可（例如 `String` 同时实现了 `AsRef<str>`、`AsRef<[u8]>` 与 `AsRef<Path>`） | **严格等价铁律**：借出的 `&T` 计算出的 **`Hash`、`Eq`、`Ord` 必须与原类型一致** |
+| **自反一揽子实现** | **无 `impl<T> AsRef<T> for T`**（但为引用提供了桥接实现） | **内置 `impl<T: ?Sized> Borrow<T> for T`**（任何类型都能借用为自身） |
+| **典型工程定位** | 文件路径、字节片等多载体输入参数（`File::open`） | 关联容器的跨类型键值查找（`HashMap::get`、`BTreeMap::get`）与后续的 `ToOwned` |
+
+这正是我们在[键值容器 `HashMap<K, V>`](/types/hashmaps/)里留下的伏笔：为什么哈希表的键类型明明是 `String`，查询时却能直接写 `ports.get("gateway")` 传入 `&str` 而不必在堆上构造 `String`？
+
+如果 `HashMap::get` 当初用 `AsRef` 做约束，一旦某个自定义键类型的字节视图与自身的 `Hash` 算法不一致，拿着切片去查哈希表就会算错槽位、查不到原本存在的数据。而改用 `K: Borrow<Q>` 约束后，编译器既允许直接传原键引用 `&String`（走自反实现 `String: Borrow<String>`），又允许传字面量 `"gateway"`（走 `String: Borrow<str>`，且保证哈希值与 `String` 一致）：
+
+<small class="code-source">源文件：<code>examples/types/traits/src/bin/asref-and-borrow.rs</code>（节选：用 Borrow 实现零分配等价键查询）</small>
+<Code code={asrefAndBorrow} lang="rust" anchor="borrow_lookup" />
+
+运行主程序，核对引用传参保活、双载体切片拼接以及 `Borrow` 键值匹配的结果：
+
+<small class="code-source">运行输出（<code>examples/types/traits/src/bin/asref-and-borrow.rs</code>）</small>
+```text
+toml? literal=true, borrowed=true
+owned_path still valid: config/service.toml
+static  = db-primary, db-replica
+dynamic = cache-01, cache-02
+borrow lookup: entry=Some(8443), map=Some(8443)
+```
+
+## 小结
+
+1. **`Into` 与 `AsRef` 按所有权需求分工**：函数需持有所有权或组装新值时用 `<T: Into<Target>>`；函数只需只读借用跨载体视图（如 `&Path` 或 `&[S]` 切片元素）时用 `<P: AsRef<Target>>`，做到零堆内存分配。
+2. **`AsRef` 接口三原则**：调用后仍需使用的拥有者变量传参要加 `&` 以免按值移动失效；多行函数体采用「1 行泛型薄壳 + 私有非泛型内层」避免单态化膨胀；普通单字符串参数直接写 `&str`。
+3. **`Borrow` 守护容器查找不变量**：`Borrow<T>` 在 `&self -> &T` 之上额外要求借用视图与原类型的 `Hash`、`Eq`、`Ord` 结果一致且自带自反实现，支撑 `HashMap` 等容器的零分配跨类型查询。
+
+看清了如何通过 `AsRef` 与 `Borrow` 从拥有者零成本借出切片视图后，反方向的问题紧随而至：**当我们手里只有一个编译期大小未知的借用切片（如 `&str` 或 `&[u8]`），需要反向申请堆内存升级成拥有者类型时，为什么 `Clone` 无能为力？如果按值转换遇到非法输入可能失败，又该如何安全建模？**
+
+下一节，我们补齐这套标准库契约版图的剩余拼图，并建立统一的方法前缀成本审查准则。
+
+[继续：受检转换、切片升级与默认契约 →](/abstraction/ecosystem-traits/)
+
+### 附：本节完整可运行实验源码
+
+<details>
+<summary>点击展开完整源码（<code>examples/types/traits/src/bin/asref-and-borrow.rs</code>）</summary>
+
+<Code
+  code={asrefAndBorrow}
+  lang="rust"
+  anchor="full"
+  title="examples/types/traits/src/bin/asref-and-borrow.rs"
+/>
+
+</details>

@@ -43,7 +43,7 @@ pub fn my_proc_macro(input: TokenStream) -> TokenStream {
 
 ### 为什么过程宏必须单独建一个 `proc-macro` crate？
 
-回想我们在上一章[编译单元 crate 与模块封装边界](/architecture/crates-and-modules/)建立的规则：`crate` 是 `rustc` 一次编译的最小原子单元。
+回想我们在第 15 章[编译单元 crate 与模块封装边界](/architecture/crates-and-modules/)与[多包工作空间](/architecture/cargo-and-features/)建立的规则：`crate` 是 `rustc` 一次编译的最小原子单元。
 
 假设你正在编写业务包 `my_app`，如果允许你在 `my_app/src/main.rs` 里当场定义一个过程宏函数，并在下一行直接调用它，就会发生死循环悖论：
 - 要想完成 `my_app` 的语法解析和编译，编译器必须**先在当前开发机上运行**那个过程宏函数拿到展开代码；
@@ -110,7 +110,7 @@ fn main() {
 
 #### 2. 拆开第 15 章的 `#[test]`
 
-同样，你在上一章[测试体系](/architecture/testing-system/)里写的 `#[test] fn parses_valid_email() { ... }`，也是编译器内置的属性机制：在常规 `cargo build` 时直接剔除，而在 `cargo test` 模式下，将其包装并自动生成一段测试描述符（记录测试函数名、路径、是否预期 `should_panic` 以及函数指针），统一注册进测试运行器的全局列表里。
+同样，你在第 15 章[测试体系](/architecture/testing-system/)里写的 `#[test] fn parses_valid_email() { ... }`，也是编译器内置的属性机制：在常规 `cargo build` 时直接剔除，而在 `cargo test` 模式下，将其包装并自动生成一段测试描述符（记录测试函数名、路径、是否预期 `should_panic` 以及函数指针），统一注册进测试运行器的全局列表里。
 
 我们在实验源码的后半部分用最小化的 `mini_block_on` 还原了属性宏将异步函数体包裹进同步入口的完整过程：
 
@@ -142,7 +142,7 @@ fn main() {
 
 ## 小结
 
-把声明宏与三类过程宏放在一起，前十五章遇到过的所有编译期魔法都已经彻底透明了：
+把声明宏与三类过程宏放在一起，前十六章遇到过的所有编译期魔法都已经彻底透明了：
 
 1. **过程宏的物理本质**：运行在 `rustc` 编译期里的普通 Rust 函数（`TokenStream -> TokenStream`）；因为必须先编译成开发机可执行插件才能展开下游代码，所以必须放在独立的 `proc-macro = true` 编译单元中。
 2. **三类过程宏的权限刻度**：

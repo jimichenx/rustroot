@@ -1,64 +1,65 @@
-//! Lesson 7.5: Ecosystem convention traits matrix and `as_` / `to_` / `into_` cost rules.
-
 // ANCHOR: full
-// ANCHOR: port_traits
+use std::mem;
+
+// ANCHOR: port_contracts
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Port(u16);
 
-// 1. Explicit zero-arg default value (`Default`)
+// Hand-written `Default` preserves the `1..=65535` invariant (`#[derive(Default)]` would yield illegal `Port(0)`).
 impl Default for Port {
     fn default() -> Self {
         Port(8080)
     }
 }
 
-// 2. Infallible consuming conversion (`From` unlocks `Into`)
-impl From<u16> for Port {
-    fn from(raw: u16) -> Self {
-        Port(raw)
-    }
-}
-
-// 3. Fallible consuming conversion (`TryFrom` uses associated type `Error`)
 impl TryFrom<u32> for Port {
     type Error = &'static str;
 
-    fn try_from(value: u32) -> Result<Self, Self::Error> {
-        if value == 0 || value > 65535 {
-            Err("port out of 1..=65535 range")
+    fn try_from(raw: u32) -> Result<Self, Self::Error> {
+        if (1..=65535).contains(&raw) {
+            Ok(Port(raw as u16))
         } else {
-            Ok(Port(value as u16))
+            Err("port out of 1..=65535 range")
         }
     }
 }
-// ANCHOR_END: port_traits
 
-// ANCHOR: as_ref_and_owned
-// 4. Zero-allocation borrowed view (`AsRef<str>`)
-fn format_endpoint<S: AsRef<str>>(host: S, port: Port) -> String {
-    // 5. Borrowed unsized `str` upgrades to heap-owned `String` via `ToOwned`
-    let mut owned_host: String = host.as_ref().to_owned();
-    owned_host.push_str(&format!(":{}", port.0));
-    owned_host
+impl From<Port> for u16 {
+    fn from(port: Port) -> Self {
+        port.0
+    }
 }
-// ANCHOR_END: as_ref_and_owned
+// ANCHOR_END: port_contracts
+
+// ANCHOR: to_owned_and_take
+fn build_authority(host: &str, port: Option<Port>) -> String {
+    let resolved = port.unwrap_or_default();
+    // `str` is unsized (`!Sized`), so `ToOwned` upgrades `&str` into heap-owned `String`
+    let mut authority: String = host.to_owned();
+    authority.push_str(&format!(":{}", u16::from(resolved)));
+    authority
+}
+
+fn flush_buffer(buf: &mut String) -> Vec<u8> {
+    // `mem::take` swaps in `String::default()` (zero heap alloc) and extracts ownership
+    let taken: String = mem::take(buf);
+    taken.into_bytes()
+}
+// ANCHOR_END: to_owned_and_take
 
 fn main() {
-    let fallback: Option<Port> = None;
-    let default_ep = format_endpoint("localhost", fallback.unwrap_or_default());
-    let prod_ep = format_endpoint(String::from("10.0.0.8"), 443u16.into());
-    println!("{default_ep} | {prod_ep}");
-
+    println!("default = {}", build_authority("localhost", None));
     println!(
-        "valid = {:?}, invalid = {:?}",
-        Port::try_from(9000u32).map(|p| p.0),
-        Port::try_from(70000u32).map(|p| p.0),
+        "try_from: ok={:?}, err={:?}",
+        Port::try_from(9000),
+        Port::try_from(0),
     );
 
-    // `as_` (zero-alloc borrow) vs `into_` (ownership transfer, zero heap copy)
-    let token = String::from("ok");
-    let borrowed_bytes: &[u8] = token.as_bytes();
-    println!("borrowed len = {}", borrowed_bytes.len());
-    let owned_bytes: Vec<u8> = token.into_bytes();
-    println!("reused heap buffer = {owned_bytes:?}");
+    let mut pending = String::from("PING");
+    let peek_slice: &[u8] = pending.as_bytes();
+    println!("as_bytes len = {}", peek_slice.len());
+
+    let wire_bytes: Vec<u8> = flush_buffer(&mut pending);
+    println!("into_bytes = {:?}, after take len = {}", wire_bytes, pending.len());
 }
 // ANCHOR_END: full
