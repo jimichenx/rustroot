@@ -1,7 +1,7 @@
 ---
 /**
  * 3.4「长度 N 存在哪里」。
- * 左边 [i32; 4]：N 记在编译期类型实体里，运行时栈上只有连续 4 个 i32，共 16 字节。
+ * 左边 [i32; 4]：N 记在编译期类型信息里，运行时栈上只有连续 4 个 i32，共 16 字节。
  * 右边 Java int[]：栈上是引用，堆对象带对象头和运行时 length，元素另占 16 字节。
  * 样式见 src/styles/diagrams.css。
  */
@@ -13,7 +13,7 @@ const t = en
 			caption:
 				'The length of [i32; 4] is stored in the compile-time type and erased at runtime, so the stack value is exactly 16 bytes. A Java int[] keeps a reference on the stack; the heap array also carries an object header and a runtime length.',
 			title: 'The length lives in the type, not in the runtime bytes',
-			desc: 'On the left, Rust variable a has type [i32; 4]. The compile-time type entity records N = 4 and that fact is erased at runtime, taking 0 bytes. The stack frame holds four contiguous i32 slots, [0] 10, [1] 20, [2] 30, and [3] 40, totaling 16 bytes, with no heap allocation, no pointer, and no runtime length. Where a Java array would store metadata, the picture says there is no object header and no runtime length. On the right, Java int[] a = new int[4] keeps reference a on the stack. An arrow points at the array object on the heap. Inside it, a dashed object header of 12 bytes and a dashed runtime length field of 4 bytes sit above the same four ints, 10, 20, 30, and 40, which occupy 16 bytes.',
+			desc: 'On the left, Rust variable a has type [i32; 4]. Its compile-time type records N = 4 and that fact is erased at runtime, taking 0 bytes. The stack frame holds four contiguous i32 slots, [0] 10, [1] 20, [2] 30, and [3] 40, totaling 16 bytes, with no heap allocation, no pointer, and no runtime length. Where a Java array would store metadata, the picture says there is no object header and no runtime length. On the right, Java int[] a = new int[4] keeps reference a on the stack. An arrow points at the array object on the heap. Inside it, a dashed object header of 12 bytes and a dashed runtime length field of 4 bytes sit above the same four ints, 10, 20, 30, and 40, which occupy 16 bytes.',
 			rust: 'Rust',
 			java: 'Java',
 			rustCode: 'let a: [i32; 4]',
@@ -38,14 +38,14 @@ const t = en
 		}
 	: {
 			caption:
-				'[i32; 4] 的长度记在编译期类型实体里，栈上只有连续 16 字节；Java 的 int[] 在栈上是引用，堆对象还带着对象头和运行时 length。',
-			title: '长度在类型实体里，不在运行时字节里',
-			desc: '左边是 Rust 的变量 a，类型为 [i32; 4]。编译期类型实体记下 N = 4，运行时抹掉，不占内存。栈帧里是连续四个 i32 槽位：[0] 为 10，[1] 为 20，[2] 为 30，[3] 为 40，一共 16 字节；没有堆分配，没有指针，也没有运行时 length。Java 数组用来放对象头和 length 的位置，这里标明无对象头、无运行时 length，各为 0 字节。右边是 Java 的 int[] a = new int[4]。栈上的 a 是引用，箭头指向堆上的数组对象。对象内部用虚线画出 12 字节的对象头和 4 字节的运行时 length，下面是同样的四个 int：10、20、30、40，共 16 字节。',
+				'[i32; 4] 的长度记在编译期类型里，栈上只有连续 16 字节；Java 的 int[] 在栈上是引用，堆对象还带着对象头和运行时 length。',
+			title: '长度在类型里，不在运行时字节里',
+			desc: '左边是 Rust 的变量 a，类型为 [i32; 4]。编译期类型记下 N = 4，运行时抹掉，不占内存。栈帧里是连续四个 i32 槽位：[0] 为 10，[1] 为 20，[2] 为 30，[3] 为 40，一共 16 字节；没有堆分配，没有指针，也没有运行时 length。Java 数组用来放对象头和 length 的位置，这里标明无对象头、无运行时 length，各为 0 字节。右边是 Java 的 int[] a = new int[4]。栈上的 a 是引用，箭头指向堆上的数组对象。对象内部用虚线画出 12 字节的对象头和 4 字节的运行时 length，下面是同样的四个 int：10、20、30、40，共 16 字节。',
 			rust: 'Rust',
 			java: 'Java',
 			rustCode: 'let a: [i32; 4]',
 			javaCode: 'int[] a = new int[4]',
-			typeHead: '编译期类型实体',
+			typeHead: '编译期类型信息',
 			typeName: '[i32; 4]',
 			typeN: 'N = 4',
 			typeNote: '编译期记录，运行时抹掉',

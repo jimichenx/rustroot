@@ -2,6 +2,11 @@
 title: 变量与赋值
 description: 把第一章推导出的所有权与借用模型落到真实 Rust 代码中，顺着释放责任拆解变量声明、重新赋值与同名遮蔽。
 id: variables
+draft: true
+sidebar:
+  badge:
+    text: 草稿
+    variant: caution
 ---
 
 在其他编程语言里，变量声明和赋值几乎不需要专门花篇幅讲解：声明一个变量，用 `=` 放进一个值，后面随时读取或替换。但在学 Rust 时，许多人刚写下前几行 `let` 和 `=`，就会连续遇到「变量失效」「`Copy` 与 `Move`」「不加 `mut` 连方法都不让调」等编译报错。

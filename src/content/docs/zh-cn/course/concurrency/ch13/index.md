@@ -2,6 +2,11 @@
 title: 多线程与并发
 description: 从零认识操作系统线程与独立调用栈模型，对比传统语言的并发数据竞争风险，循序渐进掌握线程创建与作用域线程 thread::scope、原子引用计数 Arc<T>、消息通道 Channel、互斥锁 Mutex<T> 以及编译期并发安全标记 Send 与 Sync。
 id: threads-and-concurrency
+draft: true
+sidebar:
+  badge:
+    text: 草稿
+    variant: caution
 ---
 
 在上一章（第 12 章）里，我们通过 `Rc<T>`、`Cell<T>` 和 `RefCell<T>` 解决了**单个线程内部**的多方共享与内部修改问题。在那间单线程的温室里，CPU 永远按顺序一条接一条地执行指令，绝不会出现「两个人同一纳秒同时往同一个内存地址写数据」的情况。

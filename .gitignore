@@ -5,6 +5,8 @@ dist/
 .astro-en/
 .astro-zh-release/
 .astro-en-release/
+.astro-zh-preview/
+.astro-en-preview/
 
 # dependencies
 node_modules/

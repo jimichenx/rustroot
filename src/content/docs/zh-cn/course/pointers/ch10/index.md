@@ -2,6 +2,11 @@
 title: 智能指针：Box<T>、Deref 与 Drop
 description: 从广义指针三大家族（引用、智能指针与裸指针）出发，看清单一所有权堆智能指针 Box<T> 的内存表示与三大工程使命，并拆解支撑所有智能指针的两大底层系统契约——控制解引用与自动脱壳的 Deref Trait，以及控制确定性资源释放的 Drop Trait。
 id: box-deref-and-drop
+draft: true
+sidebar:
+  badge:
+    text: 草稿
+    variant: caution
 ---
 
 在前面的章节里，我们已经反复与两类保存内存地址的类型打过交道：一类是 `&T` 与 `&mut T` 这样的**引用（Reference）**；另一类是 `Vec<T>`、`String` 以及第 8 章用来返回动态多态对象的 `Box<dyn Trait>`。
@@ -18,7 +23,7 @@ id: box-deref-and-drop
 
 ## 读完本章，检验自己的五个问题
 
-- 在 64 位平台上，`&i32`、`*const i32` 和 `Box<i32>` 在栈上都只占 8 字节且存着相同的内存地址，它们在编译期类型实体上的核心约束差异是什么？为什么说第 4 章学过的 `String` 和 `Vec<T>` 其实也是智能指针？
+- 在 64 位平台上，`&i32`、`*const i32` 和 `Box<i32>` 在栈上都只占 8 字节且存着相同的内存地址，它们在编译期类型约束上的核心差异是什么？为什么说前面学过的 `String` 和 `Vec<T>` 其实也是智能指针？
 - 为什么 `Box<[i32]>` 在栈上占 16 字节，而 `Vec<i32>` 占 24 字节？在递归枚举 `enum List` 中套一层 `Box<List>` 为什么就能解决 `E0072` 无限大小报错？
 - 既然标准库为普通引用也实现了 `impl<T: ?Sized> Deref for &T`，为什么执行 `*&x` 时编译器不会陷入无限递归调用？
 - 为什么把 `&String` 传给 `fn foo(s: &str)` 能自动转换，但把 `&mut String` 和 `&String` 搞混方向时，编译器只允许 `&mut T -> &U` 而严禁 `&T -> &mut U`？

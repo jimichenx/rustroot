@@ -47,7 +47,7 @@ pub trait Drop {
 ```
 
 <Aside type="caution" title="互斥铁律：实现了 Copy 的类型绝不允许实现 Drop（E0184）">
-回想我们在[第 1 章 1.5 节](/memory/ownership/)和[第 3 章 3.1 节](/types/type-entity/)立下的核心规则：**按位复制（`Copy`）与承担释放责任（`Drop`）在物理上水火不容**。
+回想我们在[所有权与移动](/memory/minimal-model/)和[类型的两面](/types/representation-and-constraints/)立下的基础规则：**按位复制（`Copy`）与承担释放责任（`Drop`）在物理上互斥**。
 如果一个类型实现了 `Drop`（意味着它管理着堆内存或外部系统资源），一旦允许它同时实现 `Copy`，一次简单的赋值 `let b = a;` 就会复制出两个都认为自己负有清理责任的有效变量，离开作用域时必然触发**双重释放（Double Free）**。因此，如果你尝试给同一个类型同时加上 `Copy` 和 `Drop`，编译器会当场以 **`error[E0184]: the trait Copy may not be implemented for this type; the type has a destructor`** 拦截。
 </Aside>
 

@@ -32,7 +32,7 @@ if (this.state != State.AUTHENTICATED) {
 1. **错误暴露太晚**：如果某个业务分支漏调了 `authenticate()` 就直接调 `executeQuery()`，代码依然能顺利编译通过，只有等线上流量真的走到那条分支时才会抛出异常崩溃；
 2. **无法在编译期根除「关闭后继续使用（Use-After-Close）」**：调用完 `client.close()` 之后，变量 `client` 依然留在当前作用域里，后续代码依然能对它调用查询方法。
 
-在 Rust 中，我们可以调动**泛型类型构造器**与第 1 章的 **Move 所有权转移机制**，把这几个阶段直接提升为互不相容的**编译期类型实体**——这就是 **`Typestate`（类型状态机模式）**。
+在 Rust 中，我们可以调动**泛型类型构造器**与 **Move 所有权转移机制**，把这几个阶段直接提升为互不相容的**独立具体类型**——这就是 **`Typestate`（类型状态机模式）**。
 
 ---
 
@@ -52,9 +52,9 @@ if (this.state != State.AUTHENTICATED) {
 
 最关键的物理事实在于：**单元结构体 `Disconnected` 与 `PhantomData<State>` 在运行期的大小全都是 0 字节**。整个 `DbClient<State>` 在栈上的字节数与里面的单个 `String` 分毫不差（24 字节），没有增加哪怕 1 个比特的运行时状态标记。
 
-### 2. 为不同状态的类型实体挂载专属方法
+### 2. 为不同状态的具体类型挂载专属方法
 
-在编译器眼里，填入不同状态参数后的 `DbClient<Disconnected>`、`DbClient<Connected>` 和 `DbClient<Authenticated>` 是**三个完全独立的类型实体**。我们分别为它们编写各自的 `impl` 块——只在 `Authenticated` 状态上挂载 `execute_query` 方法：
+在编译器眼里，填入不同状态参数后的 `DbClient<Disconnected>`、`DbClient<Connected>` 和 `DbClient<Authenticated>` 是**三个完全独立的具体类型**。我们分别为它们编写各自的 `impl` 块——只在 `Authenticated` 状态上挂载 `execute_query` 方法：
 
 <small class="code-source">源文件：<code>examples/architecture/type-driven-design/src/bin/typestate-pattern.rs</code>（节选：按状态隔离方法与按值跃迁）</small>
 <Code
@@ -71,7 +71,7 @@ if (this.state != State.AUTHENTICATED) {
    ```text
    error[E0599]: no method named `execute_query` found for struct `DbClient<Disconnected>` in the current scope
    ```
-   无需任何运行时 `if` 判断，因为在未认证的类型实体上，连 `execute_query` 这个方法名都不存在；
+   无需任何运行时 `if` 判断，因为在未认证的 `DbClient<Disconnected>` 类型上，连 `execute_query` 这个方法名都不存在；
 2. **旧状态自动失效，彻底封死 Use-After-Close**：当你执行 `let connected = raw.connect();` 时，`raw` 的所有权被按值移走并当场失效，你不可能再拿着旧的 `raw` 重复发起第二次连接；当你最后调用 `authed.close();` 时，`authed` 被按值消费释放，后续若再写 `authed.execute_query(...)`，直接被第 1 章的 **`error[E0382]`（移动后使用）** 拦截。
 
 *(工程延伸：如果在上一节的 `Builder` 模式中也叠加 `Typestate`——例如令 `Builder<MissingHost>` 只有在调用 `.host(...)` 转变为 `Builder<HasHost>` 后才暴露 `.build()` 方法，就能做出连必填项缺失都在编译期报错的「类型安全 Builder」。)*

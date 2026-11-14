@@ -1,60 +1,112 @@
 ---
 title: Rust Root
-description: 面向已有编程经验者的 Rust 开源指南，从原理出发，理解 Rust 的设计，建立分析代码和解决问题的思路。
+description: 面向有编程经验者的 Rust 开源指南：不堆砌零散的语法词典，带你跨越过往语言的习惯，从内存与类型出发建立自洽的 Rust 心智模型，贯通核心机制与工程实践。
 template: splash
 head:
   - tag: title
-    content: Rust Root · 从原理出发，理解 Rust 的设计
+    content: Rust Root · 跨越语言惯性，学会像 Rust 一样思考
 hero:
   title: <span class="rr-home-title">Rust Root</span>
   tagline: >-
-    <p class="rr-home-slogan">从原理出发，理解 Rust 的设计</p>
-    <p>Rust Root 是一份开源 Rust 指南。我们从程序运行的基本问题出发，结合原理推导与代码实验，串联所有权、类型和抽象等核心机制，帮助你理解 Rust 的设计，并建立分析代码的思路。</p>
-    <p class="rr-home-prerequisite">建议先掌握一门编程语言，不要求有 Rust 基础。</p>
+    <p class="rr-home-slogan">跨越语言惯性，学会像 Rust 一样思考</p>
+    <p class="rr-home-lead">学 Rust 真正的门槛不在语法，而在转换思维方式。</p>
+    <p class="rr-home-lead">本指南不堆砌零散的语法词典，而是带你跨越过往语言的习惯，从内存与类型出发建立一套自洽的 Rust 心智模型，贯通核心机制与工程实践。</p>
+    <p class="rr-home-prerequisite">适合已掌握一门主流语言（Java / Go / Python / TS / C++ 等）的开发者；无需 Rust 基础，尤其适合曾被借用检查器劝退的开发者。</p>
   actions:
     - text: 开始阅读
       link: /memory/hard-triangle/
       icon: right-arrow
+    - text: 阅读前言
+      link: /about/preface/
+      variant: minimal
 ---
 
 import HomeCourseRoute from '../../../components/HomeCourseRoute.astro';
 
 <div class="rr-home">
 
+<section class="rr-home-section" aria-labelledby="shifts-title">
+<p class="rr-home-eyebrow">为什么旧经验会失灵</p>
+<h2 id="shifts-title">跨不过去的往往不是语法，而是既有习惯</h2>
+<p>许多有经验的开发者并非记不住所有权规则，而是在用旧语言的隐式模型组织代码。把思考的出发点切换过来，编译器的检查就会从阻力变成帮手。</p>
+
+<div class="rr-home-shifts">
+<article class="rr-home-shift">
+<div class="rr-home-shift-dim">内存与状态</div>
+<div class="rr-home-shift-from">
+<span class="rr-home-shift-tag">过往语言习惯</span>
+<p>默认万物皆引用，由运行时在后台回收内存，对象可在多处共享并随时修改。</p>
+</div>
+<span class="rr-home-shift-arrow" aria-hidden="true">→</span>
+<div class="rr-home-shift-to">
+<span class="rr-home-shift-tag">Rust 原生视角</span>
+<p>栈帧与堆块责任分明，同一时刻只有一个所有者，共享只读与独占可变在编译期显式排他。</p>
+</div>
+</article>
+
+<article class="rr-home-shift">
+<div class="rr-home-shift-dim">数据与错误</div>
+<div class="rr-home-shift-from">
+<span class="rr-home-shift-tag">过往语言习惯</span>
+<p>习惯用类继承表达分支变体，空值（<code>null</code>）与隐式异常可能混入任意一条调用链。</p>
+</div>
+<span class="rr-home-shift-arrow" aria-hidden="true">→</span>
+<div class="rr-home-shift-to">
+<span class="rr-home-shift-tag">Rust 原生视角</span>
+<p>用 <code>struct</code> 与闭合 <code>enum</code> 组合数据形状，把缺失（<code>Option</code>）与失败（<code>Result</code>）编码进返回类型。</p>
+</div>
+</article>
+
+<article class="rr-home-shift">
+<div class="rr-home-shift-dim">抽象与成本</div>
+<div class="rr-home-shift-from">
+<span class="rr-home-shift-tag">过往语言习惯</span>
+<p>依赖接口虚表与运行时反射换取灵活度，内存分配与并发竞争留到运行期承担。</p>
+</div>
+<span class="rr-home-shift-arrow" aria-hidden="true">→</span>
+<div class="rr-home-shift-to">
+<span class="rr-home-shift-tag">Rust 原生视角</span>
+<p>默认采用编译期单态化与语法树宏展开，仅在跨过静态边界时按需启用 <code>dyn Trait</code> 或引用计数。</p>
+</div>
+</article>
+</div>
+</section>
+
 <section class="rr-home-section" aria-labelledby="outcomes-title">
 <p class="rr-home-eyebrow">你将获得什么</p>
-<h2 id="outcomes-title">理解规则，也理解如何使用它们</h2>
-<p>从问题出发，用代码和编译器反馈核对推导，再把这些判断带到实际开发中。</p>
+<h2 id="outcomes-title">从看懂编译检查，到掌握工程裁决</h2>
+<p>用内存事实、可运行的代码实验与跨语言视角对照，把思考方法直接迁移到真实项目开发中。</p>
+
 <div class="rr-home-outcomes">
 <article class="rr-home-outcome">
 <span class="rr-home-outcome-number">01</span>
-<h3>理解设计</h3>
-<p>了解所有权、借用和类型解决什么问题，以及规则的适用边界。</p>
+<h3>转换思维视角</h3>
+<p>看清旧语言的隐式习惯为何在 Rust 中失效，从内存责任与数据流出发建立原生直觉，不再与编译器反复拉锯。</p>
 </article>
 <article class="rr-home-outcome">
 <span class="rr-home-outcome-number">02</span>
-<h3>分析代码</h3>
-<p>遇到编译错误时，找到相关的约束，理解代码为什么不能通过检查。</p>
+<h3>贯通核心机制</h3>
+<p>把所有权、代数数据类型（<code>struct</code> / <code>enum</code>）、Trait 分发、智能指针与异步并发连成一套前后咬合的体系，而非孤立的语法碎片。</p>
 </article>
 <article class="rr-home-outcome">
 <span class="rr-home-outcome-number">03</span>
-<h3>做出选择</h3>
-<p>设计接口或审查代码时，比较所有权、运行时成本和错误处理方式。</p>
+<h3>掌握工程裁决</h3>
+<p>在真实业务与 AI 辅助编码中，懂得如何用类型签名守住安全边界，识别并消除无谓的 <code>.clone()</code>、锁竞争与过度抽象。</p>
 </article>
 </div>
 </section>
 
 <section class="rr-home-section" aria-labelledby="route-title">
 <p class="rr-home-eyebrow">阅读路线</p>
-<h2 id="route-title">从所有权到组织数据和行为</h2>
-<p>从内存与所有权出发，逐步理解类型、抽象、共享与系统边界。指南仍在持续编写。</p>
+<h2 id="route-title">从内存与所有权，一直走到系统边界</h2>
+<p>主线按认知依赖层层推进，前序章节建立的判断会在后续内容中持续复用；附录提供按需检索的语法、机制与跨语言对照。</p>
 
 <HomeCourseRoute />
 </section>
 
 <section class="rr-home-section rr-home-about" aria-labelledby="feedback-title">
-<h2 id="feedback-title">内容仍在编写</h2>
-<p>本指南还在持续编写和修订。如果发现错误或有改进建议，欢迎<a href="mailto:hello@rustroot.dev">邮件反馈</a>，并附上页面地址和具体内容。</p>
+<h2 id="feedback-title">持续修订与交流</h2>
+<p>本指南仍在持续精修与发布中。如果你想先了解写作方法与阅读建议，可以查看<a href="/about/preface/">前言</a>或<a href="/about/author/">关于作者</a>；阅读过程中若发现疏漏或有改进建议，欢迎前往 <a href="https://github.com/jimichenx/rustroot">GitHub 仓库</a>或通过<a href="mailto:hello@rustroot.dev">邮件反馈</a>交流。</p>
 </section>
 
 </div>

@@ -2,6 +2,11 @@
 title: 静态分发、动态分发与多态选型
 description: 从编译期静态世界与运行时动态世界的全局分水岭出发，触碰静态单态化的两道物理边界，拆解 16 字节虚表胖指针 dyn Trait 的内存真相，并建立无 class 继承时的工程多态选型准则。
 id: dispatch-and-architecture
+draft: true
+sidebar:
+  badge:
+    text: 草稿
+    variant: caution
 ---
 
 在前七章中，我们建立了一整套**编译期静态确定**的模型：变量的大小在编译期算死、释放时机在作用域末尾静态插入、泛型 `<T: Trait>` 在编译期通过单态化生成多份专属机器码（静态分发）。

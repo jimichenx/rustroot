@@ -13,7 +13,7 @@ const t = en
 			caption:
 				'When the concrete type Article stays in &Article, r1 on the stack is an 8-byte thin pointer holding only data_ptr. When dyn Summary erases Article, r2 becomes a 16-byte fat pointer: data_ptr points to the same Article on the stack, while vtable_ptr points to the <Article as Summary> vtable in read-only static memory.',
 			title: 'Thin reference &Article vs fat trait-object reference &dyn Summary and its vtable',
-			desc: 'Upper left: r1 has type &Article = &post, an 8-byte thin pointer. Because the compile-time type entity &Article already records T = Article (0 bytes at runtime), r1 only stores one 8-byte word data_ptr pointing to post on the stack. Lower left: r2 has type &dyn Summary = &post, i.e. &(dyn Summary), a 16-byte fat pointer. Because dyn Summary erased the concrete type Article, r2 stores two 8-byte words: data_ptr pointing to the same post: Article on the stack, and vtable_ptr pointing to the <Article as Summary> vtable in the read-only data segment. Upper right: stack data post: Article (size = 24B) containing title: "News". Lower right: read-only static segment holding <Article as Summary> vtable with fixed slots for drop_in_place, size: 24, align: 8, and summarize -> Article::summarize.',
+			desc: 'Upper left: r1 has type &Article = &post, an 8-byte thin pointer. Because the compile-time type &Article already records T = Article (0 bytes at runtime), r1 only stores one 8-byte word data_ptr pointing to post on the stack. Lower left: r2 has type &dyn Summary = &post, i.e. &(dyn Summary), a 16-byte fat pointer. Because dyn Summary erased the concrete type Article, r2 stores two 8-byte words: data_ptr pointing to the same post: Article on the stack, and vtable_ptr pointing to the <Article as Summary> vtable in the read-only data segment. Upper right: stack data post: Article (size = 24B) containing title: "News". Lower right: read-only static segment holding <Article as Summary> vtable with fixed slots for drop_in_place, size: 24, align: 8, and summarize -> Article::summarize.',
 			thinHead: 'thin pointer · 8 bytes',
 			thinCode: 'r1: &Article = &post',
 			typeHead: 'compile-time type',
@@ -42,10 +42,10 @@ const t = en
 			caption:
 				'具体类型 Article 留在 &Article 里时，栈上的 r1 只有 8 字节，只存一个 data_ptr；dyn Summary 擦掉具体类型后，栈上的 r2 变成 16 字节胖指针：data_ptr 仍指向栈上的 post，vtable_ptr 指向只读静态段里的虚表。',
 			title: '瘦指针 &Article 与胖指针 &dyn Summary 及虚表布局',
-			desc: '左上方是 r1，类型 &Article，由 &post 得到。编译期类型实体记下具体类型 Article，运行时占 0 字节；栈上只有一个 8 字节机器字 data_ptr，箭头指向栈上的 post。左下方是 r2，类型 &dyn Summary（即 &(dyn Summary)），由 &post 得到。因为 dyn Summary 擦掉了具体类型 Article，指针在栈上占两个 8 字节机器字：第一个字 data_ptr 指向同一个栈上数据 post，第二个字 vtable_ptr 指向只读静态段里的 <Article as Summary> vtable。右上方是栈上数据 post: Article（size = 24B），存放字段 title: "News"。右下方是只读静态段里的虚表，依次存放 drop_in_place、size: 24, align: 8，以及方法入口 summarize -> Article::summarize。',
+			desc: '左上方是 r1，类型 &Article，由 &post 得到。编译期类型记下具体类型 Article，运行时占 0 字节；栈上只有一个 8 字节机器字 data_ptr，箭头指向栈上的 post。左下方是 r2，类型 &dyn Summary（即 &(dyn Summary)），由 &post 得到。因为 dyn Summary 擦掉了具体类型 Article，指针在栈上占两个 8 字节机器字：第一个字 data_ptr 指向同一个栈上数据 post，第二个字 vtable_ptr 指向只读静态段里的 <Article as Summary> vtable。右上方是栈上数据 post: Article（size = 24B），存放字段 title: "News"。右下方是只读静态段里的虚表，依次存放 drop_in_place、size: 24, align: 8，以及方法入口 summarize -> Article::summarize。',
 			thinHead: '瘦指针 · 8 字节',
 			thinCode: 'r1: &Article = &post',
-			typeHead: '编译期类型实体',
+			typeHead: '编译期类型信息',
 			typeName: '&Article',
 			typeNote: 'T = Article · 0 字节',
 			dataPtr: 'data_ptr · 8B',

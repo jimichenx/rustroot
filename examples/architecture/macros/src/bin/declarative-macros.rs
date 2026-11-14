@@ -40,7 +40,7 @@ macro_rules! define_id_newtypes {
     };
 }
 
-// One line generates three isolated compile-time type entities and six Trait impls
+// One line generates three distinct newtypes and six Trait impls
 define_id_newtypes!(UserId, OrderId, SkuId);
 // ANCHOR_END: newtype_macro
 

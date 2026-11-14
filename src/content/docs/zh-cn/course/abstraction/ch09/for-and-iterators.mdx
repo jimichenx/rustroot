@@ -169,8 +169,8 @@ for x in expr {
 
 很多人之所以想不通，是因为把 C++ 或 Java 的直觉带了进来，误以为「`names` 是真正的类型，`&names` 只是在 `names` 前面加了一个借用修饰符」。
 
-请立刻唤醒我们在[第 3 章 3.2 节：类型构造器](/types/type-constructors/)和[第 4 章 4.1 节：引用构造器](/types/reference-constructors/)立下的核心公理：
-> **`Vec<T>`、`&Vec<T>` 与 `&mut Vec<T>`，在编译器眼里是三个完全独立、地位平等的编译期类型实体。**
+请回到我们在[类型构造器](/types/type-constructors/)和[引用与可变引用](/types/reference-constructors/)立下的基础规则：
+> **`Vec<T>`、`&Vec<T>` 与 `&mut Vec<T>`，在编译器眼里是三个完全独立、地位平等的具体类型。**
 
 因为它们是三个截然不同的独立类型，标准库的作者直接在库代码里，**分别为这三个类型各自写了一份独立的 `impl IntoIterator` 实现**。
 
@@ -359,7 +359,7 @@ after loop: [1, 2, 3, 4]
 ## 小结
 
 1. **极小内核的 4 行展开**：`for x in expr { body }` 在语言层只是一条语法糖，编译器机械将其展开为一次 `let mut iter = IntoIterator::into_iter(expr);` 加一个 `while let Some(x) = iter.next()` 循环。原集合的移动发生在第 1 轮循环之前的 `into_iter` 按值传参处；循环中真正带 `mut` 发生状态改变的是游标 `iter`，而 `x` 是每轮重新解构绑定的新变量。
-2. **三个独立类型打通遍历三件套**：`Vec<T>`、`&Vec<T>`、`&mut Vec<T>` 是三个独立的编译期类型实体，标准库分别为它们各自实现了 `IntoIterator`，并用关联类型 `type Item` 一对一锁死了产出类型 `T`、`&T` 与 `&mut T`。
+2. **三个独立类型打通遍历三件套**：`Vec<T>`、`&Vec<T>`、`&mut Vec<T>` 是三个独立的具体类型，标准库分别为它们各自实现了 `IntoIterator`，并用关联类型 `type Item` 一对一锁死了产出类型 `T`、`&T` 与 `&mut T`。
 3. **一揽子实现与跨循环借用检查**：标准库通过 `impl<I: Iterator> IntoIterator for I` 让所有现成的迭代器都能直接放进 `for` 循环；而借用迭代器 `Iter<'a, T>`（16 字节双指针游标）持有的共享借用横跨整个 `while let` 循环，在编译期以 `E0502` 根除了遍历期间扩容修改导致的悬垂风险。
 
 现在，我们已经把 `Iterator` 的机械构造彻底拆开了。但如果你翻看标准库 `Iterator` 的文档，会发现除了 `next` 之外，它上面最出名的是 `.filter(|x| ...)`、`.map(|x| ...)` 这些接收**闭包（Closure）**的方法。

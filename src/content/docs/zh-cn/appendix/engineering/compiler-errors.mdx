@@ -52,11 +52,11 @@ error[E0382]: borrow of moved value: `tag`
 
 | 错误码 | 典型报错摘要 | 触发的底层约束 | 关联主线章节 |
 | --- | --- | --- | --- |
-| **`E0382`** | `use / borrow of moved value` | 非 `Copy` 值转移释放责任后，原变量在编译期状态表中已标记失效 | [最简模型：赋值即失效](/memory/minimal-model/) |
-| **`E0507`** | `cannot move out of ... which is behind a shared reference` | 引用不承担释放责任，禁止通过 `&T` / `&mut T` 把内部非 `Copy` 字段移走掏空 | [函数调用逼出引用](/memory/references/)、[位置与值表达式](/appendix/mechanisms/place-and-value/) |
+| **`E0382`** | `use / borrow of moved value` | 非 `Copy` 值转移释放责任后，原变量在编译期状态表中已标记失效 | [复制与移动](/memory/minimal-model/) |
+| **`E0507`** | `cannot move out of ... which is behind a shared reference` | 引用不承担释放责任，禁止通过 `&T` / `&mut T` 把内部非 `Copy` 字段移走掏空 | [引用](/memory/references/)、[位置与值表达式](/appendix/mechanisms/place-and-value/) |
 | **`E0502`** / **`E0499`** | `cannot borrow as mutable because it is also borrowed as immutable`（或 `more than once`） | 同一有效区间内，共享只读引用 `&T` 与独占可变引用 `&mut T` 互斥（且 `&mut T` 不可并存） | [引用类型构造器](/types/reference-constructors/)、[借用疑难排障](/pointers/borrowing-puzzles/) |
 | **`E0596`** | `cannot borrow ... as mutable, as it is not declared as mutable` | 变量绑定未声明 `let mut`，或试图穿透只读引用 `&T` 获取内部字段的 `&mut` | [变量绑定与可变性](/memory/bindings/) |
-| **`E0597`** | `... does not live long enough` | 被借用数据的存活作用域短于引用本身的有效使用区间，放行会产生悬垂引用 | [生命周期与有效区间](/memory/lifetimes/) |
+| **`E0597`** | `... does not live long enough` | 被借用数据的存活作用域短于引用本身的有效使用区间，放行会产生悬垂引用 | [悬垂引用](/memory/lifetimes/) |
 | **`E0515`** / **`E0106`** | `cannot return value referencing local variable` / `missing lifetime specifier` | 禁止向函数外返回当前栈帧局部变量的引用（`E0515`）；多输入或无输入返回引用时需显式关联生命周期（`E0106`） | [跨函数签名的生命周期](/pointers/lifetime-functions/) |
 | **`E0308`** | `mismatched types` | 静态类型不匹配（高频诱因：函数末尾多写分号变成单元类型 `()`，或混淆 `String` 与 `&str`） | [函数、语句与表达式](/appendix/basics/functions/)、[字符串](/types/strings/) |
 | **`E0277`** | `the trait bound ... is not satisfied`（含 `cannot be sent between threads safely`） | 类型未实现目标函数要求的 Trait（如缺 `Debug` / `From`，或跨线程/`async` 持有未实现 `Send` 的 `Rc` / `MutexGuard`） | [Trait 与约束](/abstraction/traits-and-bounds/)、[Send 与 Sync](/concurrency/send-and-sync/) |

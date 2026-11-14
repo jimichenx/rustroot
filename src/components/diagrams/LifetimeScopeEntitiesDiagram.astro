@@ -1,8 +1,8 @@
 ---
 /**
- * 11.1「隐藏的范围参数与两个不同的 &i32 类型实体」。
+ * 11.1「隐藏的范围参数与两个不同的 &i32 具体类型」。
  * 上栏左：源码表面，r_outer 与 r_inner 都写成 &i32。
- * 上栏右：编译器用 &(Scope, T) 填入不同范围，得到 &[1..10] i32 与 &[5..8] i32 两个类型实体。
+ * 上栏右：编译器用 &(Scope, T) 填入不同范围，得到 &[1..10] i32 与 &[5..8] i32 两个具体类型。
  * 下栏：把内层短范围赋给外层 r_outer，范围盖不住，虚线箭头标出 E0597。
  * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
  */
@@ -15,9 +15,9 @@ interface Props {
 const copy = {
 	zh: {
 		caption:
-			'两处引用在源码里都写成 &i32，编译器却用 &(Scope, T) 填入不同范围，合成 r_outer 与 r_inner 两个类型实体；内层短范围赋给 r_outer 时范围不足，触发 E0597。',
-		title: '表面同为 &i32，内部是两份范围不同的类型实体',
-		desc: '上栏分成左右两列。左列是源码表面：外层变量 r_outer 与内层变量 r_inner 的写法都是 &i32，范围参数被省略。右列是编译器内部：&(Scope, T) 分别填入具体范围，r_outer 成为 &[1..10] i32（外层大范围），r_inner 成为 &[5..8] i32（内层小范围），两者是参数不同的独立类型实体。下栏是一次失败的赋值：&inner_val 只携带 [5..8]，写不进要求 [1..10] 的 r_outer，虚线箭头标出 error[E0597]: inner_val does not live long enough。',
+			'两处引用在源码里都写成 &i32，编译器却用 &(Scope, T) 填入不同范围，合成 r_outer 与 r_inner 两个具体类型；内层短范围赋给 r_outer 时范围不足，触发 E0597。',
+		title: '表面同为 &i32，内部是两份范围不同的具体类型',
+		desc: '上栏分成左右两列。左列是源码表面：外层变量 r_outer 与内层变量 r_inner 的写法都是 &i32，范围参数被省略。右列是编译器内部：&(Scope, T) 分别填入具体范围，r_outer 成为 &[1..10] i32（外层大范围），r_inner 成为 &[5..8] i32（内层小范围），两者是参数不同的独立类型。下栏是一次失败的赋值：&inner_val 只携带 [5..8]，写不进要求 [1..10] 的 r_outer，虚线箭头标出 error[E0597]: inner_val does not live long enough。',
 		leftKicker: '源码表面',
 		leftSub: '两处都写成 &i32',
 		outerKind: '外层变量',
@@ -31,10 +31,10 @@ const copy = {
 		fillLabel: '填入',
 		outerName: 'r_outer',
 		outerEntity: '&[1..10] i32',
-		outerScope: '外层大范围 · 类型实体 A',
+		outerScope: '外层大范围 · 具体类型 A',
 		innerName: 'r_inner',
 		innerEntity: '&[5..8] i32',
-		innerScope: '内层小范围 · 类型实体 B',
+		innerScope: '内层小范围 · 具体类型 B',
 		blockKicker: '赋值被拦住',
 		blockSub: '内层范围盖不住 r_outer 要求的范围',
 		shortCode: '&inner_val',
@@ -46,9 +46,9 @@ const copy = {
 	},
 	en: {
 		caption:
-			'Both references are written &i32, but &(Scope, T) is filled with two different scopes, so r_outer and r_inner are distinct type entities. Assigning the shorter inner scope to r_outer fails with E0597.',
-		title: 'Same &i32 on the surface, two different scope-filled type entities inside',
-		desc: 'The upper row has two columns. On the left, the source text writes both the outer variable r_outer and the inner variable r_inner as &i32, with the scope parameter omitted. On the right, the compiler fills &(Scope, T): r_outer becomes &[1..10] i32 (the longer outer scope) and r_inner becomes &[5..8] i32 (the shorter inner scope), two distinct type entities. The lower row is a rejected assignment: &inner_val carries only [5..8] and cannot be stored in r_outer, which requires [1..10]. The dashed arrow marks error[E0597]: inner_val does not live long enough.',
+			'Both references are written &i32, but &(Scope, T) is filled with two different scopes, so r_outer and r_inner have distinct concrete types. Assigning the shorter inner scope to r_outer fails with E0597.',
+		title: 'Same &i32 on the surface, two different scope-filled concrete types inside',
+		desc: 'The upper row has two columns. On the left, the source text writes both the outer variable r_outer and the inner variable r_inner as &i32, with the scope parameter omitted. On the right, the compiler fills &(Scope, T): r_outer becomes &[1..10] i32 (the longer outer scope) and r_inner becomes &[5..8] i32 (the shorter inner scope), two distinct concrete types. The lower row is a rejected assignment: &inner_val carries only [5..8] and cannot be stored in r_outer, which requires [1..10]. The dashed arrow marks error[E0597]: inner_val does not live long enough.',
 		leftKicker: 'source text',
 		leftSub: 'both written &i32',
 		outerKind: 'outer variable',
@@ -62,10 +62,10 @@ const copy = {
 		fillLabel: 'fills',
 		outerName: 'r_outer',
 		outerEntity: '&[1..10] i32',
-		outerScope: 'type entity A · long scope',
+		outerScope: 'concrete type A · long scope',
 		innerName: 'r_inner',
 		innerEntity: '&[5..8] i32',
-		innerScope: 'type entity B · short scope',
+		innerScope: 'concrete type B · short scope',
 		blockKicker: 'assignment rejected',
 		blockSub: 'the inner scope does not cover what r_outer requires',
 		shortCode: '&inner_val',

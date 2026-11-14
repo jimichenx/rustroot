@@ -2,7 +2,7 @@
 /**
  * 9.1「for 循环与遍历三件套」分步配图：
  * 顶部常驻：语言内核唯一的机械展开公式。
- * 下方三行（3 步分步对比）：&Vec<String>、&mut Vec<String>、Vec<String> 三个独立类型实体，
+ * 下方三行（3 步分步对比）：&Vec<String>、&mut Vec<String>、Vec<String> 三个独立具体类型，
  * 各自匹配不同的 impl IntoIterator，由关联类型 type Item 锁定左边 s 的类型与原集合状态。
  * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
  */
@@ -13,14 +13,14 @@ const en = SITE_LOCALE === 'en';
 const t = en
 	? {
 			caption:
-				'The compiler kernel performs only one mechanical expansion: IntoIterator::into_iter(expr). Because &Vec<T>, &mut Vec<T>, and Vec<T> are three distinct type entities, each matches its own impl IntoIterator, where type Item locks in the type of s.',
+				'The compiler kernel performs only one mechanical expansion: IntoIterator::into_iter(expr). Because &Vec<T>, &mut Vec<T>, and Vec<T> are three distinct concrete types, each matches its own impl IntoIterator, where type Item locks in the type of s.',
 			title: 'One mechanical expansion, three independent IntoIterator implementations',
 			desc: 'Top banner: The compiler expands `for s in expr` into `let mut iter = IntoIterator::into_iter(expr)` and `while let Some(s) = iter.next()`. Below are three rows: Row 1 (`for s in &names`) passes `Self = &Vec<String>`, matches `impl IntoIterator for &Vec<T>` with `type Item = &String`, giving `s: &String` while `names` stays intact. Row 2 (`for s in &mut names`) passes `Self = &mut Vec<String>`, matches `impl IntoIterator for &mut Vec<T>` with `type Item = &mut String`, giving `s: &mut String` for in-place mutation while `names` stays valid. Row 3 (`for s in names`) passes `Self = Vec<String>`, matches `impl IntoIterator for Vec<T>` with `type Item = String`, moving elements to `s: String` and leaving `names` moved (E0382).',
 			bannerTitle: 'Compiler kernel · single mechanical desugaring',
 			bannerC1: 'for s in expr',
 			bannerC2: 'IntoIterator::into_iter(expr)',
 			bannerC3: 'while let Some(s) = iter.next()',
-			col1: '1. Input Self type entity',
+			col1: '1. Input Self concrete type',
 			col2: '2. Matched impl IntoIterator',
 			col3: '3. Bound s & collection state',
 			r1Code: 'for s in &names',
@@ -50,14 +50,14 @@ const t = en
 		}
 	: {
 			caption:
-				'编译器内核只做一次机械展开 `IntoIterator::into_iter(expr)`；因为 `&Vec<T>`、`&mut Vec<T>`、`Vec<T>` 是三个独立的编译期类型实体，各自匹配不同的 `impl IntoIterator`，由 `type Item` 锁定左边 `s` 的类型。',
+				'编译器内核只做一次机械展开 `IntoIterator::into_iter(expr)`；因为 `&Vec<T>`、`&mut Vec<T>`、`Vec<T>` 是三个独立的具体类型，各自匹配不同的 `impl IntoIterator`，由 `type Item` 锁定左边 `s` 的类型。',
 			title: '同一次机械展开，三个独立类型匹配三份 IntoIterator 实现',
 			desc: '顶部面板展示语言内核唯一的机械展开：`for s in expr` 展开为 `IntoIterator::into_iter(expr)` 与 `while let Some(s) = iter.next()`。下方三行对应三种遍历模式：第 1 行 `for s in &names` 传入 `Self = &Vec<String>`，匹配 `impl IntoIterator for &Vec<T>`（`type Item = &String`），产出 `s: &String`，`names` 原封保留；第 2 行 `for s in &mut names` 传入 `Self = &mut Vec<String>`，匹配 `impl IntoIterator for &mut Vec<T>`（`type Item = &mut String`），产出 `s: &mut String` 原地修改，`names` 保留；第 3 行 `for s in names` 传入 `Self = Vec<String>`，匹配 `impl IntoIterator for Vec<T>`（`type Item = String`），产出 `s: String`，`names` 移入失效（E0382）。',
 			bannerTitle: '语言内核唯一动作 · 机械脱糖展开（不检查 & 或集合种类）',
 			bannerC1: 'for s in expr',
 			bannerC2: 'IntoIterator::into_iter(expr)',
 			bannerC3: 'while let Some(s) = iter.next()',
-			col1: '1. 传入的 Self 类型实体',
+			col1: '1. 传入的 Self 具体类型',
 			col2: '2. 匹配的标准库实现与关联类型',
 			col3: '3. 左边 s 的类型与原集合状态',
 			r1Code: 'for s in &names',
@@ -144,7 +144,7 @@ const rows = [
 		{/* 三行对比：左栏常驻，中栏与右栏随步点亮 */}
 		{rows.map((row, i) => (
 			<g>
-				{/* 左栏：for 写法与传入的 Self 类型实体 */}
+				{/* 左栏：for 写法与传入的 Self 具体类型 */}
 				<rect class="slot" x="16" y={row.y} width="164" height="64" rx="8"></rect>
 				<text class="code" x="98" y={row.y + 26} text-anchor="middle">{row.code}</text>
 				<text class="edge-sub" x="98" y={row.y + 48} text-anchor="middle">{row.selfType}</text>

@@ -57,20 +57,20 @@ const t = en
 			framesLifo: 'the last one in goes first',
 		}
 	: {
-			splitCaption: '变量在栈上，对象在堆上。',
-			splitTitle: '一个变量在栈上，一个对象在堆上',
-			splitDesc: '栈帧里放着变量 a。箭头从 a 指向堆上的对象。',
+			splitCaption: '控制结构在栈上，数据本体在堆上。',
+			splitTitle: '变量控制结构在栈上，数据本体在堆上',
+			splitDesc: '栈帧里放着变量 a。箭头从 a 指向堆上的数据。',
 			splitStack: '栈（跟着调用走）',
 			splitHeap: '堆（运行时申请）',
 			frame: '栈帧',
-			object: '对象',
-			returnCaption: '调用中，栈帧里放着变量；调用返回，栈帧没了，堆上的对象还在。',
+			object: '堆数据',
+			returnCaption: '调用中，栈帧里放着变量；调用返回后，栈帧已收回，堆上的数据还在。',
 			returnTitle: '函数返回前后',
 			returnDesc:
-				'两种状态。调用中，栈帧里放着变量 a，箭头指向堆上的对象；返回后，栈帧没了，堆上的对象还在，已经没有变量指向它。',
+				'两种状态。调用中，栈帧里放着变量 a，箭头指向堆上的数据；返回后，栈帧已收回，堆上的数据还在，已经没有变量指向它。',
 			during: '调用中',
 			after: '返回后',
-			frameGone: '栈帧已离开',
+			frameGone: '栈帧已收回',
 			stringCaption: '栈上三个机器字，堆上是字符缓冲区。',
 			stringTitle: 'String 的变量在栈上，字符在堆上',
 			stringDesc:

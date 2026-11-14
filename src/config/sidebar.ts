@@ -1,6 +1,6 @@
 import { compareLessons, courseHeadings } from './course-numbers';
 import { loadCourse } from './course-slugs';
-import { isPublished } from './release';
+import { draftsVisible, isPublished } from './release';
 import { CURRENT } from './site';
 
 // 侧栏只看当前语言的 course/。公开地址由 course-slugs 计算，这里只排顺序：
@@ -9,22 +9,20 @@ import { CURRENT } from './site';
 //   作为组内第一项并带 data-chapter-page，SidebarSublist 据此把组标题
 //   渲染成指向章页的链接。
 //   课在章内按 sidebar.order 排序。篇、章、课的编号在这里和内容加载时补上，源文件不写。
-// 当前语言还没有的页面不出现。草稿与 autogenerate 一致：dev 留在侧栏，
-// 生产构建排除。正式构建里，发布指针之后的页也不出现。章组里没有任何可列出的项时，组不保留。
+// 当前语言还没有的页面不出现。章描述页标了草稿，正式构建整章不进侧栏；
+// 只标在某一节上时，只扣这一节。dev 和预览构建忽略草稿。章组里没有任何可列出的项时，组不保留。
 //
 // Unnumbered parts follow numbered parts; the appendix has its own chapter sequence.
 // 「开始」不在 course/ 下，仍用 autogenerate。Starlight 用相对
 // src/content/docs 的路径匹配 directory，zh-cn/ 与 en/ 不是已配置的 locale，
 // 前缀不会被剥掉，所以自动分组必须带上 contentDir。
 
-const isDev = process.argv.includes('dev');
-
 const auto = (directory: string) => ({
 	autogenerate: { directory: `${CURRENT.contentDir}/${directory}` },
 });
 
 function isListed(draft: boolean, slug: string): boolean {
-	if (!isDev && draft) return false;
+	if (!draftsVisible() && draft) return false;
 	return isPublished(slug);
 }
 

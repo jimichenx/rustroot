@@ -3,8 +3,8 @@
 use std::fmt;
 
 // ANCHOR: id_newtypes
-// 1. 使用单字段元组结构体定义 Newtype：
-// 在编译期是截然不同的独立类型实体，在运行时与裸 u64 一样只占 8 字节（零内存开销）
+// 1. Newtype via single-field tuple struct:
+// distinct types at compile time, same 8-byte layout as u64 at runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UserId(pub u64);
 

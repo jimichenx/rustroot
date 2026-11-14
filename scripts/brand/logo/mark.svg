@@ -1,17 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
   <!--
-    Rust Root 主 mark · 截面
-    圆角方块跟随文字色（currentColor）。一条锈橙切开面斜穿过下半，
-    像把一块东西剖开：上面是你看见的，切开面是根。
-    顶栏 SiteTitle.astro 内联同一组形状。favicon 用同一几何，整枚锈橙、切开面挖空。
+    Rust Root 主 mark · 换轨方印（Step-Z Shift）
+    52×52 端正圆角方印（x=6..58, y=6..58, rx=14），围绕画布中心 (32, 32) 呈 180° 中心对称。
+    水平与 45° 折线切道保持严格等距法向间隙（6px）：
+    上半块跟随文字色（currentColor），代表既有语言习惯；
+    经中央折线跃迁换轨后，落入下半块锈橙基座（#e8590c），代表自洽的 Rust 心智模型。
+    顶栏 SiteTitle.astro 内联同一组几何；favicon.svg 采用同一正负形烤成单色锈橙。
   -->
-  <defs>
-    <clipPath id="rr-mark">
-      <rect x="5" y="5" width="54" height="54" rx="16"/>
-    </clipPath>
-  </defs>
-  <rect x="5" y="5" width="54" height="54" rx="16" fill="currentColor"/>
-  <g clip-path="url(#rr-mark)">
-    <rect x="-24" y="30" width="112" height="14" fill="#e8590c" transform="rotate(-22 32 37)"/>
-  </g>
+  <path d="M20 6H44C51.732 6 58 12.268 58 20V23H36.76L24.76 35H6V20C6 12.268 12.268 6 20 6Z" fill="currentColor"/>
+  <path d="M39.24 29H58V44C58 51.732 51.732 58 44 58H20C12.268 58 6 51.732 6 44V41H27.24L39.24 29Z" fill="#e8590c"/>
 </svg>

@@ -1,5 +1,5 @@
 //! Expected error when uncommented: E0573 (expected type, found variant `Role::Member`)
-//! Only the outer `Role` is a compile-time type entity; variants are constructors, not types.
+//! Only the outer `Role` is a type; variants are constructors, not types.
 
 #[allow(dead_code)]
 enum Role {

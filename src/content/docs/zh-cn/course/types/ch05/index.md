@@ -2,6 +2,11 @@
 title: 函数与结构体
 description: 从函数签名、单元类型 () 与表达式控制流出发，掌握结构体（struct）的三种形态、扁平内联布局与部分移动规则，并拆解方法接收者三件套（self / &self / &mut self）与调用点自动解引用。
 id: custom-types
+draft: true
+sidebar:
+  badge:
+    text: 草稿
+    variant: caution
 ---
 
 在前两章中，我们拆解了语言内置与标准库提供的核心类型构造器（引用、数组、切片、`Vec<T>` 与字符串）。从这一章开始，我们进入**自定义类型与业务建模**——看如何定义自己的函数与复合数据结构。

@@ -1,5 +1,5 @@
 import { loadCourse, type LessonNode } from './course-slugs';
-import { isPublished } from './release';
+import { draftsVisible, isPublished } from './release';
 
 // 篇、章、课的标题和侧栏标签不在源文件里写编号。
 // 章号来自 chNN。课号是「章号.章内序号」，序号按 sidebar.order 排好后从 1 起，草稿也占号。
@@ -69,12 +69,12 @@ export function chapterLessonsHeading(contentDir: string): string {
 	return courseLocale(contentDir) === 'zh' ? '目录' : 'Table of Contents';
 }
 
-/** 章描述页末尾的课表。课号与侧栏相同，草稿占号；生产构建不列出草稿。 */
+/** 章描述页末尾的课表。课号与侧栏相同，草稿占号；正式构建不列出草稿，dev 和预览列出。 */
 export function chapterLessonLinks(
 	contentDir: string,
 	chapterEntry: string,
 ): { href: string; label: string }[] | undefined {
-	const showDrafts = process.argv.includes('dev');
+	const showDrafts = draftsVisible();
 	const course = loadCourse(contentDir);
 	const headings = courseHeadings(contentDir);
         for (const part of [...course.parts, ...(course.appendix ? [course.appendix] : [])]) {

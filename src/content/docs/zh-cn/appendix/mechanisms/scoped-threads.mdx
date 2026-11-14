@@ -1,9 +1,13 @@
 ---
 title: "thread::scope 底层揭秘：双生命周期 'env / 'scope 与 Rust 1.0 泄漏危机"
 description: 拆解 std::thread::scope 如何在不修改编译器内核的前提下，用双生命周期参数 'env 与 'scope 放宽 'static 限制，并回顾 2015 年 Rust 1.0 前夕因 Rc 循环引用跳过 Drop 而引发的 Leakpocalypse 历史事件。
+draft: true
 sidebar:
   label: thread::scope 与 1.0 泄漏危机
   order: 6
+  badge:
+    text: 草稿
+    variant: caution
 ---
 
 import { Code } from '@astrojs/starlight/components';

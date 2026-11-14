@@ -69,7 +69,7 @@ forty-two: invalid digit found in string
 - 当传入 `"42"` 时，返回 `Ok(42)`，命中第一条分支取出整数 `42`；
 - 当传入 `"forty-two"` 时，返回 `Err(e)`，命中第二条分支，错误对象 `e` 里清楚地装着失败原因 `invalid digit found in string`。
 
-与 `Option<T>` 完全一样，因为 `Result<i32, ParseIntError>` 是一个独立的编译期类型实体，你不解开 `Ok(n)` 就根本拿不到里面的 `i32`。
+与 `Option<T>` 完全一样，因为 `Result<i32, ParseIntError>` 是一个独立的类型，你不解开 `Ok(n)` 就根本拿不到里面的 `i32`。
 
 <Aside type="caution" title="防丢弃机制：哪怕不需要返回值，也不能静默忽略 Result">
 如果一个函数返回的是不带数据的 `Result<(), io::Error>`（比如 `file.write_all(b"hello");`），调用方根本不需要拿返回值，那他会不会像在 C 语言或早期 Go 语言里那样，干脆不写变量接收、假装无事发生？

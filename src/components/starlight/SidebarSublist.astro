@@ -151,16 +151,29 @@ const containsCurrent = (entries: SidebarEntry[]): boolean =>
 		}
 
 		.top-level > li + li {
-			margin-top: 0.75rem;
+			margin-top: 0.65rem;
 		}
 
-		/* 篇扉页：比章标题轻，并和上一组章隔开。当前页仍用下面的橙色高亮。 */
+		/* 篇扉页：作为侧栏的一级分篇眉标，顶部分割线拉开篇章区块，清晰统领下属各章。 */
 		.top-level > li:has(> a[data-part-page]) {
-			margin-top: 1.35rem;
+			margin-top: 1.4rem;
+			padding-top: 0.9rem;
+			border-top: 1px solid var(--sl-color-hairline-light);
 		}
 		a.large[data-part-page]:not([aria-current='page']) {
-			font-weight: 500;
-			color: var(--sl-color-gray-2);
+			font-size: var(--sl-text-xs);
+			font-weight: 700;
+			letter-spacing: 0.05em;
+			color: var(--sl-color-accent);
+			padding-block: 0.25em;
+		}
+		:global(:root[data-theme='dark']) a.large[data-part-page]:not([aria-current='page']) {
+			color: var(--sl-color-accent-high);
+		}
+		a.large[data-part-page]:not([aria-current='page']):hover,
+		a.large[data-part-page]:not([aria-current='page']):focus {
+			color: var(--sl-color-white);
+			background-color: var(--sl-color-gray-6);
 		}
 
 		summary {
@@ -180,8 +193,12 @@ const containsCurrent = (entries: SidebarEntry[]): boolean =>
 		.caret {
 			width: 1.25rem;
 			height: 1.25rem;
-			transition: transform 0.2s ease-in-out;
+			color: var(--sl-color-gray-3);
+			transition: transform 0.2s ease-in-out, color 0.15s ease;
 			flex-shrink: 0;
+		}
+		summary:hover .caret {
+			color: var(--sl-color-white);
 		}
 		:global([dir='rtl']) .caret {
 			transform: rotateZ(180deg);
@@ -192,24 +209,32 @@ const containsCurrent = (entries: SidebarEntry[]): boolean =>
 
 		a {
 			display: block;
-			border-radius: 0.25rem;
+			border-radius: 0.35rem;
 			text-decoration: none;
 			color: var(--sl-color-gray-2);
-			padding: 0.3em var(--sl-sidebar-item-padding-inline);
-			line-height: 1.4;
+			padding: 0.32em var(--sl-sidebar-item-padding-inline);
+			line-height: 1.45;
+			transition: background-color 0.14s ease, color 0.14s ease;
 		}
 
 		a:hover,
 		a:focus {
 			color: var(--sl-color-white);
+			background-color: var(--sl-color-gray-6);
 		}
 
+		/* 当前选中页：告别刺眼的实心亮橙色条，采用与配图同源的淡锈橙底 + 左侧锈橙指示轨 */
 		[aria-current='page'],
 		[aria-current='page']:hover,
 		[aria-current='page']:focus {
 			font-weight: 600;
-			color: var(--sl-color-text-invert);
-			background-color: var(--sl-color-text-accent);
+			color: var(--sl-color-white);
+			background-color: var(--sl-color-accent-low);
+			box-shadow: inset 2.5px 0 0 var(--sl-color-accent);
+		}
+
+		ul ul li:has(> [aria-current='page']) {
+			border-inline-start-color: var(--sl-color-accent);
 		}
 
 		a > *:not(:last-child),

@@ -2,6 +2,11 @@
 title: 泛型与 Trait 契约
 description: 从编译期类型构造器与裸数据不含运行时对象头出发，推导泛型单态化机制，掌握 Trait 能力契约、关联类型、转换与借用视图契约体系、孤儿规则，以及极小内核与标准库的分工架构。
 id: generics-and-traits
+draft: true
+sidebar:
+  badge:
+    text: 草稿
+    variant: caution
 ---
 
 在上一篇中，我们一直在**使用**标准库预先定义好的类型构造器：往 `Vec<T>` 里填入 `i32` 合成 `Vec<i32>`，往 `Option<T>` 里填入 `String` 合成 `Option<String>`，并用固有 `impl` 块为单个具体类型挂载方法。

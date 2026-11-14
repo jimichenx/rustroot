@@ -1,8 +1,12 @@
 ---
 title: 工程与排障
 description: 查阅 Rust 工具链全景地图（rustup / rustc / cargo / Edition）与高频编译错误码的诊断判据。
+draft: true
 sidebar:
   order: 4
+  badge:
+    text: 草稿
+    variant: caution
 ---
 
 无论是刚配置好 Rust 环境被一串命令行工具弄晕，还是在日常编码与审查 AI 代码时面对大段编译器报错需要定位约束，都可以直接查阅本章。

@@ -35,7 +35,7 @@ import matchMoveAndBorrow from '../../../../../../../examples/types/pattern-owne
 
 那为什么不采用 OOP 熟悉的「先用 `if (r instanceof Member)` 检查，再用 `((Member) r).vipPoints` 向下转型（Downcast）」呢？原因有两层：
 
-1. **变体不是类型，无法转型**：正如上一节验证过的 `error[E0573]`，在 `enum Role` 中只有外层的 `Role` 是编译期类型实体，里面的 `Member` 只是变体构造器，根本不是一个类型。既然不是类型，语法上就不存在「把 `r` 转换成 `Member` 类型（`r as Member`）」的操作。
+1. **变体不是类型，无法转型**：正如上一节验证过的 `error[E0573]`，在 `enum Role` 中只有外层的 `Role` 是类型，里面的 `Member` 只是变体构造器，根本不是一个类型。既然不是类型，语法上就不存在「把 `r` 转换成 `Member` 类型（`r as Member`）」的操作。
 2. **「先检查 `is`、再强转 `as`」拆成了两个独立动作，编译器守不住中间的脱节**：在传统 OOP 语言里，判断类型和强制转型是分开写的两步。你完全可以在 `if (r instanceof Guest)` 的分支里手滑写下 `(Member) r`，编译器在编译期无法拦截，只能等到运行时抛出 `ClassCastException`；或者在第 10 行检查了 `r` 是 `Member`，第 12 行不小心把 `r` 改成了 `Guest`，第 13 行照样去读积分。
 
 为了从根源上消除这种脱节，Rust 立下了一条铁律：**绝不允许把「核对开头的标签」和「取出后面的载荷」拆成两步各写各的，必须通过「模式（Pattern）按形状解构」将两者焊死在同一个语法动作里**。

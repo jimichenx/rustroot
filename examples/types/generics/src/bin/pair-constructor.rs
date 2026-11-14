@@ -22,6 +22,6 @@ fn main() {
     println!("Pair<String> size = {} bytes", size_of::<Pair<String>>());
     println!("bytes.first = {}, words.second = {}, texts.first = {}", bytes.first, words.second, texts.first);
 
-    // `Pair` without `<T>` is not a concrete type entity yet:
+    // `Pair` without `<T>` is not a concrete type yet:
     // let _bad: Pair = Pair { first: 1, second: 2 };
 }

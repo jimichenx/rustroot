@@ -45,15 +45,15 @@ fn bind_order_to_user(user_id: UserId, order_id: OrderId) { /* ... */ }
 请问：改成 `type` 别名之后，再写 `bind_order_to_user(oid, uid)` 把参数传反，编译器会报错吗？
 
 **完全不会报错。**
-因为正如我们在第 3 章所讲，类型别名 `type UserId = u64;` **并没有创建新的编译期类型实体**，它仅仅是给原有的 `u64` 起了一个人类可读的绰号。在类型检查器眼里，`UserId`、`OrderId` 和 `u64` 自始至终都是同一个类型，互相混传畅通无阻。
+因为类型别名 `type UserId = u64;` **并没有创建新的类型**，它仅仅是给原有的 `u64` 起了一个人类可读的别名。在类型检查器眼里，`UserId`、`OrderId` 和 `u64` 自始至终都是同一个类型，互相混传畅通无阻。
 
-要想让编译器把「用户 ID」和「订单 ID」当成两个水火不容的独立类型来核对，我们需要使用**单字段元组结构体**来包一层——这就是 Rust 社区熟知的 **`Newtype` 模式**：
+要想让编译器把「用户 ID」和「订单 ID」当成两个互不兼容的独立类型来核对，我们需要使用**单字段元组结构体**来包一层——这就是 Rust 社区熟知的 **`Newtype` 模式**：
 
 <small class="code-source">源文件：<code>examples/architecture/type-driven-design/src/bin/newtype-and-parse.rs</code>（节选：定义 Newtype）</small>
 <Code
   code={newtypeSource.split('// ANCHOR: id_newtypes\n')[1].split('\n// ANCHOR_END: id_newtypes')[0]}
   lang="rust"
-  title="用单字段元组结构体定义独立的编译期类型实体 UserId 与 OrderId"
+  title="用单字段元组结构体定义独立的新类型 UserId 与 OrderId"
 />
 
 一旦换成了 `pub struct UserId(pub u64);` 和 `pub struct OrderId(pub u64);`，如果调用方再手滑把参数顺序写反成 `bind_order_to_user(oid, uid)`，编译器会当场报出 `E0308` 类型不匹配错误把代码拦下来：
@@ -70,8 +70,8 @@ error[E0308]: mismatched types
 
 在 Java 或 Python 等面向对象语言里，如果你为了类型安全去定义一个包装类 `class UserId { long value; }`，往往意味着每次创建一个 ID 都要在堆上多分配一个对象头、多一次指针跳转，在高频循环里会产生可观的内存与 GC 开销。
 
-而在 Rust 中，**`Newtype` 是 100% 的零成本抽象（Zero-Cost Abstraction）**：
-- 在**编译期**，`UserId` 和 `u64` 是两个严格隔离的独立类型实体；
+而在 Rust 中，**`Newtype` 是零成本抽象（Zero-Cost Abstraction）**：
+- 在**编译期**，`UserId` 和 `u64` 是两个严格隔离的独立类型；
 - 在**运行期**，编译器生成机器码时会直接剥掉 `UserId` 这层外壳。`UserId(1001)` 在栈帧和 CPU 寄存器里的物理内存布局，与裸 `u64` 整数一模一样，严丝合缝地只占 **8 个字节**（`size_of::<UserId>() == 8`），没有任何额外包装头或指针开销。
 
 *(注：在未来第 19 章与 C 语言进行 FFI 跨语言交互时，还可以在 `Newtype` 头顶加上 `#[repr(transparent)]` 标注，向外部语言做出 ABI 层面的内存布局透明保证。)*
@@ -141,7 +141,7 @@ error[E0308]: mismatched types
 
 作为类型驱动设计的第一块基石，`Newtype` 模式（单字段元组结构体）以**零运行时内存开销**为你提供了三道编译期保障：
 
-1. **区分同构基础类型**：告别形同虚设的 `type` 别名，为 `UserId`、`OrderId` 或物理量纲（如 `Meters`、`Seconds`）生成独立的编译期类型实体，从根源上杜绝同类型参数传反；
+1. **区分同构基础类型**：告别形同虚设的 `type` 别名，为 `UserId`、`OrderId` 或物理量纲（如 `Meters`、`Seconds`）生成独立的新类型，从根源上杜绝同类型参数传反；
 2. **落地「解析而非校验」**：配合 `mod` 私有字段收走外部字面量构造权限，强制所有原始输入在系统边界通过 `parse / try_new` 唯一入口转化为强类型实例，让内部核心业务函数彻底告别重复防御校验；
 3. **跨越孤儿规则**：在当前 `crate` 中为外部类型包裹一层本地身份，合法挂载外部 Trait 实现。
 

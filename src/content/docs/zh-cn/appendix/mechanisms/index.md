@@ -1,8 +1,12 @@
 ---
 title: 机制详解
 description: 查阅位置表达式、字符串操作、for 展开、Niche 空指针优化、标准库 Trait 协议与 thread::scope 底层机制。
+draft: true
 sidebar:
   order: 2
+  badge:
+    text: 草稿
+    variant: caution
 ---
 
 主线中有些写法和底层契约需要展开完整代码才能核对清楚。这里集中拆解位置与值表达式、字符串高频转换、`for` 循环展开、枚举空位优化、编译器钩子与生态约定 Trait，以及 `thread::scope` 双生命周期签名的来龙去脉。

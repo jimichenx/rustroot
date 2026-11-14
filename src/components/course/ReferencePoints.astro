@@ -1,8 +1,8 @@
 ---
 /**
  * 1.4「引用指向哪里」。
- * &s 是一个机器字，里面放的是变量 s 的栈地址，箭头停在栈上的 String。
- * ptr 再从 String 指向堆上的字符。引用不到堆。
+ * &s 是一个机器字，里面放的是变量 s 的栈地址，箭头停在栈上的原变量控制结构。
+ * ptr 再从控制结构指向堆上的字符。引用不到堆。
  * 样式见 src/styles/diagrams.css。
  */
 import { SITE_LOCALE } from '../../config/site';
@@ -17,6 +17,8 @@ const t = en
 			stack: 'stack frame',
 			heap: 'heap',
 			buffer: 'character buffer',
+			refRole: '&String',
+			ownerRole: 'String',
 			addr: 'address of s',
 			pointsAt: 'points at s',
 			len: 'len · 5',
@@ -24,12 +26,14 @@ const t = en
 		}
 	: {
 			caption:
-				'&s 里放的是变量 s 的栈地址，箭头停在栈上的 String；ptr 再指向堆上的字符。',
-			title: '引用指向栈上的变量 s',
-			desc: '栈帧里，引用 &s 占一个机器字，里面是变量 s 的栈地址，箭头向下指向 s。s 是 String，占三个机器字：ptr、长度 5、容量 5。ptr 向右画出箭头，指向堆上的五个字符。引用的箭头停在栈上。',
+				'&s 里放的是变量 s 的栈地址，箭头停在栈上的控制结构；ptr 再指向堆上的字符。',
+			title: '引用指向栈上的原变量 s',
+			desc: '栈帧里，引用 &s 占一个机器字，里面是变量 s 的栈地址，箭头向下指向 s。s 占三个机器字：ptr、长度 5、容量 5，负责释放堆。ptr 向右画出箭头，指向堆上的五个字符。引用的箭头停在栈上。',
 			stack: '栈帧',
 			heap: '堆',
 			buffer: '字符缓冲区',
+			refRole: '引用（剥离释放责任）',
+			ownerRole: '原变量（负责释放堆）',
 			addr: 's 的栈地址',
 			pointsAt: '指向 s',
 			len: 'len · 5',
@@ -53,8 +57,8 @@ const chars = ['h', 'e', 'l', 'l', 'o'];
 		<text class="name" x="52" y="70">
 			{'&s'}
 		</text>
-		<text class="code" x="82" y="70">
-			{'&String'}
+		<text class={en ? 'code' : 'label'} x="82" y="70">
+			{t.refRole}
 		</text>
 		<rect class="slot" x="52" y="82" width="200" height="44" rx="8"></rect>
 		<text class="name" x="152" y="109" text-anchor="middle">
@@ -70,8 +74,8 @@ const chars = ['h', 'e', 'l', 'l', 'o'];
 		<text class="name" x="52" y="182">
 			s
 		</text>
-		<text class="code" x="70" y="182">
-			String
+		<text class={en ? 'code' : 'label'} x="70" y="182">
+			{t.ownerRole}
 		</text>
 
 		<rect class="slot" x="52" y="194" width="200" height="40" rx="8"></rect>

@@ -1,15 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
   <!--
-    Rust Root · 截面 favicon
-    与主 mark 同一几何。标签页有浅有深，整枚烤成锈橙，切开面挖空，
-    缝隙露出标签页底色，不用 currentColor。
+    Rust Root · 换轨方印 favicon
+    与主 mark 同一 180° 中心对称几何（6px 等宽法向负空间切道）。
+    浏览器标签页有浅有深，统一填充品牌锈橙 #e8590c，中间折线切道自然透出标签页底色。
   -->
-  <defs>
-    <mask id="rr-fav">
-      <rect width="64" height="64" fill="black"/>
-      <rect x="5" y="5" width="54" height="54" rx="16" fill="white"/>
-      <rect x="-24" y="30" width="112" height="14" fill="black" transform="rotate(-22 32 37)"/>
-    </mask>
-  </defs>
-  <rect width="64" height="64" fill="#e8590c" mask="url(#rr-fav)"/>
+  <path d="M20 6H44C51.732 6 58 12.268 58 20V23H36.76L24.76 35H6V20C6 12.268 12.268 6 20 6Z" fill="#e8590c"/>
+  <path d="M39.24 29H58V44C58 51.732 51.732 58 44 58H20C12.268 58 6 51.732 6 44V41H27.24L39.24 29Z" fill="#e8590c"/>
 </svg>

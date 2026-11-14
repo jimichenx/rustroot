@@ -2,6 +2,11 @@
 title: 生产级工程基建：数据边界、错误追踪与服务治理
 description: 按生产服务的完整运行链路打通 serde 零反射数据边界与配置装配、thiserror 与 anyhow 分层错误架构、tracing 异步结构化追踪，以及显式依赖注入、超时取消与平滑停机。
 id: error-and-observability
+draft: true
+sidebar:
+  badge:
+    text: 草稿
+    variant: caution
 ---
 
 走完模块封装、类型驱动设计与编译期宏之后，当你从零搭建一个生产级 Rust 后端服务或系统守护进程时，沿着请求从进门到退出的完整链路，会依次遇到四道每天都要处理的基础设施选型：

@@ -25,8 +25,8 @@ const wordmark = siteTitle
 const SITES = {
 	zh: {
 		domain: 'rustroot.cn',
-		tagline: '先理解约束，再学会 Rust',
-		sub: '一门从内存、调用和数据流的约束出发，重新推导 Rust 设计选择的高级课程。',
+		tagline: '跨越语言惯性，学会像 Rust 一样思考',
+		sub: '不堆砌零散的语法词典，带你跨越过往语言的习惯，从内存与类型出发建立一套自洽的 Rust 心智模型。',
 	},
 	en: {
 		domain: 'rustroot.dev',
@@ -35,18 +35,11 @@ const SITES = {
 	},
 };
 
-/** 放大并压暗的截面，从右侧出血，只作构图用 */
+/** 放大并压暗的换轨方印，从右侧出血，与左上主 mark 几何同构 */
 const rings = `
 <svg class="rings" viewBox="0 0 64 64" fill="none" aria-hidden="true">
-	<defs>
-		<clipPath id="rr-og">
-			<rect x="5" y="5" width="54" height="54" rx="16"/>
-		</clipPath>
-	</defs>
-	<rect x="5" y="5" width="54" height="54" rx="16" fill="#2c3038"/>
-	<g clip-path="url(#rr-og)">
-		<rect x="-24" y="30" width="112" height="14" fill="#6b3216" transform="rotate(-22 32 37)"/>
-	</g>
+	<path d="M20 6H44C51.732 6 58 12.268 58 20V23H36.76L24.76 35H6V20C6 12.268 12.268 6 20 6Z" fill="#262932"/>
+	<path d="M39.24 29H58V44C58 51.732 51.732 58 44 58H20C12.268 58 6 51.732 6 44V41H27.24L39.24 29Z" fill="#5c2a12"/>
 </svg>`;
 
 const page = (locale) => `<!doctype html>

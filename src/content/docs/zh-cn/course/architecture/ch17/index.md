@@ -2,6 +2,11 @@
 title: 编译期元编程：宏
 description: 从 println! 为何不转移所有权切入，看清 Rust 如何通过编译期代码展开替代运行时反射，掌握声明宏与三类过程宏的工作机制，巡礼社区五大核心应用场景并划清编译成本边界。
 id: macros
+draft: true
+sidebar:
+  badge:
+    text: 草稿
+    variant: caution
 ---
 
 从第 2 章写下第一行 `println!` 开始，到第 4 章的 `vec![1, 2, 3]`、第 5 章的 `#[derive(Debug, Clone)]`、第 14 章的 `#[tokio::main]` / `tokio::join!`，再到第 15 章的 `#[test]` 与 `assert_eq!`，我们已经和**宏（Macro）**打了整整十六章的交道。

@@ -2,6 +2,11 @@
 title: 项目组织、多包架构与测试体系
 description: 从单文件内的 mod 容器树与最小编译单元 crate 出发，掌握 Cargo Workspace 多包缓存共享、Features 加法条件编译与 Cargo.lock 准则，并建立顺应模块边界的三维自动化测试防线。
 id: project-and-testing
+draft: true
+sidebar:
+  badge:
+    text: 草稿
+    variant: caution
 ---
 
 在前五篇的代码实验里，我们的代码大多写在一个单独的 `.rs` 文件中。但当你开始搭建一个真实的工业级 Rust 工程时，在动手写任何精巧的领域模型之前，首先要把整座工程的**物理骨架**立起来：

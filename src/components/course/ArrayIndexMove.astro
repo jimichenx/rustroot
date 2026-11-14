@@ -3,7 +3,7 @@
  * 3.4「为什么不能用 names[0] 移走单个元素」。
  *
  * 上半：若 let first = names[0] 把 Alice 移出，数组里会留下失效空位，
- * names[1] 的 Bob 仍有效。下标可以是运行时的 names[i]，类型实体
+ * names[1] 的 Bob 仍有效。下标可以是运行时的 names[i]，静态类型
  * [String; 2] 无法在离开作用域时断定该释放哪一格，因此 E0508 拒绝。
  * 下半：let first_ref = &names[0] 只借用地址，两格都还在，整段数组一起释放。
  * 样式见 src/styles/diagrams.css。
@@ -43,9 +43,9 @@ const t = en
 		}
 	: {
 			caption:
-				'按下标把 names[0] 的 Alice 移给 first，会在 [String; 2] 里留下失效空位，而 names[1] 的 Bob 仍然有效；离开作用域时类型实体无法分辨运行时下标移空了哪一格，因此 E0508 拒绝这次移出，改为 &names[0] 借用则两格都还在，整段数组可以一起释放。',
+				'按下标把 names[0] 的 Alice 移给 first，会在 [String; 2] 里留下失效空位，而 names[1] 的 Bob 仍然有效；离开作用域时静态类型无法分辨运行时下标移空了哪一格，因此 E0508 拒绝这次移出，改为 &names[0] 借用则两格都还在，整段数组可以一起释放。',
 			title: '按下标移出会在数组内部留下无法追踪的空位',
-			desc: '上方栈帧里是 names: [String; 2]。若 let first = names[0] 把 Alice 移走，names[0] 会变成虚线空位，names[1]（Bob）仍然有效。到右花括号离开作用域时，下标可以是运行时的 names[i]，类型实体 [String; 2] 无法确定哪一格已移空、哪一格还要释放，因此 E0508 拒绝这次移出。下方是允许的写法 let first_ref: &String = &names[0]：箭头按地址借用 names[0]，两格都还在，离开作用域时整段数组一起释放。',
+			desc: '上方栈帧里是 names: [String; 2]。若 let first = names[0] 把 Alice 移走，names[0] 会变成虚线空位，names[1]（Bob）仍然有效。到右花括号离开作用域时，下标可以是运行时的 names[i]，静态类型 [String; 2] 无法确定哪一格已移空、哪一格还要释放，因此 E0508 拒绝这次移出。下方是允许的写法 let first_ref: &String = &names[0]：箭头按地址借用 names[0]，两格都还在，离开作用域时整段数组一起释放。',
 			stack: '栈帧',
 			rejected: '下标移出 · 被拒绝',
 			moveStmt: 'let first = names[0];',
@@ -59,9 +59,9 @@ const t = en
 			bob: 'Bob',
 			move: '移出',
 			blocked: '被拒绝',
-			scopeMove: '离开作用域时，要按类型实体释放整个数组',
+			scopeMove: '离开作用域时，要按类型 [String; 2] 释放整个数组',
 			reason1: '下标 names[i] 可以是运行时变量',
-			reason2: '类型实体 [String; 2] 无法确定哪一格已移空、哪一格还要释放',
+			reason2: '静态类型 [String; 2] 无法确定哪一格已移空、哪一格还要释放',
 			borrowHead: '改为借用',
 			borrowOk: '两格保持有效',
 			borrowStmt: 'let first_ref: &String = &names[0];',

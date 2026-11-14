@@ -34,12 +34,12 @@ const t = en
 			heap: '堆',
 			data: 'hello',
 			invalid: '失效',
-			shareCaption: 't = s 之后，两个变量同时指向同一块堆。',
+			shareCaption: 't = s 按位复制控制头后，两个变量同时指向同一块堆。',
 			shareTitle: '两个变量同时指向同一块堆',
 			shareDesc:
 				'栈上 s 和 t 各占一格，格里都是指针。两条箭头指向堆上同一块 hello。',
-			moveCaption: '赋值之后，t 指向这块堆，s 失效。',
-			moveTitle: '赋值之后，原来的变量失效',
+			moveCaption: '规定旧变量 s 失效后，只剩 t 负责释放这块堆（语言上重塑为移动语义）。',
+			moveTitle: '旧变量失效，释放责任转交给新变量',
 			moveDesc:
 				'栈上两行。s 那一行标成失效，没有箭头。t 那一行是复制来的指针，箭头指向堆上那唯一一块。',
 		};

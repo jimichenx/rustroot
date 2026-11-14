@@ -2,6 +2,11 @@
 title: 异步并发：async / await、Future 与 Pin<P>
 description: 从海量 I/O 等待下的线程资源浪费与 Callback 回调地狱出发，理解「编译器状态机 + 异步运行时（线程池与 Event Loop）」的协作模型，掌握 Future::poll、async / await 并发实战，并拆解自引用状态机为什么需要 Pin<P> 锁死内存地址。
 id: async-and-pin
+draft: true
+sidebar:
+  badge:
+    text: 草稿
+    variant: caution
 ---
 
 在第 13 章里，我们掌握了多核操作系统的多线程并发（`std::thread`、`Arc`、`Channel`、`Mutex` 与 `Send` / `Sync`）。当你的程序需要同时跑满 8 个 CPU 核心做密集型计算时，操作系统线程是最直接的工具。

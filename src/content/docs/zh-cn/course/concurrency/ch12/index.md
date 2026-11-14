@@ -2,6 +2,11 @@
 title: 单线程共享与内部可变性
 description: 从有向图多节点共享与只读接口局部更新的真实困境出发，拆解单线程引用计数智能指针 Rc<T> / Weak<T> 与内部可变性容器 Cell<T> / RefCell<T> 的物理布局，掌握将所有权与借用检查按需搬到运行时的工程边界与 Arena 索引图替代方案。
 id: shared-and-interior-mutability
+draft: true
+sidebar:
+  badge:
+    text: 草稿
+    variant: caution
 ---
 
 在第 1 章 `1.6` 节复盘所有权推演链时，我们曾留下过全指南的第三个未解缺口：**如果一份数据在业务逻辑上确实需要被多个结构共同持有，且在编译期算不出谁先退场、谁最后退场，该怎么办？**

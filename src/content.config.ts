@@ -14,6 +14,16 @@ function withCourseNumbers(loader: Loader): Loader {
 		name: 'course-numbered-glob',
 		load: async (context) => {
 			await loader.load(context);
+			// 预览构建忽略 draft。Starlight 会在生产构建里丢掉 draft: true 的页，
+			// 所以这里先把标志清掉，侧栏徽章留着。正式构建不走这一支，下面按草稿删除。
+			if (process.env.PUBLISH_DRAFTS === '1') {
+				for (const [id, entry] of [...context.store.entries()]) {
+					const data = entry.data as { draft?: boolean };
+					if (data?.draft !== true) continue;
+					context.store.delete(id);
+					context.store.set({ ...entry, id, data: { ...data, draft: false } });
+				}
+			}
 			for (const [id] of [...context.store.entries()]) {
 				if (!isPublished(id)) context.store.delete(id);
 			}

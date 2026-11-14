@@ -85,7 +85,7 @@ error[E0277]: the size for values of type `(dyn Summary + 'static)` cannot be kn
    |                     ^^^^^^^ doesn't have a size known at compile-time
 ```
 
-回到[编译期类型实体](/types/type-entity/)确立的基础规则：**类型 = 内存表示（物理字节大小与布局）+ 约束**。
+回到[类型的两面](/types/representation-and-constraints/)确立的基础规则：**类型 = 内存表示（物理字节大小与布局）+ 约束**。
 1. **为什么 Java 的 `interface` 能直接当变量类型？** 因为 Java 对象一律分配在堆上，栈上的变量 `Summary item` 存放的并非对象本身，而是固定字长的对象引用。
 2. **Rust 变量默认按值内联在栈上，而 `Summary` 只有行为约束、没有内存表示**：满足 `Summary` 的既可能是 48 字节的 `Article`，也可能是 24 字节的 `Metric`。写下 `item: Summary` 时，编译器无法算出该为栈帧槽位预留多少字节。
 
