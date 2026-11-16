@@ -1,20 +1,21 @@
 ---
 title: From automatic reclamation to ownership
-description: Design a model for automatic memory reclamation without a runtime garbage collector or manual free calls.
+description: Without syntax clutter, derive an automatic memory reclamation model from stack and heap mechanics—requiring neither a runtime garbage collector nor manual free calls.
 id: ownership
 ---
 
-This chapter tackles an apparent paradox: **if the programmer never writes `free` by hand, and no garbage collector (GC) scans or counts references at runtime, how can a program reclaim memory automatically while staying completely safe?**
+This chapter addresses an apparent contradiction: **if programmers never write `free` by hand, and no garbage collector (GC) scans memory or counts references at runtime, how can a program reclaim memory automatically while remaining memory-safe?**
 
-To keep syntax noise out of the way, the six sections in this chapter form a continuous **first-principles derivation**. Across the first five sections, we set aside real Rust syntax and terminology like "ownership" or "borrowing," building the reclamation model step by step from physical memory constraints; the final section maps the resulting mechanisms onto Rust's native concepts and takes stock of the remaining gaps. Starting in Chapter 2, we open the compiler and test this model in real Rust code.
+To keep syntax out of the way, the six sections ahead form one continuous derivation from first principles. For the first five sections, we write no real Rust syntax and introduce no Rust-specific jargon such as "ownership," "borrowing," or "lifetimes." Instead, we take the perspective of a language designer—starting from stack and heap mechanics and letting each safety flaw force out the next rule. The closing section maps the completed model directly onto Rust's standard terminology.
 
-The six sections unfold in three stages:
+The derivation advances in three stages:
 
-- **Stage 1: Frame the problem and the mental map (Sections 1–2).** The hard triangle locates the breakthrough direction—automatic reclamation without GC. The stack and the heap then establish the physical layout: stack frames vanish automatically when a function returns, so only heap resources need reclamation—and the stack variable controlling a heap resource happens to have a deterministic scope exit (`}`).
-- **Stage 2: Build the minimal model and derive Move (Section 3).** Starting from the rule "free the heap when the stack variable leaves scope," a single assignment `t = s` exposes a double-free bug, forcing out the requirement that only one variable can be responsible for freeing a heap block at a time—and splitting `=` into Copy and Move semantics.
-- **Stage 3: Add references and dangling-reference checks, then unify with Rust (Sections 4–6).** A Move-only model invalidates arguments even on read-only function calls, prompting us to design a reference that holds an address without taking responsibility for cleanup. To prevent dangling references when the original variable exits scope first, the compiler checks lifetime constraints. The final section matches the model to Rust's ownership, borrowing, and lifetime concepts.
+- **Framing the problem and the memory layout.** Starting from the hard triangle of language design, we lock in the target—automatic reclamation without a runtime collector—and inspect the stack and the heap. Stack frames are reclaimed automatically when a function returns, leaving only dynamically allocated heap blocks in need of cleanup. Crucially, the stack variable holding a heap pointer has a deterministic scope exit (`}`).
+- **From invalidating the old variable to move semantics.** We start with the simplest rule—free the heap block when its stack variable leaves scope—and watch a single assignment `t = s` trigger a double free. Fixing that flaw first requires invalidating the source variable, which we then reshape into an intuitive model of copy versus move semantics before looking under the hood: hardware still copies stack bytes bitwise, while invalidation and cleanup transfer happen entirely in the compiler's state table.
+- **From restricted pointers to compile-time `free` insertion.** Because moving values on every function call makes read-only parameters impractical, we pass an eight-byte stack address instead, strip away the unchecked freedoms of C raw pointers to form references, and compare valid spans at compile time to rule out dangling references. Finally, we align the whole chain with ownership and borrowing to reveal their single shared job: letting the compiler insert `free` at the exact right spot.
 
-By the end of this chapter—without memorizing a single syntax rule—you should be able to explain three things in your own words:
-1. Why does the stack clean itself up while heap resources require explicit reclamation?
-2. Why does the same assignment `=` leave both integer variables usable while invalidating the old variable for a heap-backed string?
-3. Why can read-only references be copied and shared, yet require compile-time lifetime constraints?
+When you finish this chapter—without memorizing a single syntax rule—you should be able to reason through three questions from scratch:
+
+1. Why do local stack variables disappear automatically on return, whereas heap allocations must be explicitly returned to the allocator?
+2. Why does `=` copy an integer yet move a heap-backed string—and why does a move require no physical movement of bytes in memory?
+3. Why can read-only references be copied freely, yet still require the compiler to restrict where they remain valid?

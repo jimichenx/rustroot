@@ -425,7 +425,11 @@ function resolved(contentDir: string): CacheEntry {
 			}
 		}
 	}
-	assertLinks(contentDir, new Set(slugs.values()));
+	const known =
+		contentDir === 'zh-cn'
+			? new Set(slugs.values())
+			: new Set([...slugs.values(), ...resolved('zh-cn').slugs.values()]);
+	assertLinks(contentDir, known);
 	const entry = { fingerprint: fp, outline, slugs };
 	cache.set(contentDir, entry);
 	return entry;

@@ -1,4 +1,4 @@
-// Uncomment the marked line to trigger error[E0381].
+// Expect: E0381
 fn main() {
     let n: i32;
     // println!("{n}");

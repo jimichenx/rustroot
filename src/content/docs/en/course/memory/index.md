@@ -1,16 +1,16 @@
 ---
 title: Memory and ownership
-description: Derive ownership and borrowing from memory facts, then test the model with Rust declarations, assignments, and shadowing.
+description: Derive ownership and borrowing from how stack and heap memory are reclaimed, then verify cleanup responsibility in Rust declarations, assignments, and shadowing.
 ---
 
-You may already write another language, or you may have spent some time with Rust. Ownership, moves, references, and lifetimes can make sense individually yet feel like a list of prohibitions together: why does assigning a `String` invalidate the original variable, why can the caller no longer use a value after passing it to a function, and why must a reference not outlive its owner?
+Whether you are coming from another language or have already written some Rust, terms like ownership, move, reference, and lifetime often make sense on their own yet feel like an arbitrary list of rules when combined. Why does assigning a `String` invalidate the original variable? Why can a caller no longer use a value after passing it to a function? Why must a reference never outlive its owner?
 
-This part starts with the memory facts behind those questions. What does a function call place on the stack? What happens to heap data after the call returns? How do variables, pointers, and bytes relate? We derive the rules from these facts rather than asking you to memorize them.
+Rather than asking you to memorize rules, this part starts from Rust's core constraint: guaranteeing memory safety without a garbage collector (GC) and without manual `free` calls. Every rule above is forced out of physical memory by that single goal. We begin by rebuilding the underlying memory picture—what a function call leaves on the stack, where dynamically allocated heap data sits after a call returns, and how stack frames, heap blocks, and addresses connect.
 
-If you come from Java or Python, you may not have needed this view of memory. Their runtimes handle details you rarely have to consider directly. Rust asks you to understand those details when deciding how values can be used.
+If your background is Java, Python, or Go, you rarely have to think about that layer—not because the stack and heap are absent, but because a garbage-collected runtime handles reclamation behind the scenes. In Rust, no background collector steps in; understanding who is responsible for freeing memory is part of writing the code.
 
-This part does not explore the type system, mutable references, concurrency, or `unsafe`. How types express these rules, how reading and writing coexist, and how multiple owners share data are questions for later parts.
+This part leaves the broader type system, mutable references, concurrency, and `unsafe` for later. How types encode constraints, how read and write access are separated, and how multiple owners share data build on the foundation established here.
 
-There are two chapters. [From automatic reclamation to ownership](/memory/ownership/) derives the model through six sections, each addressing a problem left by the previous one. [Variables and assignment](/memory/variables/) applies it to code, distinguishing declarations, initialization, reassignment, and shadowing.
+Two chapters make up this part. [From automatic reclamation to ownership](/memory/ownership/) sets syntax aside and derives an automatic cleanup model directly from stack and heap mechanics; [Variables and assignment](/memory/variables/) brings that model into real Rust code to trace cleanup responsibility across declarations, reassignment, and shadowing.
 
-By the end, you should be able to explain the reasoning and write a short program of your own: determine which variables remain usable, who frees a string's memory, and whether a new declaration with the same identifier changes responsibility for the old value.
+By the end of this part, an ownership, argument-passing, or borrowing error in single-threaded code should no longer be something you patch by trial and error—you will be able to trace why the compiler rejected it from memory layout and cleanup responsibility.

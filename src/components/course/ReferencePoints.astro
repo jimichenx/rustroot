@@ -11,16 +11,16 @@ const en = SITE_LOCALE === 'en';
 const t = en
 	? {
 			caption:
-				'&s holds the stack address of variable s. The arrow stops at that String on the stack; ptr then points at the characters on the heap.',
-			title: 'The reference points at variable s on the stack',
-			desc: 'On the stack, the reference &s is one machine word containing the stack address of variable s. An arrow runs down from that word to s, a String of three words: ptr, len, and cap. A second arrow runs from ptr to five characters on the heap. The reference arrow stays on the stack.',
+				'&s stores the stack address of s, so its arrow stops at the stack header; ptr then points to the characters on the heap.',
+			title: 'A reference points to variable s on the stack',
+			desc: 'In the stack frame, the reference &s occupies one machine word containing the stack address of s, with an arrow pointing down to s. Variable s occupies three machine words—ptr, len 5, and cap 5—and is responsible for freeing the heap. A second arrow runs from ptr to five characters on the heap. The reference arrow stays on the stack.',
 			stack: 'stack frame',
 			heap: 'heap',
 			buffer: 'character buffer',
-			refRole: '&String',
-			ownerRole: 'String',
-			addr: 'address of s',
-			pointsAt: 'points at s',
+			refRole: 'reference (no cleanup duty)',
+			ownerRole: 'original variable (frees heap)',
+			addr: 'stack address of s',
+			pointsAt: 'points to s',
 			len: 'len · 5',
 			cap: 'cap · 5',
 		}
@@ -57,7 +57,7 @@ const chars = ['h', 'e', 'l', 'l', 'o'];
 		<text class="name" x="52" y="70">
 			{'&s'}
 		</text>
-		<text class={en ? 'code' : 'label'} x="82" y="70">
+		<text class="label" x="82" y="70">
 			{t.refRole}
 		</text>
 		<rect class="slot" x="52" y="82" width="200" height="44" rx="8"></rect>
@@ -74,7 +74,7 @@ const chars = ['h', 'e', 'l', 'l', 'o'];
 		<text class="name" x="52" y="182">
 			s
 		</text>
-		<text class={en ? 'code' : 'label'} x="70" y="182">
+		<text class="label" x="70" y="182">
 			{t.ownerRole}
 		</text>
 

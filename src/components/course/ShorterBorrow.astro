@@ -21,8 +21,8 @@ const t = en
 			dangleDesc:
 				'Two states. While the inner block is alive, the outer reference r points at the inner variable x on the stack, and x points at the block of data on the heap. After the inner block ends, x is gone, the heap data is freed, and a dashed arrow still runs from r to the gone inner variable.',
 			spanCaption:
-				'The reference’s valid span must sit inside variable x’s span. When it runs past the end, it dangles.',
-			spanTitle: 'The reference’s span must sit inside the original variable’s span',
+				'The valid span of reference r must fall within the live span of variable x; extending past it creates a dangling reference.',
+			spanTitle: 'A reference’s valid span must fall within the original variable’s live span',
 			spanDesc:
 				'Two panels. In the legal panel, the reference bar is shorter than variable x’s bar and sits inside it. In the illegal panel, the reference bar runs past the end of variable x’s bar and is drawn dashed.',
 			during: 'inner block alive',

@@ -17,44 +17,44 @@ const { part = 'overview' } = Astro.props;
 const en = SITE_LOCALE === 'en';
 const t = en
 	? {
-			splitCaption: 'The name sits on the stack; the object sits on the heap.',
-			splitTitle: 'One name on the stack, one object on the heap',
+			splitCaption: 'The control header sits on the stack; the data payload lives on the heap.',
+			splitTitle: 'Control header on the stack, data on the heap',
 			splitDesc:
-				'A stack frame holds the name a. An arrow runs from a to the object on the heap.',
+				'A stack frame holds variable a. An arrow runs from a to its data on the heap.',
 			splitStack: 'stack (follows the call)',
-			splitHeap: 'heap (requested at runtime)',
-			frame: 'frame',
-			object: 'object',
+			splitHeap: 'heap (allocated at runtime)',
+			frame: 'stack frame',
+			object: 'heap data',
 			returnCaption:
-				'During the call the frame holds the name. After the call returns, the frame is gone and the object is still on the heap.',
-			returnTitle: 'Before and after the call returns',
+				'During the call, the stack frame holds the variable; after return, the frame is reclaimed while the heap data stays behind.',
+			returnTitle: 'Before and after a function returns',
 			returnDesc:
-				'Two states. During the call, the stack frame holds the name a, and an arrow points to the object on the heap. After the call returns, the frame is gone; the object is still on the heap, with nothing pointing at it.',
+				'Two states. During the call, the stack frame holds variable a, with an arrow pointing to heap data. After the call returns, the frame is reclaimed; the heap data stays behind with no variable pointing to it.',
 			during: 'during the call',
-			after: 'after it returns',
-			frameGone: 'frame is gone',
+			after: 'after return',
+			frameGone: 'stack frame reclaimed',
 			stringCaption: 'Three machine words on the stack; the character buffer lives on the heap.',
-			stringTitle: 'A String name on the stack, characters on the heap',
+			stringTitle: 'A String variable on the stack, characters on the heap',
 			stringDesc:
-				'The stack frame holds name in three cells: a pointer, a length, and a capacity. An arrow runs from the pointer to four characters on the heap.',
+				'In the stack frame, variable name occupies three slots: ptr, len, and cap. An arrow runs from ptr to four characters on the heap.',
 			stringFrame: 'stack frame',
 			stringHeap: 'heap',
 			buffer: 'character buffer',
 			len: 'len · 4',
 			cap: 'cap · 4',
 			framesCaption:
-				'Stack frames sit next to each other, each with a size fixed by the compiler; a returning function discards its whole frame, and the last one in goes first.',
-			framesTitle: 'Frames appear with the call and vanish with the return',
+				'Stack frames sit contiguously, each with a size fixed at compile time; returning discards the whole frame in last-in, first-out order.',
+			framesTitle: 'Stack frames are carved out on call and discarded on return',
 			framesDesc:
-				'Left: three calls are on the stack at once — main(), foo(), bar() — each frame a size fixed by the compiler, with bar() on top. Right: bar() has returned; its frame is now a grey dashed outline, meaning the whole frame was discarded. The top of the stack is foo() now, and the next frame to go is that one.',
+				'Left: three active calls on the stack—main(), foo(), bar()—each with a compile-time fixed size and bar() on top. Right: bar() has returned; its frame is a grey dashed outline showing the whole frame was discarded. foo() is now at the top of the stack.',
 			framesDuring: 'during the calls',
 			framesAfter: 'after bar() returns',
 			framesStack: 'stack',
 			framesTop: 'top',
 			framesBottom: 'bottom',
 			framesDiscarded: 'frame discarded',
-			framesSize: 'size fixed by the compiler',
-			framesLifo: 'the last one in goes first',
+			framesSize: 'fixed size at compile time',
+			framesLifo: 'last in, first out',
 		}
 	: {
 			splitCaption: '控制结构在栈上，数据本体在堆上。',

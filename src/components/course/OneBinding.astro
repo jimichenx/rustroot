@@ -20,14 +20,16 @@ const t = en
 			heap: 'heap',
 			data: 'hello',
 			invalid: 'invalid',
-			shareCaption: 'After t = s, both names point at the same block on the heap.',
-			shareTitle: 'Two names point at one block',
+			shareCaption:
+				'Copying the header bitwise with t = s leaves both variables pointing to the same heap block.',
+			shareTitle: 'Two variables pointing to the same heap block',
 			shareDesc:
-				'On the stack, s and t each occupy a cell holding a pointer. Two arrows run from those cells to the same hello block on the heap.',
-			moveCaption: 'After assignment, t points at the block and s is no longer valid.',
-			moveTitle: 'After assignment, the original name is invalid',
+				'On the stack, variables s and t each hold a pointer. Two arrows run from those slots to the same hello buffer on the heap.',
+			moveCaption:
+				'Invalidating s on assignment leaves t alone responsible for freeing the heap (reshaped at the language level as move semantics).',
+			moveTitle: 'Old variable invalidated; cleanup responsibility moves to the new variable',
 			moveDesc:
-				'Two rows on the stack. The row for s is marked invalid and has no arrow. The row for t holds a copy of the pointer, and an arrow runs from it to the single block on the heap.',
+				'Two rows on the stack. Row s is marked invalid with no arrow. Row t holds the copied pointer, with an arrow pointing to the single hello buffer on the heap.',
 		}
 	: {
 			stack: '栈',

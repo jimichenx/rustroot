@@ -1,99 +1,95 @@
 ---
-title: "Lifetimes: how to guarantee a reference points to valid data"
-description: In our 64-bit example, a reference holds an address without recording whether the original variable is still valid; the compiler checks the reference's lifetime to prevent dangling uses without a runtime check.
+title: "Dangling references: guaranteeing that referenced data stays valid"
+description: At runtime a reference is an eight-byte address; when the original variable leaves scope first, a dangling reference forms, forcing the compiler to compare valid spans at compile time with zero runtime overhead.
 sidebar:
-  label: Dangling and lifetimes
+  label: Dangling references
   order: 5
 ---
 
-import { Aside } from '@astrojs/starlight/components';
 import ShorterBorrow from '../../../../../../components/course/ShorterBorrow.astro';
 
-In the previous section, we designed a **reference (`&T`)** without cleanup responsibility: the original variable `s` (`String`) remains responsible for freeing the heap block, while a reference `&s` (`&String`) stores the address of `s` and never frees the heap when it goes out of scope. As before, this example uses a 64-bit machine, where the address occupies eight bytes.
+In the previous section, starting from the hardware idea of passing an address, we designed **references** stripped of cleanup duty: the original variable `s` remains responsible for freeing the heap, while `&s` stores an eight-byte address on the stack and leaves the heap untouched on scope exit.
 
-We ended with a nagging question: since a reference does not manage cleanup and the heap is freed whenever the original variable goes out of scope—**what happens if the original variable goes out of scope first and frees the heap, while a reference is still sitting in an outer variable waiting to be read?**
+That design left one boundary question open: what happens if the variable responsible for cleanup leaves scope first while an outer scope still holds a reference to it?
 
-## When the original variable exits first: the address inside the reference dangles
+## When the original variable exits first: an address pointing to freed memory
 
-We don't even need a function call to trigger this flaw; a simple inner block `{}` is enough:
+No function call is needed to trigger this failure—a nested inner block `{}` is enough:
 
 ```text
 {
     r;   // declare r in the outer block to hold a reference
     {
         x = alloc_heap("hello")
-        r = &x   // hand the stack address of inner variable x to outer variable r
-    }   // ← inner block ends; x goes out of scope right here
-    print(r)     // ← follow the address inside r to read: what happens?
+        r = &x   // store the stack address of inner variable x in outer variable r
+    }   // ← inner block ends; x leaves scope here
+    print(r)     // ← read through the address stored in r: what happens?
 }
 ```
 
-Trace this code step by step under the rules of our model so far:
+Trace this block step by step under our current rules:
 
-1. Inside the inner block, variable `x` allocates `"hello"` on the heap and is responsible for freeing it when the inner `{}` closes.
-2. `r = &x` copies the stack address of `x` into the outer variable `r`. Because a reference is stripped of cleanup duty, responsibility for freeing the heap stays with `x`.
-3. Execution reaches the inner closing brace `}`: `x` goes out of scope, firing our scope-exit rule—the three-word control header of `x` is no longer valid, and **the `"hello"` buffer on the heap is returned to the allocator.**
-4. Back in the outer block, variable `r` is still in scope, and its 8 bytes on the stack still hold the old address of `x`. When `print(r)` follows that address on the next line, it reads memory that has already been invalidated.
+1. Inside the inner block, `x` allocates `"hello"` on the heap and takes responsibility for freeing it at the inner `}`.
+2. `r = &x` copies the stack address of `x` into the outer variable `r`, leaving cleanup duty with `x`.
+3. Execution hits the inner closing `}`: `x` leaves scope—its `"hello"` buffer on the heap is immediately returned to the allocator, and `x`'s stack slot is retired as well (free to be overwritten by later variables; even if `x` held a stack-only integer, its address would become invalid past `}`).
+4. Back in the outer block, `r` is still in scope, its eight stack bytes still holding `x`'s old address. On the next line, `print(r)` follows that address straight into invalidated memory.
 
 <ShorterBorrow part="dangle" />
 
-This is the built-in safety hazard of references—a **dangling reference**.
+When a reference variable remains in scope after the data it points to has been freed, the result is a **dangling reference**.
 
-Notice how it differs from using a variable after a Move in Section 3: after a Move, the variable itself has been invalidated; here, the reference variable `r` is still completely in scope—**what became invalid is the original variable `x` that `r` points to.**
+Contrast this bug with reading a variable after a move in [Copy and move](/memory/minimal-model/): after a move, the source variable itself is marked invalid; in a dangling reference, the reference variable `r` is still live—**what has already exited and been freed is the target variable `x` it points to.**
 
-## Diagnosis: why can't the runtime catch this?
+## Why the runtime cannot step in
 
-In this 64-bit example, `r` contains an address, but **no information about whether `x` is still valid**. Following that address at runtime does not by itself reveal that `x` has gone out of scope.
+Confronted with the invalid read at `print(r)`, could the program inspect `r` at **runtime** and block the access?
 
-Without additional checks, `print(r)` would try to read through that address even after the data became invalid.
+Look back at `r`'s physical representation: **at runtime, `r` is nothing more than an eight-byte memory address on the stack.** Those eight bytes record a location; not a single bit records whether `x` is still alive. When the CPU executes `print(r)`, it fetches bytes from that address blindly, with no way to tell live memory from freed memory.
 
-If you insisted on preventing this illegal read at **runtime**, only two old paths would be open:
+Forcing the **runtime** to prevent that illegal read leaves only two familiar retreats:
 
-1. **Keep `x` from freeing the heap at `}` as long as `r` still points to it**: delay deallocation until `r` is also done—which hands reclamation timing right back to the runtime (GC or reference counting) and overturns the "no GC" foundation we set in Section 1.
-2. **Maintain a runtime validity table for every allocation**: check a status flag at runtime before every read through a reference—which adds runtime inspection overhead to every ordinary memory read, violating our performance baseline.
+1. **Delay freeing `x` because `r` still points to it**: postpone reclamation until every reference stops using the data—handing cleanup timing back to a runtime collector (tracing GC or reference counting) and overturning the "no GC" premise established in [The hard triangle](/memory/hard-triangle/).
+2. **Maintain a runtime validity table alongside memory**: consult a metadata table before every dereference to verify that the target address is still live—attaching extra instructions and storage overhead to every ordinary memory read and breaking our zero-overhead goal.
 
-We cannot delay cleanup at runtime, and we cannot insert runtime check instructions on every read. Every runtime path is closed.
+We can neither delay cleanup nor tax every read at runtime. Every runtime escape hatch is closed.
 
-That leaves only one conclusion: **if we refuse to add runtime overhead, dangling references cannot be solved at runtime at all; the only way out is to have the compiler detect the hazard and reject this code before the program ever runs—at compile time.**
+## Closing the gap: detect the risk and reject compilation
 
-## The compile-time fix: comparing where the data and reference are valid
+With runtime checks ruled out, preserving memory safety leaves a single path forward—push the defense ahead of execution and add a third hard rule to the model:
 
-If we let the compiler guard against this at compile time, what does it need to inspect in the source code to spot the bug above?
+**Whenever reference code carries any risk of dangling, the compiler must detect it at compile time, report an error, and refuse to produce an executable.**
 
-In this example, we can understand the check by comparing two ranges:
+A C compiler lets the dangling block above compile cleanly, leaving the memory bug to detonate in production. In our model, rejecting unsafe code at compile time is the safety mechanism itself: because only a bare eight-byte address survives at runtime, every validity proof has to finish before the binary is built.
 
-- **Where the original variable `x` is valid**: from the line where `x` is created to the closing brace `}` of its block.
-- **Where the reference `r` is used**: from `r = &x`, where it receives the address, to its last use (`print(r)`).
+How can a compiler prove whether a reference will dangle without running the program?
 
-Lay those two spans side by side as bars, and safety becomes a simple visual check:
+## How the compiler checks: comparing two spans
+
+Running the code is unnecessary. Walking the static structure of the source file lets the compiler compute two intervals and check whether one fits inside the other:
+
+- **The live span of variable `x`**: from the point where `x` is initialized down to the closing `}` where it leaves scope and is freed.
+- **The valid span of reference `r`**: from `r = &x`, where `r` takes the address, down to the last line in the source that reads `r` (`print(r)`).
+
+Plot both spans along a timeline, and the boundary between safe and dangling becomes immediate:
 
 <ShorterBorrow part="span" />
 
-- **Left panel (valid)**: every use of `r` falls within the range where `x` is valid. The reference does not outlive the data it points to.
-- **Right panel (dangling)**: `r` is used after `x` goes out of scope and frees the heap, so the compiler rejects the program.
+- **Left diagram (valid)**: the valid span of `r` sits entirely inside the live span of `x`—for as long as `r` is used, `x` has not yet left scope, so reading through the address is guaranteed safe.
+- **Right diagram (dangling)**: the valid span of `r` extends past `x`'s exit—`x` is freed at the inner `}`, yet code tries to read `r` afterward, so the compiler rejects the program on the spot.
 
-The rule for this example is: **every use of the reference must occur while the data it points to is valid.**
+Compressed into a single rule: **a reference's valid span must never extend past the live span of the data it points to—a reference cannot outlive its target variable.**
 
-In Rust, a **lifetime** describes the region in which a reference must be valid. The borrow checker uses lifetime constraints to reject references that could outlive their data.
+Give that span a name: the region of code over which a reference remains valid is its **lifetime**. In practice, this mechanism has two direct engineering traits:
 
-<Aside type="tip" title="Reading note: remember compile-time dangling-reference prevention">
-Hearing the word "lifetime" for the first time does not need to feel intimidating:
+1. **Zero runtime overhead**: span calculation and comparison happen entirely at compile time. Once verified, lifetime metadata is erased during code generation, leaving a plain eight-byte address at runtime.
+2. **Inferred automatically inside functions**: within a function body, the compiler compares variable scopes and last-use positions automatically with no annotations written by hand. Explicit relationship markers are needed only when references cross function signatures or sit inside custom data structures.
 
-1. **The check uses no runtime memory**: lifetime checking happens at compile time. In this example, the runtime reference remains an 8-byte address without extra lifetime information.
-2. **It is often automatic**: the compiler infers lifetimes in many everyday cases without explicit lifetime annotations.
-3. **Details come later**: later chapters cover lifetimes across function boundaries and data structures. For now, remember that **Rust checks lifetime constraints at compile time to prevent dangling references**.
-</Aside>
+## Three lines of defense, locked together
 
-## The model is finally a closed loop
+With compile-time span comparison in place, the automatic memory reclamation model we started building in [The hard triangle](/memory/hard-triangle/) closes all three lines of defense:
 
-Step back and look at what we have built. Compile-time lifetime checking addresses the dangling-reference problem in our model:
+1. **Stack variables automatically free their heap allocations on leaving scope (`}`)**—eliminating manual `free` calls, runtime GC, and forgotten cleanup on normal control paths.
+2. **Values carrying cleanup responsibility follow move semantics on assignment**—transferring both value and duty while invalidating the source variable, so every heap block has a single variable responsible for freeing it at any moment.
+3. **References strip away cleanup duty while the compiler verifies their valid spans (lifetimes)**—enabling shared read access under copy semantics without cloning heap buffers, while catching dangling references at compile time.
 
-1. **When a stack variable goes out of scope (`}`), the heap resource it points to is freed automatically**—no manual `free`, no runtime GC, and no memory leaks from forgotten cleanup.
-2. **Assigning a heap-backed value follows Move semantics, invalidating the old variable**—ensuring each heap block has only one variable responsible for freeing it at any moment, eliminating double frees.
-3. **References (`&T`) carry no cleanup responsibility, while the compiler checks lifetime constraints at compile time**—letting functions and multiple readers share data under Copy semantics while preventing dangling uses.
-
-Think back to the apparent **paradox** at the end of Section 1: **if the programmer never writes `free` and no garbage collector watches memory at runtime, how can a program reclaim memory automatically while staying completely safe?**
-
-We have now derived a model that answers this question.
-
-The next section concludes Chapter 1. We will bring the five steps together, match the mechanisms to their Rust names, and see how the compiler applies them.
+The next section wraps up the chapter: we align each step of our five-part derivation with official Rust terminology and test your judgment on an end-to-end parameter design problem.

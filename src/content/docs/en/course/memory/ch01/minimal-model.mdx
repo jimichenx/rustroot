@@ -1,117 +1,136 @@
 ---
-title: "The minimal model: why assignment invalidates the old variable"
-description: Assigning an integer leaves both variables usable, whereas assigning a String must invalidate the old variable—a difference driven by who is responsible for freeing the heap.
+title: "Copy and move: from invalidating variables to move semantics"
+description: Starting from automatic heap cleanup at scope exit, a single assignment exposes a double-free conflict—forcing us to invalidate the source variable, reshape that rule into intuitive move semantics, and uncover what hardware actually does underneath.
 sidebar:
-  label: Assignment and move
+  label: Copy and move
   order: 3
 ---
 
 import OneBinding from '../../../../../../components/course/OneBinding.astro';
 
-The previous section left us with a key clue: a heap resource has no built-in exit moment of its own, but the stack variable pointing to it does—when a function returns or a block closes (`}`), the exact point where that stack variable goes out of scope is fixed at compile time.
+The previous section ended with a structural clue: a heap allocation has no built-in cleanup moment of its own, whereas the stack variable managing it does. Whenever a function returns or a block closes (`}`), the exact point where a stack variable leaves scope is fixed at compile time.
 
-Before touching any Rust syntax, let's follow that clue and design the simplest possible model for automatic memory reclamation—and see whether it can solve the problem on its own.
+Setting real Rust syntax aside, we can turn that clue into a minimal automatic reclamation model—and immediately test it against an everyday assignment (`=`).
 
-## Building the minimal model
+## The baseline rule: free the heap when its stack variable leaves scope
 
-Turn that clue from the previous section into the model's first rule:
+Promote that clue into our model's first rule:
 
-**When a stack variable goes out of scope (`}`), the heap resource it points to is freed automatically.**
+**When a stack variable leaves scope (`}`), automatically free the heap allocation it points to.**
 
-Let's trace how this minimal model behaves. Suppose a block allocates a chunk of heap memory and holds it through a stack variable `s`. Rust syntax is not required yet.
+Suppose a block requests a heap buffer and manages it through a stack variable `s`:
 
 ```text
 {
     s = alloc_heap("hello")
-    // ... read or use s inside this block ...
-}   // ← s goes out of scope here; the heap resource it points to is freed automatically
+    // ... read and write s inside this block ...
+}   // ← s leaves scope here; its heap allocation is freed automatically
 ```
 
-As long as `s` is the only variable involved, this single rule gets the job done:
-- You never write `free`, so you cannot leak memory by forgetting it.
-- The release point is fixed right at the closing brace `}`, known at compile time, with zero runtime scanning or reference-counting overhead.
+As long as `s` is the sole variable managing that heap buffer from start to finish, this single rule works cleanly:
 
-Now let's test this model against a single assignment statement, `=`.
+- Nobody writes `free` by hand, ruling out leaks caused by forgotten cleanup calls.
+- Deallocation happens right at `}`, determined at compile time with zero runtime scanning or reference counting.
 
-## Why a single assignment causes a double free
+Now test this model with an ordinary assignment statement, `=`.
 
-First, try an ordinary integer on the stack:
+## Why a single assignment frees the same block twice
+
+Start with a plain integer on the stack:
 
 ```text
 {
     a = 1
     b = a
-}   // ← b and a go out of scope; the stack frame is reclaimed directly
+}   // ← b and a leave scope and vanish with the stack frame
 ```
 
-In this model, `b = a` does one thing: **it copies the bytes of `a` on the stack into `b`.** Because the integer `1` lives entirely on the stack and carries no heap allocation, `a` and `b` each end up with an independent `1`. When the block closes at `}`, both variables go out of scope, no heap cleanup is triggered, and nothing goes wrong.
+Evaluating `b = a` copies the stack bytes of `a` bitwise into `b`. Because the integer `1` lives entirely on the stack and owns no heap allocation, `a` and `b` end up holding two independent copies of `1`. At the closing `}`, both variables vanish with the stack frame, no heap cleanup runs, and nothing goes wrong.
 
-Next, try a dynamic string backed by a heap resource:
+Next, run the same test on a dynamic string managing a heap buffer:
 
 ```text
 {
     s = alloc_heap("hello")
     t = s
-}   // ← what happens when this scope ends?
+}   // ← scope ends: what happens now?
 ```
 
-As we saw in the previous section, a value like this has a three-word control header on the stack (pointer `ptr`, length `len`, capacity `cap`), while the actual character buffer `"hello"` sits on the heap.
+As seen in the previous section, this value stores a three-word control header on the stack (`ptr`, `len`, and `cap`), while the character buffer `"hello"` sits on the heap.
 
-When `t = s` runs in our model, it copies those three machine words from `s` into `t`. **Because the heap address inside `ptr` is copied along with them, both stack variables now point at the exact same heap resource rather than holding separate character buffers.**
+Executing `t = s` copies those three machine words bitwise from `s` into `t`. **Because the heap pointer `ptr` is duplicated verbatim, a single assignment leaves two stack variables pointing to the exact same heap buffer rather than giving each variable its own buffer.**
 
 <OneBinding part="share" />
 
-Now follow execution to the closing brace `}`. Variables exit in reverse order of declaration—`t` leaves first, then `s`. Our minimal model's rule fires once for each variable going out of scope:
+When execution reaches the closing brace `}`, local variables exit in reverse order of declaration—`t` first, then `s`. Our scope-exit rule fires once for each variable:
 
-1. `t` goes out of scope and automatically frees the heap block it points to.
-2. `s` is still in scope, and its `ptr` now points at freed memory—a **dangling pointer**.
-3. Immediately afterward, `s` also goes out of scope and frees the exact same heap block a second time—a **double free**, which is undefined behavior and typically crashes the program.
+1. `t` leaves scope and automatically frees the heap buffer it points to.
+2. `s` is still in scope, holding a `ptr` that now points to freed memory—a **dangling pointer**.
+3. Moments later, `s` leaves scope as well and frees that exact same heap address a second time—triggering a **double free** and undefined behavior.
 
-The assignment copied the address; it did not change our scope-exit rule. The problem appears afterward: both variables point to the same heap resource, so the rule frees it twice.
+The failure stems directly from the post-assignment state: whenever two active stack variables manage the same heap block, "free on scope exit" runs twice. That failure forces out a non-negotiable invariant:
 
-From that failure, we can extract a fundamental requirement our model must uphold:
+**At any given moment, each heap allocation can have only one stack variable responsible for freeing it.**
 
-**At any given moment, each heap resource can have only one stack variable responsible for freeing it.**
+## Patching the flaw: invalidating the source variable
 
-The assignment `t = s` breaks this requirement. To keep the model, we need to resolve the conflict.
+A single `t = s` broke our baseline model. To preserve correctness without adding a garbage collector or deep-copying heap buffers on every assignment, we have to apply a strict rule patch—since two variables cannot share cleanup responsibility, assigning to a new variable must retire the old one:
 
-## Patching the model: invalidate the old variable
-
-The patch follows the same minimal approach. Since two variables cannot both remain responsible for freeing the same heap block, only one can stay valid after an assignment:
-
-**When a value backed by a heap resource is assigned, its stack control header is copied to the new variable, the old variable becomes invalid immediately, and the responsibility for freeing the heap transfers to the new variable.**
+**When a value managing a heap allocation is assigned, transfer cleanup responsibility to the new variable and mark the source variable invalid immediately, forbidding any further use.**
 
 <OneBinding part="move" />
 
-The `"hello"` buffer on the heap is never duplicated—only the three machine words on the stack are copied. When the scope finally ends, only the valid variable `t` triggers deallocation; the invalidated `s` does nothing. The trade-off is equally direct: after the assignment, the old variable can no longer be used.
+With that patch in place, the hole closes: once `t = s` runs, `t` is the only valid variable left. At the closing `}`, `t` frees the heap buffer once while the invalidated `s` does nothing, eliminating the double free. Enforcing source-variable invalidation is what keeps this minimal reclamation model sound.
 
-## One `=`, two semantics: Copy and Move
+## From variable invalidation to move semantics
 
-In the lines above, assignment still uses the same equals sign `=`. In our model, both cases start by copying bytes on the stack. This describes the model, not a guarantee that compiled Rust code performs a physical byte copy.
+Mathematically, the patch works. From a programmer's perspective, however, it creates an awkward mental split.
+
+Look at the two assignments side by side:
 
 ```text
-b = a    // a is an integer
-t = s    // s points to a heap resource
+b = a    // after assignment, a remains valid
+t = s    // after assignment, s suddenly becomes invalid
 ```
 
-At the logical level, however, that single `=` splits into two distinct behaviors:
+Both lines use the exact same `=` operator—why does the source variable stay readable in one case and become unusable on the spot in the other?
 
-- For `b = a`: the stack bytes carry no heap resource that needs freeing. After the copy, `a` and `b` both remain valid and independent. We call this **Copy** semantics.
-- For `t = s`: the stack bytes carry a heap resource that requires exclusive cleanup. Keeping both variables valid after copying the header would cause a double free, so the old variable `s` must be invalidated immediately, leaving only `t` valid.
+Framing `=` as "copy the value first, then conditionally penalize and invalidate the old variable" works against human intuition. In everyday programming, copying leaves two usable values behind; forcing yourself to memorize which types trigger an invalidation penalty makes every assignment feel like a trap.
 
-In the second case, what protects the model is invalidating the old variable. Although the model copies the bytes, only one variable remains usable: `s` is invalid, and `t` holds the heap resource along with the responsibility for freeing it. The effect is that the value has **moved** from `s` to `t`.
+To align the rule with natural intuition, language design reshapes the mental model. Instead of describing `t = s` as "copy, then invalidate," we split `=` into two familiar ways of handing values across variables:
 
-In this model, the same `=` therefore has two behaviors: **Copy** for the integer and **Move** for the heap-backed string. In Rust, the actual distinction is whether a type implements the `Copy` trait, not whether it holds a heap resource.
+- **Copy semantics**: for values like the integer in `b = a` that carry no heap cleanup responsibility, assignment duplicates the value—one becomes two, `a` keeps its copy intact, and both variables remain usable.
+- **Move semantics**: for values like the string in `t = s` tied to exclusive cleanup responsibility, one cannot become two. Assignment **moves** the value—along with responsibility for freeing it—out of `s` and into `t`. Because the value has moved out of `s`, `s` is now empty; reading from `s` again makes no sense, and at scope exit `t` alone returns the resource.
 
-## What the minimal model has achieved so far
+Reframing mechanical invalidation as **move semantics** replaces a negative prohibition with a physical intuition: ask whether the value was copied or moved, and it is immediately clear which variable remains usable and who frees the memory. In this simplified model, values without heap allocations copy, whereas values managing heap allocations move.
 
-Put the two pieces from this section together, and our minimal model already meets the goal set in the first section:
+## Under the hood: move is a language semantics; hardware only copies bytes
 
-1. **When a variable goes out of scope, the heap resource it points to is freed automatically**—no manual `free`, and no runtime scanning or reference counting.
-2. **Assigning a heap-backed value performs a Move, invalidating the old variable**—only one variable is responsible for freeing a heap block at any moment, preventing double frees.
+With the intuition of "moving" in place, we need to anchor it back to hardware reality to prevent a widespread misconception: **when we say a value moves from `s` to `t`, does the CPU physically relocate data and wipe `s` clean in memory?**
 
-Automatic reclamation, no GC, and no double frees—on paper, everything seems to be in place.
+**No. "Move" is purely a compile-time semantics; hardware memory has no notion of moving bytes.**
 
-Still, this model has only passed its first test. If the model is complete, can you pass a value into a function for it to use without difficulty? If not, where does the problem arise?
+Physical memory only reads, copies, or overwrites bytes. Separating **runtime memory** from the **compiler's internal state table** reveals how move semantics actually implements source invalidation underneath:
 
-Hold on to that question as we step into the next section.
+1. **In physical memory at runtime, the operation is still a bitwise stack copy**:
+   - The `"hello"` character buffer on the heap never moves and is never duplicated.
+   - Because the stack frame is reclaimed as a single block when the function returns, `s`'s stack slot cannot be freed early on its own, nor does the runtime write any validity flag into memory.
+   - In an unoptimized baseline model, the CPU executes `t = s` the exact same way it executes `b = a`—**by copying the 24-byte control header bitwise from `s`'s stack slot into `t`'s**, leaving those same 24 bytes sitting untouched in `s` (and when emitting optimized machine code, the compiler can often elide even that stack copy).
+2. **Invalidation and transfer happen entirely inside the compiler's compile-time state table**:
+   - While analyzing source code, the compiler maintains a state table tracking whether each variable currently holds a live value and owns cleanup responsibility.
+   - Upon seeing `t = s`, the table marks `s` as **uninitialized / moved-from** and reassigns cleanup responsibility to `t`.
+   - If a later line tries to read `s`, the compiler checks its table, sees that `s` is no longer live, and **rejects the program at compile time** before an executable is ever produced.
+   - At the closing `}`, the compiler consults the same table and emits a heap-free instruction solely for the still-live `t`, emitting nothing at all for `s`.
+
+Keeping both layers distinct lets you switch perspectives cleanly: **when reasoning about program logic, think in moves to trace where values and cleanup duties flow; when reasoning about performance, remember that a move is at most a bitwise copy of a small stack header plus a compile-time state update, with zero runtime tracking overhead.**
+
+## What the minimal model solves—and where it stalls
+
+Together, the two rules derived in this section answer the goal posed in [The hard triangle](/memory/hard-triangle/):
+
+1. **Stack variables automatically free their heap allocations at scope exit**—requiring neither manual `free` calls nor runtime scanning or reference counting.
+2. **Values carrying cleanup responsibility follow move semantics on assignment (marking the source variable invalid and transferring duty at compile time)**—guaranteeing a single variable per heap block and ruling out double frees.
+
+Inside a single block, this model is tight and self-contained. Drop it into everyday multi-function code, however, and an immediate obstacle appears: if you pass a string to a helper function solely to print it once, what does move semantics do to the caller's variable?
+
+Carry that question into the next section.

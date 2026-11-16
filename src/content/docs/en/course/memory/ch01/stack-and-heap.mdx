@@ -1,6 +1,6 @@
 ---
-title: "The stack and the heap: why only the heap needs reclamation"
-description: Stack frames vanish automatically when a function returns, while heap buffers must be explicitly returned to the allocator—a contrast that gives Rust its starting clue.
+title: "The stack and the heap: why the heap needs separate cleanup"
+description: Local stack frames are reclaimed automatically when a function returns, whereas dynamically allocated heap buffers stay behind—a contrast that reveals our clue for automatic cleanup.
 sidebar:
   label: Stack and heap
   order: 2
@@ -8,83 +8,77 @@ sidebar:
 
 import StackAndHeap from '../../../../../../components/course/StackAndHeap.astro';
 
-The previous section set the goal: reclaim memory automatically without writing `free` by hand, and without paying a runtime collector to scan or count references. To see where that reclamation moment can come from, we first need to look at how a running program uses its two main regions of memory: the **stack** and the **heap**.
+The previous section set our target: reclaim memory automatically without manual `free` calls and without runtime scanning or reference counting. To find a deterministic cue for when memory can be freed, we need to look at the two memory regions a running program relies on: the **stack** and the **heap**.
 
-Those two words describe where bytes live and how they are managed—not two kinds of data types.
+These terms describe where bytes live and how they are allocated and reclaimed—not two categories of data types.
 
-## The stack: compile-time known sizes, automatic cleanup on return
+## The stack: fixed sizes at compile time, reclaimed on return
 
-When a function is called, the CPU carves out a contiguous block at the top of the stack called a **stack frame** to hold that call's parameters and local variables. When the function returns, the entire frame is discarded in one shot, and every local variable inside it disappears. Calls enter and leave in strict last-in, first-out (LIFO) order.
+Every time a function is called, the CPU carves out a contiguous block of stack memory—a **stack frame**—to hold that call's parameters and local variables. The moment the function returns, the entire frame is reclaimed at once, and every local variable inside it disappears. Frames enter and exit in strict last-in, first-out (LIFO) order.
 
 <StackAndHeap part="frames" />
 
-Allocating or discarding a stack frame usually takes nothing more than moving a stack pointer—it is practically free. Better still, cleanup happens automatically the moment a function returns; nobody has to remember to free a stack frame.
+Allocating or reclaiming a stack frame takes little more than moving a stack pointer, keeping overhead minimal. Better yet, returning from the function reclaims the frame automatically, with no extra cleanup code to write.
 
-If the stack is that fast and carefree, **what would happen if a program used only the stack?**
+If stack frames clean themselves up, **what stops a program from using only the stack?**
 
-For a toy program that adds two numbers `a + b`, the stack is all you need: the compiler knows the exact byte size of `a` and `b` ahead of time, runs the addition, and drops the frame on return. Step beyond fixed-size arithmetic, however, and a stack-only program immediately hits two hard walls:
+For a function that adds two integers `a + b`, the stack is enough: `a` and `b` occupy fixed byte sizes known at compile time, and their frame vanishes on return. Step beyond fixed-size, single-call computations, however, and a stack-only program runs into two hard limits:
 
-1. **Every variable on the stack must have a size known at compile time.** When generating machine code, the compiler has to bake in the exact byte size of the stack frame. If the size of a piece of data is only known at **runtime**—a line of text typed by a user, a packet read from a socket, or a list that grows as the program runs—the stack frame has no way to reserve a slot for it in advance.
-2. **Data inside a stack frame cannot outlive the function call that created it.** The instant the call returns, the whole frame is wiped away.
+1. **Every local variable on the stack must have a size known at compile time.** To emit machine instructions, the compiler must calculate the exact byte size of each stack frame in advance. When data size is determined only at **runtime**—a line of user input, a network packet, or a dynamically growing list—the compiler cannot reserve a fixed stack slot for it ahead of time.
+2. **Data stored inside a stack frame cannot outlive that call.** Returning reclaims the entire frame, so nothing stored directly inside it can remain in place for longer-lived use outside.
 
-Whenever a program needs to handle data whose size is only known at runtime, the stack alone cannot do the job. The program has to ask another region of memory for space on the fly—and that region is the **heap**.
+Whenever a program handles data whose size is unknown until runtime—or data that must persist beyond a single stack frame—it has to request space on demand from another region of memory: the **heap**.
 
-## The heap: a runtime-allocated resource controlled through a stack pointer
+## The heap: allocated on demand at runtime, reached via a stack pointer
 
-The heap is managed at runtime by a **memory allocator**. When your program needs space at runtime, it tells the allocator how many bytes it wants; the allocator finds a contiguous chunk of heap memory big enough to fit and hands back the **starting address** of that chunk.
+The heap is managed at runtime by a **memory allocator**. When a program needs space while running, it asks the allocator for a given number of bytes; the allocator locates a large enough contiguous block on the heap, marks it in use, and returns its **starting address**.
 
-Because heap memory is requested dynamically from the allocator, it does not vanish when the function that requested it returns. **A heap allocation is an acquired resource—once requested, it must be returned to the allocator.** Until it is explicitly handed back, those bytes stay occupied.
+Because that block is dynamically requested from the allocator at runtime, it is not tied to any function call and will not vanish when a function returns. Once the program is done with it, the block must be explicitly returned to the allocator before those bytes can be reused.
 
-The allocator returns the **starting address** of the heap allocation. The data may grow or shrink at runtime, but its address has a fixed size—in this model, eight bytes on a 64-bit machine.
-
-That address connects the two regions: **a fixed-size control structure in the stack frame holds the address, while the variable-sized data sits on the heap.**
+This division also explains how the stack and the heap work together. A heap payload has an unknown size at compile time and cannot fit directly into a stack frame, yet the **starting address (pointer)** returned by the allocator always has a fixed size—eight bytes (one machine word) on a 64-bit platform. Dynamically sized values therefore split naturally into two parts: **a fixed-size control header in the stack frame holding the address and metadata, and the variable-sized payload on the heap.**
 
 <StackAndHeap part="split" />
 
-Take Rust's growable string type, `String` (named `name` in the diagram):
+Consider a growable `String` (named `name` in the diagram):
 
 <StackAndHeap part="string" />
 
-The variable `name` on the stack is always three machine words wide: a pointer (`ptr`) to the heap allocation, a current length (`len`), and a capacity (`cap`). Its size is fixed at compile time, satisfying the stack's rule—while the variable-length character buffer (`"Rust"`) lives as a resource on the heap, reached through `ptr`.
+On the stack, `name` occupies a fixed three machine words (24 bytes on a 64-bit target): a pointer to the heap buffer (`ptr`), the current byte length (`len`), and the allocated capacity (`cap`). Because that three-word header has a compile-time known size, it sits directly in the stack frame, while the variable-length character buffer (`"Rust"`) lives on the heap behind `ptr`.
 
-## Why only the heap needs "reclamation"
+## When a function returns: the stack frame vanishes, the heap stays behind
 
-Now watch what happens to the two halves the moment a function returns:
+Watch how the two regions diverge at the exact moment a function returns:
 
 <StackAndHeap part="return" />
 
-While the function is running, the stack frame holds the variable `a`, pointing at the heap allocation. When the function returns, the stack frame—and `a` along with it—vanishes automatically. The heap, however, does not follow function calls: the heap block sits right where it was, with no stack variable left pointing to it.
+During the call, the stack frame holds variable `a`, pointing to data allocated on the heap. When the function returns, the stack frame—and `a` along with it—is reclaimed automatically. The heap, however, does not follow the call stack: the heap block remains right where it was, with no stack variable pointing to it anymore.
 
-In short, **the call mechanism already cleans up the stack for free; the heap buffer is the part that requires an explicit release.** When we talk about memory reclamation, we are talking about who returns that heap resource to the allocator.
+In short, **function-call mechanics already reclaim stack frames automatically, whereas heap buffers require a separate release step.** Everything we derive in this chapter comes down to who performs that release and when.
 
-Here are three problems related to releasing heap resources:
+Get the timing of heap cleanup wrong, and one of three classic memory bugs follows:
 
-- **Nobody returns it**: the stack frame is gone, the heap address is lost forever, and the memory stays occupied until the process exits—a **memory leak**.
-- **Returned too early**: the heap block is freed while a pointer elsewhere still holds the old address and keeps reading or writing through it—a **dangling pointer**.
-- **Returned twice**: the same heap block is handed back to the allocator twice—a **double free**, which is undefined behavior and typically crashes the program.
+- **Never returned**: the stack pointer is gone, leaving the heap block unreachable and unreleased until the process terminates—a **memory leak**.
+- **Returned too early**: the heap block is returned to the allocator while an old address elsewhere continues reading or writing through it—a **dangling pointer**.
+- **Returned twice**: the same heap block is freed two times—a **double free**, which triggers **undefined behavior** and typically crashes the program.
 
----
+## The clue to automatic cleanup: stack variables have deterministic scope exits
 
-## The mental map to carry into Rust
-
-Languages like Python, Java, and JavaScript deliberately hide the boundary between stack and heap behind their runtimes, so you rarely have to picture where a variable's bytes actually live. In Rust, **keeping a clear mental picture of the stack-and-heap layout is the foundation for every rule that follows.**
-
-Before moving on, lock in this three-part map:
+Languages like Python, Java, and JavaScript hide the boundary between stack and heap behind their runtimes. Before reasoning about Rust's rules, anchor this side-by-side layout:
 
 | Dimension | Stack | Heap |
 | --- | --- | --- |
-| **What lives here** | Values whose size is known at compile time (numbers, booleans, and fixed-size control headers pointing to the heap) | Data payloads whose size is only known at runtime or can grow dynamically |
-| **How it is allocated** | Carved out as a stack frame on function entry by moving the stack pointer | Requested at runtime from the memory allocator, which returns a contiguous block's starting address |
-| **How it is reclaimed** | **Automatic**: when the function returns, the whole frame is discarded | **Not automatic**: an acquired resource that must be explicitly returned to the allocator |
+| **What lives here** | Compile-time fixed-size values (integers, booleans, and fixed-size headers pointing to the heap) | Payloads whose size is determined at runtime or grows dynamically |
+| **How it is allocated** | Carved out as a stack frame on function entry by moving the stack pointer | Requested on demand from the memory allocator, which returns a starting address |
+| **How it is reclaimed** | **Automatic**: returning discards the entire stack frame and its local variables | **Not automatic**: dynamically acquired memory must be explicitly returned to the allocator |
 
-Boiled down to three instincts you can call on anytime:
+Distill this layout into the three physical facts our chapter model builds upon:
 
-1. **Anything that sits directly on the stack has a compile-time fixed size; anything whose size isn't known until runtime keeps its payload on the heap.**
-2. **Heap data never floats around on its own—it is always driven through a fixed-size control header on the stack that holds its starting address.**
-3. **The stack cleans itself up; "memory management" is always the problem of when to give back the heap resource.**
+1. **Values stored directly in local stack slots must have sizes known at compile time; data allocated or grown dynamically at runtime normally places its payload on the heap.** (Later, in [Strings](/types/strings/), we will also meet string literals baked into the executable's read-only data segment and slice views that own no heap allocation.)
+2. **In this chapter's local-variable model, heap data is accessed and managed through a fixed-size control header in the stack frame holding the heap block's starting address.**
+3. **Stack frames are reclaimed automatically on return; memory reclamation is fundamentally the problem of who returns dynamically allocated heap blocks and when.**
 
-This map also helps explain why garbage collection (GC) became a widely used engineering solution: since stack frames come and go while heap resources stay behind, a tracing collector can start from live variables, follow their pointers into the heap, keep reachable data, and reclaim the rest. This frees programmers from tracking deallocation timing by hand.
+These three facts explain why tracing GC became the mainstream answer: if stack frames come and go while heap blocks stay put, a natural strategy is to run a collector that starts from live stack variables and follows pointers—keeping reachable heap blocks and reclaiming the rest.
 
-What if we refuse to pay the runtime cost of scanning or reference counting too?
+If we rule out both manual `free` calls and runtime scanning or counting, where is the remaining clue?
 
-Then we have to look back at instincts 2 and 3 for the only clue left: the heap resource itself has no built-in exit moment, **but the stack variable controlling it does—the exact closing brace (`}`) where that variable goes out of scope.** In the next section, we follow that single clue to build our first GC-free automatic reclamation model.
+Look at the link between facts two and three: a heap block has no built-in expiration point of its own, **yet the stack variable holding its control header exits at a point known at compile time—the closing brace (`}`) of its scope.** In the next section, we follow that clue to build a minimal GC-free reclamation model.

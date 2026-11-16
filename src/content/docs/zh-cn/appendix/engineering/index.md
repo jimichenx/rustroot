@@ -1,7 +1,7 @@
 ---
 title: 工程与排障
 description: 查阅 Rust 工具链全景地图（rustup / rustc / cargo / Edition）与高频编译错误码的诊断判据。
-draft: true
+draft: false
 sidebar:
   order: 4
   badge:

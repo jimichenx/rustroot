@@ -1,35 +1,33 @@
 ---
 title: 关于作者
-description: jimichen，从事算法研发与系统架构设计，记录学习 Rust 的困惑与思考。
+description: jimichen，从事算法研发与系统架构工作，开源指南 Rust Root 作者。
 sidebar:
   order: 4
 ---
 
-## 作者
+我是 **jimichen**，从事算法研发与系统架构工作。
 
-我是 **jimichen**，长期从事算法研发与系统架构设计，也始终保持亲手编写代码的习惯。目前从事自由工作，同时探索新的创业方向。
+写了多年其他语言后，我开始用 Rust 做项目。最难的一步，是从原有的编程习惯转过来，建立起 Rust 的思维方式。
 
-我在两年前开始学习 Rust，现在也在用 Rust 开发新的项目。跨过 Rust 门槛的过程并不轻松，这两年里我记下了每一处曾让我痛苦、难以理解的地方。这样的记录有保质期：一个概念一旦想通，当初为什么会卡住，很快就会想不起来——这就是知识诅咒（Curse of Knowledge）。趁这些困惑还清晰，我把它们整理成这份从根上推导 Rust 的开源指南。
+从那时起，我一直在找一条线索，试着把这套思维方式从头理顺，希望能减少从其他语言跨过来时的摩擦，让学习曲线更平缓一些。Rust Root 是我顺着这个想法写下的一次尝试。
 
-## 联系与关注
+## 联系与反馈
 
-- **仓库**：[github.com/jimichenx/rustroot](https://github.com/jimichenx/rustroot)
-  课文、示例和站点代码在这个公开仓库。
-- **电子邮件**：[hello@rustroot.dev](mailto:hello@rustroot.dev)
-  内容纠错、交流或转载授权，欢迎直接来信。反馈某一节的具体问题时，请附上页面地址和对应段落。
+- **问题反馈与讨论**：[GitHub Issues](https://github.com/jimichenx/rustroot/issues)
+  正文勘误、代码问题或内容讨论欢迎提 Issue。为保持全站风格与主线统一，仓库暂不接受 PR。
+- **个人联系**：[hello@rustroot.dev](mailto:hello@rustroot.dev)
+  用于授权许可、商业合作、出版等事宜；具体内容问题请尽量通过 Issue 反馈。
 - **微信公众号**
-  新章节更新、Rust 工程踩坑记录和后续动态，都会在公众号同步发布。用微信扫这个码关注。
+  内容更新与工程笔记会同步发在这里。
 
   <img class="wechat-qr" src="/about/wechat-qr.jpg" width="200" height="200" alt="微信公众号二维码" />
 
 ## 署名与许可
 
-本站正文、配图和页面是同一套作品。`examples/` 里的示例代码另行以 MIT 协议发布。两份协议的范围写在公开仓库根目录的 [LICENSE](https://github.com/jimichenx/rustroot/blob/develop/LICENSE)。
+本站正文与配图采用 [CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/deed.zh-hans)，`examples/` 下的示例代码采用 MIT 协议，详细范围见仓库根目录的 [LICENSE](https://github.com/jimichenx/rustroot/blob/main/LICENSE)。
 
-本站正文与配图采用 [CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/deed.zh-hans)。转载或引用时请保留作者名，并链接到本页或 [rustroot.dev](https://rustroot.dev)。
+非商业分享与引用请保留署名并链接到本页或 [rustroot.cn](https://rustroot.cn)：
 
-署名可以写成：
+> jimichen，Rust Root，https://rustroot.cn/about/author/
 
-> jimichen，Rust Root，https://rustroot.dev/about/author/
-
-非商业性分享仍须遵守禁止演绎的条款。商业使用、付费培训和改编需要事先书面许可，请来信说明用途。
+商业使用、付费培训或改编需事先获得书面许可，请来信联系。

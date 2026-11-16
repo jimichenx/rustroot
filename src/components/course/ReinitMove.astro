@@ -26,7 +26,7 @@ const t = en
 		}
 	: {
 			caption:
-				'执行 let t = s; 与 s = String::from("world"); 之后：原 "hello" 早已移交 t（未释放），空置的 s 直接接手 "world" 并恢复有效，两块堆缓冲区同时存活。',
+				'执行 let t = s; 与 s = String::from("world"); 之后：原 "hello" 已移交 t（未释放），空置的 s 直接接手 "world" 并恢复有效，两块堆缓冲区同时存活。',
 			title:
 				'执行 let t = s; 与 s = String::from("world"); 之后的栈与堆布局',
 			desc: '栈帧里，上方变量 s（String，标为重新有效）持有有效的三个机器字（ptr、len · 5、cap · 5），箭头从 s 的 ptr 指向堆上上方的字符缓冲区 "world"。下方变量 t（String）同样持有有效的三个机器字（ptr、len · 5、cap · 5），箭头从 t 的 ptr 指向堆上下方的原字符缓冲区 "hello"。两个变量与两块堆缓冲区全部有效，没有任何释放发生。',

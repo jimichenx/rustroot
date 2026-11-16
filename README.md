@@ -71,6 +71,11 @@ A part, a chapter, and a lesson do not use the `chNN` folder name in the public 
 
 `rustroot.cn/<path>` and `rustroot.dev/<path>` are hreflang alternates.
 
+## Feedback & Contributions
+
+- **Issues & Discussion**: Content feedback, technical corrections, and discussions are welcome via [GitHub Issues](https://github.com/jimichenx/rustroot/issues).
+- **No Pull Requests**: To keep a consistent writing voice and structure across the entire guide, this repository does not accept pull requests.
+- **Direct Contact**: For licensing, commercial inquiries, publishing, or other personal communication, email [hello@rustroot.dev](mailto:hello@rustroot.dev). Please use GitHub Issues for feedback on the text or examples.
 
 ## License
 

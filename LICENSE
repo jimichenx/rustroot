@@ -5,7 +5,7 @@ Copyright (c) 2026 RustRoot
 - `examples/` 以外的全部内容，包括课文、配图、页面和站点程序：CC BY-NC-ND 4.0。可以在非商业场合分享，须署名并链回原作；不得散布改编版本。商业使用、付费培训和改编需要事先书面许可，来信 hello@rustroot.dev。
 - `examples/` 下的示例程序：MIT。见 LICENSE-MIT。
 
-署名可以写成：jimichen，Rust Root，https://rustroot.dev/about/author/
+署名可以写成：jimichen，Rust Root，https://rustroot.cn/about/author/
 
 协议正文以 Creative Commons 公布的法律文本为准：
 https://creativecommons.org/licenses/by-nc-nd/4.0/legalcode

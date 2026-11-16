@@ -6,7 +6,7 @@ const en = SITE_LOCALE === 'en';
 const t = en
 	? {
 			title: 'Four quadrants: who frees, and whether a runtime collector is involved',
-			desc: 'A two-by-two quadrant chart. The top row is "the programmer decides when to free"; the bottom row is "automatic reclamation". The left column is "no GC, no runtime collector"; the right column is "GC, runtime reclamation". Top left lists C free and hand-written delete in C++. Top right is marked "—", an impossible combination. Bottom left reads: the approach Rust seeks, automatic reclamation without GC. Bottom right lists tracing garbage collection and reference counting.',
+			desc: 'A two-by-two quadrant chart. The top row is "the programmer decides when to free"; the bottom row is "automatic reclamation". The left column is "no GC, no runtime collector"; the right column is "GC, runtime reclamation". Top left lists C free and hand-written delete in C++. Top right is marked "—", an impossible combination. Bottom left reads: the path Rust takes, automatic reclamation without GC. Bottom right lists tracing garbage collection and reference counting.',
 			noGc: 'No GC',
 			noGcSub: 'no runtime collector',
 			gc: 'GC',
@@ -18,7 +18,7 @@ const t = en
 			manualNoGcSub: 'hand-written delete in C++',
 			manualGc: '—',
 			manualGcSub: 'impossible',
-			rust: 'The approach Rust seeks',
+			rust: 'The path Rust takes',
 			rustSub: 'automatic reclamation · no GC',
 			gcNames: 'Tracing garbage collection',
 			gcNamesSub: 'reference counting',
