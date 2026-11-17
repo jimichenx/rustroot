@@ -33,7 +33,7 @@ Step through `shadow.rs` line by line, watching the evaluation order of `let`—
 2. `let n = n + 1;`: evaluates `n + 1` on the right first—because the new binding is not yet in effect, `n` on the right still reads `7` from the first variable, producing `8`; the left-hand `let` then creates **a second variable** on the stack (storing `8`) and rebinds the name `n` to that second variable.
 3. `let n = String::from("eight");`: the left-hand `let` creates **a third variable** on the stack whose type is determined independently as `String`—the earlier 4-byte integer slot never changed its type at runtime.
 
-Creating a new variable with the same name via a fresh `let` so subsequent uses of that name resolve to the new binding is called **shadowing**. Recalling the keyword choice noted in [Declarations and bindings](/memory/bindings/), `let` reads far more naturally here than `var` or `val`: because `var` (variable) and `val` (value) are nouns, writing `var n` or `val n` twice in the same scope reads like redefining the exact same entity, whereas repeating `let n = ...` reads cleanly as "from this point onward, let `n` refer to this new value."
+Creating a new variable with the same name via a fresh `let` so subsequent uses of that name resolve to the new binding is called **shadowing**. Recalling the keyword choice noted in [Declarations and bindings](/memory/bindings/), `let` makes far better sense here than `var` or `val`: because `var` (variable) and `val` (value) are nouns, writing `var n` or `val n` twice in the same scope looks like redefining the exact same item, whereas repeating `let n = ...` reads directly as "from this point onward, let `n` refer to this new value."
 
 Contrasting reassignment and shadowing side by side:
 
