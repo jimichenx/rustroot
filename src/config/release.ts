@@ -112,6 +112,23 @@ function releaseGate(): Gate | null {
 	return gate;
 }
 
+function partStillDraft(part: PartNode): boolean {
+	return (
+		part.draft ||
+		part.lessons.some((lesson) => lesson.draft) ||
+		part.chapters.some((chapter) => chapter.draft || chapter.lessons.some((lesson) => lesson.draft))
+	);
+}
+
+/**
+ * 源文件里是否还有未公开的章或节。
+ * 看 frontmatter 的 draft，不看这次构建有没有把草稿带上，因此 dev、预览和正式站判断一致。
+ */
+export function hasPendingRelease(contentDir = CURRENT.contentDir): boolean {
+	const course = loadCourse(contentDir);
+	return course.parts.some(partStillDraft) || (course.appendix ? partStillDraft(course.appendix) : false);
+}
+
 /** 这一页是否进入当前这次构建。忽略草稿时，每一页都进。 */
 export function isPublished(slug: string): boolean {
 	const gate = releaseGate();

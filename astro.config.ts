@@ -73,7 +73,7 @@ export default defineConfig({
 			lastUpdated: true,
 			credits: false,
 			social: [{ icon: 'github', label: 'GitHub', href: REPOSITORY }],
-			editLink: { baseUrl: `${REPOSITORY}/edit/develop/` },
+			editLink: { baseUrl: `${REPOSITORY}/edit/main/` },
 		}),
 	],
 	// 两台 dev server 不能共用 Vite 预构建缓存，否则后启动的语言会盖掉先启动的模块。

@@ -1,21 +1,17 @@
 ---
 title: Variables and assignment
-description: Put the ownership and borrowing model from Chapter 1 to work in real Rust code by tracing cleanup duty across declarations, reassignment, and shadowing.
+description: Bring the ownership and borrowing model into real Rust code, tracing the compile-time state table and cleanup responsibility across variable declarations, reassignment, and shadowing.
 id: variables
 ---
 
-In most programming languages, variable declarations and assignments barely warrant a dedicated chapter: you declare a variable, put a value in it with `=`, and read or replace it whenever you like. When learning Rust, however, many people write their very first lines of `let` and `=` and immediately run into compiler errors about moved values, `Copy` versus `Move`, or not being allowed to call a method without `mut`.
+In most mainstream languages, declaring and assigning variables barely calls for discussion: you define a variable, store a value with `=`, and read or replace it whenever you want. Early in Rust, however, the very first lines of code trigger a stream of compiler rejections—why an original variable becomes unusable right after assignment, or why a newly declared variable forbids mutating its contents by default.
 
-Chapter 1 showed why: in garbage-collected languages, `=` merely copies a value or an object reference while the runtime handles reclamation behind the scenes; in Rust, every `let` and `=` hands off or triggers the **cleanup responsibility** we derived in Chapter 1 at compile time.
+[From automatic reclamation to ownership](/memory/ownership/) established the underlying reason: in garbage-collected (GC) languages, `=` copies a value or an object reference while the runtime handles reclamation behind the scenes; in Rust, every `let` and `=` transfers or triggers **cleanup responsibility** at compile time.
 
-This chapter leaves pseudocode behind. We open the compiler and trace our memory model through the most fundamental Rust syntax—`let` and `=`—in three steps:
+This chapter opens the compiler. Starting from your first runnable Rust program, we follow the three variable operations that appear throughout everyday code: defining a new variable with `let x = ...` across copy, move, and borrowing; reassigning an existing variable with `x = ...` to inspect mutability permissions and where the old value goes; and repeating `let x = ...` to declare a new variable of the same name while tracing scope and drop timing.
 
-- **Step 1: Initial binding (`let x = ...`)**—creating a new variable to take on an initial value. Starting from our first runnable program, we verify why the same `=` splits into three paths—Copy, Move, and borrowing—across integers, `String`, and references (`&T`).
-- **Step 2: Reassignment (`x = ...`)**—updating an existing variable. We unpack the two permissions unlocked by `let mut` and follow the compiler's state tracking to answer where the old value goes when a new value takes its place.
-- **Step 3: Shadowing (writing `let x = ...` again)**—creating a new variable with the same name. We contrast reassignment with shadowing and verify through an experiment whether a shadowed value is dropped on the spot.
+When you finish this chapter—without memorizing compiler error codes—you should be able to read real Rust code line by line and answer three questions:
 
-By the end of this chapter, when looking at a dozen lines of Rust code—without memorizing compiler error codes—you should be able to answer three questions line by line:
-
-1. **Which action is this**: is this line creating a new variable (initial `let`), updating an existing variable (reassignment), or shadowing an old variable with a new `let` of the same name?
+1. **Which action is this**: does this line define a new variable (initial `let`), update the same existing variable (reassignment without `let`), or declare another new variable with the same name (a second `let`)?
 2. **How is the right-hand side handed off**: is the value on the right copied, moved, or borrowed by address?
-3. **When is the old value freed**: which variables are still valid right now, which variable owns each heap buffer, and is that buffer freed right at the assignment line or at the end of the scope (`}`)?
+3. **When is the old value dropped**: which variables remain valid right now, which variable owns each heap allocation, and is that memory dropped at the assignment line or at scope exit (`}`)?

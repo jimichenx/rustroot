@@ -12,10 +12,10 @@ const en = SITE_LOCALE === 'en';
 const t = en
 	? {
 			caption:
-				'After let t = s; and s = String::from("world");: "hello" was already moved to t (not dropped), while the vacated s takes ownership of "world" and becomes valid again.',
+				'After let t = s; and s = String::from("world");: "hello" was already moved to t (not dropped), while the vacated s takes ownership of "world" and becomes valid again, leaving both heap buffers alive.',
 			title:
 				'Stack and heap layout after let t = s; and s = String::from("world");',
-			desc: 'On the stack frame, top variable s (String, marked valid again) holds an active three-word header (ptr, len 5, cap 5) whose ptr arrow points to the five-character buffer "world" on the heap. Below it, variable t (String) also holds an active three-word header (ptr, len 5, cap 5) whose ptr arrow points to the original five-character buffer "hello" on the heap. Both variables and both heap buffers remain alive simultaneously.',
+			desc: 'On the stack frame, top variable s (String, marked valid again) holds an active three-word control header (ptr, len 5, cap 5) whose ptr arrow points to the five-character buffer "world" on the heap. Below it, variable t (String) also holds an active three-word control header (ptr, len 5, cap 5) whose ptr arrow points to the original five-character buffer "hello" on the heap. Both variables and both heap buffers remain alive simultaneously.',
 			stack: 'stack frame',
 			heap: 'heap',
 			validAgain: 'valid again',

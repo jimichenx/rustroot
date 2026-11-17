@@ -11,9 +11,9 @@ const en = SITE_LOCALE === 'en';
 const t = en
 	? {
 			caption:
-				'At target = source;: the "old" heap buffer previously owned by target is dropped immediately, and source\'s header moves into target (leaving source invalid).',
+				'At target = source;: the "old" heap buffer previously owned by target is dropped on the spot, and source\'s control header moves into target (leaving source invalid).',
 			title: 'Stack and heap layout at target = source;',
-			desc: 'On the stack frame, variable target (String) holds an active three-word header (ptr, len 3, cap 3) whose ptr arrow points to the "new" character buffer on the heap. Below it, variable source (String) is marked invalid with its three machine words shown in dashed outlines and no arrow. On the heap, the top buffer "old" is shown in dashed outlines as dropped in place, while the bottom buffer "new" is active.',
+			desc: 'On the stack frame, variable target (String) holds an active three-word control header (ptr, len 3, cap 3) whose ptr arrow points to the "new" character buffer on the heap. Below it, variable source (String) is marked invalid with its three machine words shown in dashed outlines and no arrow. On the heap, the top buffer "old" is shown in dashed outlines as dropped in place, while the bottom buffer "new" is active.',
 			stack: 'stack frame',
 			heap: 'heap',
 			oldBuffer: 'old buffer (dropped in place)',

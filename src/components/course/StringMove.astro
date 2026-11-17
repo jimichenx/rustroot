@@ -11,9 +11,9 @@ const en = SITE_LOCALE === 'en';
 const t = en
 	? {
 			caption:
-				'After let t = s;: the three-word header is copied into t, s becomes invalid, and only one character buffer exists on the heap.',
+				'After let t = s;: the three-word control header is copied into t, s becomes invalid, and only one character buffer exists on the heap.',
 			title: 'Stack and heap layout of String after let t = s;',
-			desc: 'On the stack frame, variable s (String) is marked invalid with its three machine words (ptr, len 5, cap 5) shown in dashed outlines and no arrow. Below it, variable t (String) holds an active three-word header (ptr, len 5, cap 5), with an arrow from ptr pointing to the five-character buffer hello on the heap.',
+			desc: 'On the stack frame, variable s (String) is marked invalid with its three machine words (ptr, len 5, cap 5) shown in dashed outlines and no arrow. Below it, variable t (String) holds an active three-word control header (ptr, len 5, cap 5), with an arrow from ptr pointing to the five-character buffer hello on the heap.',
 			stack: 'stack frame',
 			heap: 'heap',
 			buffer: 'character buffer',

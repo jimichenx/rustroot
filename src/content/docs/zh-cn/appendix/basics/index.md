@@ -1,7 +1,6 @@
 ---
 title: 基础语法
 description: 主线示例里的基础写法集中在这里查：格式化打印、标量与元组、函数与表达式、struct 与 enum、模块与 Prelude。
-draft: true
 sidebar:
   order: 1
   badge:

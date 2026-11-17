@@ -4,28 +4,65 @@
  * 只把子列表换成本地 vendored 的 SidebarSublist，实现「篇不进侧栏、章组标题即章描述页链接」。
  * 样式与展开状态持久化全部沿用 Starlight 原组件。
  * 末尾脚本在恢复滚动位置之后，把当前页链接滚进侧栏视野（已经看得见则不动）。
+ * 中文站在目录下方加一句发布节奏。仍有 draft 的章或节时才出现；英文站不显示。
  */
 import MobileMenuFooter from 'virtual:starlight/components/MobileMenuFooter';
 import SidebarPersister from '@astrojs/starlight/components/SidebarPersister.astro';
+import { CURRENT } from '../../config/site';
+import { hasPendingRelease } from '../../config/release';
 import SidebarSublist from './SidebarSublist.astro';
 
 const { sidebar } = Astro.locals.starlightRoute;
+const showReleaseNote = CURRENT.code === 'zh' && hasPendingRelease();
 ---
 
-<SidebarPersister>
-	<SidebarSublist sublist={sidebar} />
-</SidebarPersister>
+<div class="rr-sidebar-scroll">
+	<SidebarPersister>
+		<SidebarSublist sublist={sidebar} />
+	</SidebarPersister>
+</div>
+{
+	showReleaseNote && (
+		<p class="rr-release-note">后面的章节按每周一到两章陆续公开。</p>
+	)
+}
 
 <script is:inline aria-hidden="true">
 	(() => {
-		const scroller = document.getElementById('starlight__sidebar');
-		if (!scroller) return;
-		window.__rrScrolls = [];
-		scroller.addEventListener('scroll', () => {
-			window.__rrScrolls.push(Math.round(scroller.scrollTop));
-		});
-
+		const pane = document.getElementById('starlight__sidebar');
+		if (!pane) return;
+		const list = pane.querySelector('.rr-sidebar-scroll');
 		const desktopQuery = matchMedia('(min-width: 50em)');
+		// 有发布节奏时，桌面端只滚动目录，这句话留在目录下面。手机端仍滚动整栏。
+		const scroller = () =>
+			list && desktopQuery.matches && pane.querySelector('.rr-release-note') ? list : pane;
+
+		const remember = () => {
+			try {
+				const persist = pane.querySelector('sl-sidebar-state-persist');
+				const hash = persist?.getAttribute('data-hash') || '';
+				const key = 'sl-sidebar-state';
+				const stored = JSON.parse(sessionStorage.getItem(key) || '{}');
+				if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return;
+				if (stored.hash && hash && stored.hash !== hash) return;
+				stored.hash = hash;
+				stored.scroll = scroller().scrollTop;
+				if (!Array.isArray(stored.open)) stored.open = [];
+				sessionStorage.setItem(key, JSON.stringify(stored));
+			} catch {}
+		};
+
+		window.__rrScrolls = [];
+		const onScroll = () => {
+			window.__rrScrolls.push(Math.round(scroller().scrollTop));
+		};
+		pane.addEventListener('scroll', onScroll);
+		if (list) list.addEventListener('scroll', onScroll);
+		// Starlight 把滚动位置记在整栏上。目录单独滚动时，它存进去的是 0，这里在它之后改回来。
+		document.addEventListener('visibilitychange', () => {
+			if (document.visibilityState === 'hidden') setTimeout(remember, 0);
+		});
+		if (list) list.addEventListener('click', () => setTimeout(remember, 0));
 
 		// 只滚动侧栏。当前链接已经在可视区域内就不动；只是贴边，就挪出一点空隙；
 		// 整段都在视野外，则尽量把所在章的标题一起露出来，章太长就放在侧栏上方约三分之一处。
@@ -33,19 +70,34 @@ const { sidebar } = Astro.locals.starlightRoute;
 		// 这个回调排在那之后，也排在 SidebarPersister 恢复 scrollTop 之后，绘制前完成。
 		const reveal = (allowRetry) => {
 			try {
-				if (!desktopQuery.matches && !scroller.matches(':popover-open')) return;
+				if (!desktopQuery.matches && !pane.matches(':popover-open')) return;
 
-				const current = scroller.querySelector('a[aria-current="page"]');
+				const box = scroller();
+				try {
+					const persist = pane.querySelector('sl-sidebar-state-persist');
+					const hash = persist?.getAttribute('data-hash') || '';
+					const stored = JSON.parse(sessionStorage.getItem('sl-sidebar-state') || '{}');
+					if (
+						stored &&
+						stored.hash === hash &&
+						typeof stored.scroll === 'number' &&
+						box.scrollTop === 0
+					) {
+						box.scrollTop = stored.scroll;
+					}
+				} catch {}
+
+				const current = box.querySelector('a[aria-current="page"]');
 				if (!(current instanceof HTMLElement)) return;
 
 				let node = current.parentElement;
-				while (node && node !== scroller) {
+				while (node && node !== box) {
 					if (node instanceof HTMLDetailsElement && !node.open) node.open = true;
 					node = node.parentElement;
 				}
 
 				const pad = 16;
-				const view = scroller.getBoundingClientRect();
+				const view = box.getBoundingClientRect();
 				const link = current.getBoundingClientRect();
 				if (view.height < 1 || link.height < 1) {
 					if (allowRetry) requestAnimationFrame(() => reveal(false));
@@ -89,33 +141,19 @@ const { sidebar } = Astro.locals.starlightRoute;
 					linkTop: link.top,
 					linkH: link.height,
 					delta,
-					scrollBefore: scroller.scrollTop,
+					scrollBefore: box.scrollTop,
 				};
 				if (Math.abs(delta) < 1) return;
-				scroller.scrollTop += delta;
-				window.__rrReveal.scrollAfter = scroller.scrollTop;
-
-				// 记下新位置。否则下一次进页仍恢复旧的 scrollTop（Starlight 只在切到后台时保存），
-				// 相邻课会先被拉回开头再纠正。
-				try {
-					const persist = scroller.querySelector('sl-sidebar-state-persist');
-					const hash = persist?.getAttribute('data-hash') || '';
-					const key = 'sl-sidebar-state';
-					const stored = JSON.parse(sessionStorage.getItem(key) || '{}');
-					if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return;
-					if (stored.hash && hash && stored.hash !== hash) return;
-					stored.hash = hash;
-					stored.scroll = scroller.scrollTop;
-					if (!Array.isArray(stored.open)) stored.open = [];
-					sessionStorage.setItem(key, JSON.stringify(stored));
-				} catch {}
+				box.scrollTop += delta;
+				window.__rrReveal.scrollAfter = box.scrollTop;
+				remember();
 			} catch {}
 		};
 
 		if (customElements.get('sl-sidebar-pane')) reveal(true);
 		else customElements.whenDefined('sl-sidebar-pane').then(() => reveal(true));
 
-		scroller.addEventListener('toggle', (event) => {
+		pane.addEventListener('toggle', (event) => {
 			if (event.newState === 'open') requestAnimationFrame(() => reveal(true));
 		});
 		desktopQuery.addEventListener('change', () => requestAnimationFrame(() => reveal(true)));

@@ -21,7 +21,9 @@ import javaFinal from '../../../../../../../examples/memory/variables/java/Final
 
 ## 默认不可变与 `let mut` 的两项权限
 
-在 Rust 中，直接用 `let` 声明的变量默认是**不可变绑定**。对普通所有者变量而言，不可变绑定同时限制了**两项不同的修改权限**。
+如果你熟悉 JavaScript 或 TypeScript，需要注意关键字习惯的差异：在 JS/TS 中，`let` 声明的变量默认可变，`const` 才表示不可变；Rust 恰恰相反——直接用 `let` 声明的变量默认是**不可变绑定**，需要修改时必须显式写成 `let mut`。
+
+对普通所有者变量而言，不可变绑定同时限制了**两项不同的修改权限**。
 
 ### 1. 第一项权限：重新赋值（`x = ...`）
 
@@ -30,16 +32,32 @@ import javaFinal from '../../../../../../../examples/memory/variables/java/Final
 <small class="code-source">源文件：<code>examples/memory/variables/src/bin/immutable.rs</code></small>
 <Code code={immutable} lang="rust" />
 
-取消 `// n = 8;` 的注释后，编译器拒绝编译：
+取消 `// n = 8;` 的注释后，编译器拒绝编译，并在诊断末尾直接给出修复提示：
 
 <small class="code-source">编译器输出（取消 immutable.rs 中注释行后）</small>
 ```text
 error[E0384]: cannot assign twice to immutable variable `n`
+ --> src/bin/immutable.rs:4:5
+  |
+3 |     let n = 7;
+  |         - first assignment to `n`
+4 |     n = 8;
+  |     ^^^^^ cannot assign twice to immutable variable
+  |
+help: consider making this binding mutable
+  |
+3 |     let mut n = 7;
+  |         +++
 ```
 
-`error[E0384]` 拦截的是**重新赋值（Reassignment）**。若要向已有变量换入新值，声明时须加上 `mut`，写成 `let mut n = 7;`。
+`error[E0384]` 拦截的是**重新赋值（Reassignment）**（包括 `n += 1;` 这类复合赋值语法）。按 `help` 提示在声明时加上 `mut` 写成 `let mut n = 7;`，即可向该变量换入新值。
 
-需要注意，`let mut` 允许更新值，但**不允许改变变量的类型**：
+看到这里，初学者常会想：既然加上 `mut` 就不报错，为什么不给所有变量都默认写上 `let mut`？这背后有两条工程与编译器事实：
+
+- **缩小状态排查范围**：阅读代码时，看到 `let x` 即可确认该绑定在后续流程中不会被重新赋值或原地修改，无需通篇追踪状态变化；看到 `let mut x` 则明确提示后续存在状态更新。
+- **编译器会主动警告多余的 `mut`**：若声明了 `let mut n = 7;` 但后续代码从未修改 `n`，编译虽然能通过，但 `rustc` 会发出 `unused_mut` 警告（`warning: variable does not need to be mutable`），提示移除不必要的 `mut`。
+
+另外需要注意，`let mut` 允许更新值，但**不允许改变变量的类型**：
 
 <small class="code-source">源文件：<code>examples/memory/variables/src/bin/type-mismatch.rs</code></small>
 <Code code={mismatch} lang="rust" />
@@ -63,6 +81,13 @@ error[E0596]: cannot borrow `s` as mutable, as it is not declared as mutable
 `s.push_str("!")` 会更新栈上控制头的长度 `len` 并改写堆缓冲区。对普通所有者变量，未声明 `let mut` 时，编译器既禁止给变量重新赋值（`E0384`），也禁止经由该变量取得可变访问去修改内部数据（`E0596`）；写成 `let mut s = String::from("hello");` 才同时放开这两项权限（至于编译器如何仅凭 `push_str` 的方法签名识别出这次调用需要可变借用，将在[方法接收者三件套与自动解引用](/types/methods/)中展开）。
 
 与移动失效一样，**可变与不可变仅记录在编译器的编译期状态表中，运行时内存没有任何附加标记位**。无论写 `let n = 7;` 还是 `let mut n = 7;`，运行时栈帧上存放的都是同样的 4 个整数字节；编译器在编译阶段查表核对权限，检查通过后生成普通的机器指令。
+
+<Aside type="note" title="不可变绑定 let 与编译期常量 const">
+既然 `let` 默认不可变，Rust 中的 `const` 又用于什么场景？两者的编译时机与存储方式不同：
+
+- `let` 声明的是**运行期局部变量**（如 `let port = read_port();`），值可以在运行时算出，有栈槽位，遵循移动、借用与作用域释放规则，也可通过 `let mut` 开放修改。
+- `const` 声明的是**编译期常量**（如 `const MAX_RETRY: u32 = 3;`），必须显式写出类型标注，值必须在编译期就能算定，不能加 `mut`；编译后直接内联到使用处的指令中，不作为运行期栈变量参与移动或释放。
+</Aside>
 
 <Aside type="note" title="与 Java final 的边界差异">
 Java 的 `final` 引用变量（或 JavaScript 的 `const`）不等同于 Rust 普通所有者的不可变绑定：
@@ -122,7 +147,7 @@ Java 的 `final` 引用变量（或 JavaScript 的 `const`）不等同于 Rust �
 
 <ReinitMove />
 
-堆上的 `"world"` 与 `"hello"` 两块字符缓冲区同时存活，直到 `main` 结尾的 `}` 闭合时，分别由 `s` 和 `t` 各自释放。
+这也从代码层面印证了[复制与移动](/memory/minimal-model/)掀开的物理底牌：**移动并不是把变量 `s` 本身销毁，而只是让它在编译期状态表里暂时进入「值已移出」状态。** 编译器按代码流向逐行追踪变量的当前有效性——在移出之后、重填之前读取 `s` 会报错拦截；一旦识别到 `s` 的栈槽位被写入了新值，就判定 `s` **恢复有效**。此时堆上的 `"world"` 与 `"hello"` 两块字符缓冲区同时存活，到 `main` 结尾的 `}` 闭合时，分别由 `s` 和 `t` 各自释放。
 
 ### 3. 尚未初始化：延迟初始化
 

@@ -191,6 +191,49 @@ starlight-toc {
 	text-wrap: balance;
 }
 
+/*
+ * 左栏目录下方的发布节奏。组件只在中文站、且仍有草稿章或节时输出。
+ * 桌面端目录自己滚动，这句话留在滚动区域下面，不盖住最后一条链接。
+ * 目录短于左栏时，它就紧挨在最后一条下面。
+ */
+.rr-release-note {
+	flex-shrink: 0;
+	margin: 0 0 0.85rem;
+	padding: 0.55rem 0.7rem;
+	border-radius: 0.45rem;
+	background: var(--sl-color-accent-low);
+	color: var(--sl-color-accent);
+	font-size: var(--sl-text-xs);
+	font-weight: 600;
+	line-height: 1.55;
+}
+
+:root[data-theme='dark'] .rr-release-note {
+	color: var(--sl-color-accent-high);
+}
+
+@media (min-width: 50rem) {
+	.sidebar-pane:has(.rr-release-note) {
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
+
+	.sidebar-content:has(.rr-release-note) {
+		flex: 1 1 auto;
+		height: auto;
+		min-height: 0;
+		overflow: hidden;
+	}
+
+	.sidebar-content:has(.rr-release-note) > .rr-sidebar-scroll {
+		flex: 0 1 auto;
+		min-height: 0;
+		overflow-y: auto;
+		scrollbar-gutter: stable;
+	}
+}
+
 /* 右侧大纲默认行距很紧，标题和它下面的子项会粘成一块。只加大桌面大纲。 */
 .right-sidebar-panel ul {
 	display: flex;
@@ -399,6 +442,11 @@ html[lang='zh-CN'] .sl-markdown-content :not(li, .sl-steps) > p {
 
 .sl-markdown-content .code-source + .expressive-code {
         margin-top: 0;
+}
+
+/* 短出处靠右，对齐代码框右缘。节选和块标题的链接没有这个类，仍贴左缘。 */
+.sl-markdown-content .code-source:has(> a.code-source-file) {
+        text-align: end;
 }
 
 /* 定场诗：浅底一块，和正文分开。每句一行，左齐；排不下的转行再缩进。 */
