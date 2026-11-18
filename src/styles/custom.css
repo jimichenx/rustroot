@@ -283,15 +283,11 @@ starlight-toc {
 
 /*
  * 段内重点语句标注（<span class="rr-keypoint">）。
- * 留在自然段内不独立成块，用字体加粗 + 底部锈橙虚线托出全节最关键的 1～2 句核心判断。
+ * 留在自然段内不独立成块，用字体加粗托出全节最关键的 1～2 句核心判断。
  */
 .sl-markdown-content .rr-keypoint {
 	color: var(--sl-color-white);
 	font-weight: 600;
-	padding-bottom: 0.16em;
-	border-bottom: 1.5px dashed var(--sl-color-accent);
-	-webkit-box-decoration-break: clone;
-	box-decoration-break: clone;
 }
 
 .sl-markdown-content .rr-keypoint > code {
