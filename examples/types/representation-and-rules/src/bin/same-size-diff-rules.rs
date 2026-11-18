@@ -1,4 +1,4 @@
-// Uncomment the marked line to trigger error[E0382].
+// Expect: E0382
 fn main() {
     let x = 7;
     let r1: &i32 = &x;

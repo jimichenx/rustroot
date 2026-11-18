@@ -1,0 +1,157 @@
+---
+/**
+ * 3.2「类型构造器：按需往编译期类型表生成新的类型实体，并绑定有效区间」。
+ * 左栏：源码只手写 struct User，之后第一次出现 r: &User 与 m: &mut User。
+ * 中栏：& / &mut 是表外的类型构造器，各接收（有效区间, User）；第 1 行不经构造器，直接生成实体。
+ * 右栏：User 是初始类型实体，&User 与 &mut User 是按需新增的独立类型实体，各自带上 r / m 的有效区间。
+ * 下栏：参数没填满的裸 Vec 还不是类型实体，编译器报 E0107。
+ * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	lang?: 'zh' | 'en';
+}
+
+const copy = {
+	zh: {
+		caption:
+			'源码里只手写了 struct User，编译期类型表最初只有这一条类型实体。& 和 &mut 是表外的类型构造器，各自接收两个编译期参数（有效区间, User），把外层重写为 8 字节地址并改写 Copy，同时绑上 r 或 m 的具体有效区间，按需生成 &User 与 &mut User 两条新的类型实体。参数没填满的裸 Vec 还不是类型实体，不能入表。',
+		title: '类型构造器按需生成类型实体，绑定有效区间并重写约束',
+		desc: '上半部分从左到右分成三栏。左栏是源码：只手写过 struct User，后来第一次出现 r: &User 和 m: &mut User。中栏是表外的类型构造器。第一行没有构造器，源码定义直接生成右栏的初始类型实体 User。第二行 & 构造器接收两个编译期参数（有效区间, User），填入 r 的区间，把外层重写为 8 字节且可以 Copy。第三行 &mut 构造器同样接收（有效区间, User），填入 m 的区间，把外层重写为 8 字节且不能 Copy。右栏是编译期类型表里三条独立的类型实体：User 是初始实体，4 字节，不能 Copy，负责释放；&User 是新增实体，8 字节，可以 Copy，含 r 的有效区间；&mut User 是新增实体，8 字节，不能 Copy，含 m 的有效区间。下方对比里，let v3: Vec 没有填上参数 T，裸构造器还不是类型实体，编译器报 E0107，类型表中没有这条类型实体。',
+		leftKicker: '源码定义与借用',
+		structCode: 'struct User',
+		structMeta: '只手写过这 1 个定义',
+		refUseCode: 'r: &User',
+		refUseMeta: '首次出现只读引用',
+		mutUseCode: 'm: &mut User',
+		mutUseMeta: '首次出现可变引用',
+		midKicker: '类型构造器（模板）',
+		directNote: '源码定义直接生成实体',
+		refCtorCode: '& + (区间, User)',
+		refCtorMeta: '填入区间 · 重写为可 Copy',
+		mutCtorCode: '&mut + (区间, User)',
+		mutCtorMeta: '填入区间 · 重写为独占移动',
+		rightKicker: '编译期类型表（独立类型实体）',
+		userCode: 'User · 初始实体',
+		userMeta: '4B · Copy: 否 · 负责释放',
+		refRecCode: '&User · 新增实体',
+		refRecMeta: '8B · Copy: 是 · 含 r 有效区间',
+		mutRecCode: '&mut User · 新增实体',
+		mutRecMeta: '8B · Copy: 否 · 含 m 有效区间',
+		bottomKicker: '对比：未填满参数的裸构造器还不是类型实体（具体类型）',
+		bareCode: 'let v3: Vec = ...',
+		bareMeta: '裸构造器 Vec（缺少参数 T）',
+		errCode: 'error[E0107]: missing generics',
+		errMeta: '编译期类型表中无此类型实体',
+	},
+	en: {
+		caption:
+			'The source only writes struct User, so the compile-time type table starts with that one entry. & and &mut sit outside the table as type constructors. Each takes two compile-time parameters, a span and User, rewrites the outer value to an 8-byte address, sets Copy by its own rule, and binds the concrete span of r or m. That adds &User and &mut User as new entries. A bare Vec with parameter T missing is not a concrete type and cannot enter the table.',
+		title: 'Type constructors add entries on demand, binding a span and rewriting constraints',
+		desc: "The upper half reads left to right in three columns. The left column is source code: only struct User is written by hand, then r: &User and m: &mut User appear for the first time. The center column holds type constructors that live outside the table. Row 1 has no constructor: the source definition is added directly as the initial entry User. Row 2 is the & constructor: it takes two compile-time parameters, a span and User, fills r's span, and rewrites the outer type to 8 bytes with Copy allowed. Row 3 is the &mut constructor: it takes the same pair of parameters, fills m's span, and rewrites the outer type to 8 bytes with Copy denied. The right column is the compile-time type table, three distinct entries: User is the initial entry, 4 bytes, Copy no, and it owns Drop; &User is a new entry, 8 bytes, Copy yes, bound to r's span; &mut User is a new entry, 8 bytes, Copy no, bound to m's span. The lower band is the contrast: let v3: Vec leaves parameter T unfilled, so the bare constructor is not a concrete type. The compiler reports E0107, and the type table has no such entry.",
+		leftKicker: 'In source code',
+		structCode: 'struct User',
+		structMeta: 'only 1 type defined',
+		refUseCode: 'r: &User',
+		refUseMeta: 'first &User in code',
+		mutUseCode: 'm: &mut User',
+		mutUseMeta: 'first &mut User',
+		midKicker: 'Type constructors',
+		directNote: 'defined → added directly',
+		refCtorCode: '& + (span, User)',
+		refCtorMeta: 'fills span · Copy: yes',
+		mutCtorCode: '&mut + (span, User)',
+		mutCtorMeta: 'fills span · Copy: no',
+		rightKicker: 'Compile-time type table',
+		userCode: 'User · initial entry',
+		userMeta: '4B · Copy: no · owns Drop',
+		refRecCode: '&User · new entry',
+		refRecMeta: "8B · Copy: yes · r's span",
+		mutRecCode: '&mut User · new entry',
+		mutRecMeta: "8B · Copy: no · m's span",
+		bottomKicker: 'Contrast: an unapplied constructor is not a concrete type',
+		bareCode: 'let v3: Vec = ...',
+		bareMeta: 'bare Vec (missing param T)',
+		errCode: 'error[E0107]: missing generics',
+		errMeta: 'no concrete entry in type table',
+	},
+} as const;
+
+const { lang } = Astro.props;
+const locale = lang ?? (SITE_LOCALE === 'en' ? 'en' : 'zh');
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 436" role="img" aria-labelledby="tcr-title tcr-desc">
+		<title id="tcr-title">{t.title}</title>
+		<desc id="tcr-desc">{t.desc}</desc>
+
+		{/* 框在下，箭头居中，文字最后画，避免笔画压住标签 */}
+		<rect class="panel" x="10" y="12" width="168" height="304" rx="10"></rect>
+		<rect class="panel" x="190" y="12" width="188" height="304" rx="10"></rect>
+		<rect class="panel" x="390" y="12" width="240" height="304" rx="10"></rect>
+
+		<rect class="slot" x="22" y="54" width="144" height="68" rx="6"></rect>
+		<rect class="slot" x="22" y="142" width="144" height="68" rx="6"></rect>
+		<rect class="slot" x="22" y="230" width="144" height="68" rx="6"></rect>
+
+		<rect class="object" x="198" y="142" width="172" height="68" rx="6"></rect>
+		<rect class="object" x="198" y="230" width="172" height="68" rx="6"></rect>
+
+		<rect class="slot" x="404" y="54" width="212" height="68" rx="6"></rect>
+		<rect class="object" x="404" y="142" width="212" height="68" rx="6"></rect>
+		<rect class="object" x="404" y="230" width="212" height="68" rx="6"></rect>
+
+		<rect class="panel" x="10" y="330" width="620" height="94" rx="10"></rect>
+		<rect class="freed" x="26" y="360" width="232" height="52" rx="6"></rect>
+		<rect class="freed" x="336" y="360" width="278" height="52" rx="6"></rect>
+
+		<path class="arrow" d="M 172 88 H 398" marker-end="url(#tcr-head)"></path>
+		<path class="arrow" d="M 172 176 H 192" marker-end="url(#tcr-head)"></path>
+		<path class="arrow" d="M 376 176 H 398" marker-end="url(#tcr-head)"></path>
+		<path class="arrow" d="M 172 264 H 192" marker-end="url(#tcr-head)"></path>
+		<path class="arrow" d="M 376 264 H 398" marker-end="url(#tcr-head)"></path>
+		<path class="arrow danger" d="M 266 386 H 324" marker-end="url(#tcr-head-muted)"></path>
+
+		<text class="edge-label" x="94" y="36" text-anchor="middle">{t.leftKicker}</text>
+		<text class="code" x="94" y="82" text-anchor="middle">{t.structCode}</text>
+		<text class="edge-sub" x="94" y="104" text-anchor="middle">{t.structMeta}</text>
+		<text class="code" x="94" y="170" text-anchor="middle">{t.refUseCode}</text>
+		<text class="edge-sub" x="94" y="192" text-anchor="middle">{t.refUseMeta}</text>
+		<text class="code" x="94" y="258" text-anchor="middle">{t.mutUseCode}</text>
+		<text class="edge-sub" x="94" y="278" text-anchor="middle">{t.mutUseMeta}</text>
+
+		<text class="edge-label" x="284" y="36" text-anchor="middle">{t.midKicker}</text>
+		<text class="edge-sub" x="284" y="68" text-anchor="middle">{t.directNote}</text>
+		<text class="code" x="284" y="170" text-anchor="middle">{t.refCtorCode}</text>
+		<text class="edge-sub" x="284" y="192" text-anchor="middle">{t.refCtorMeta}</text>
+		<text class="code" x="284" y="258" text-anchor="middle">{t.mutCtorCode}</text>
+		<text class="edge-sub" x="284" y="278" text-anchor="middle">{t.mutCtorMeta}</text>
+
+		<text class="edge-label" x="510" y="36" text-anchor="middle">{t.rightKicker}</text>
+		<text class="code" x="510" y="82" text-anchor="middle">{t.userCode}</text>
+		<text class="edge-sub" x="510" y="104" text-anchor="middle">{t.userMeta}</text>
+		<text class="code" x="510" y="170" text-anchor="middle">{t.refRecCode}</text>
+		<text class="edge-sub" x="510" y="192" text-anchor="middle">{t.refRecMeta}</text>
+		<text class="code" x="510" y="258" text-anchor="middle">{t.mutRecCode}</text>
+		<text class="edge-sub" x="510" y="278" text-anchor="middle">{t.mutRecMeta}</text>
+
+		<text class="edge-label" x="320" y="350" text-anchor="middle">{t.bottomKicker}</text>
+		<text class="code" x="142" y="380" text-anchor="middle">{t.bareCode}</text>
+		<text class="edge-sub" x="142" y="400" text-anchor="middle">{t.bareMeta}</text>
+		<text class="code" x="475" y="380" text-anchor="middle">{t.errCode}</text>
+		<text class="edge-sub" x="475" y="400" text-anchor="middle">{t.errMeta}</text>
+
+		<defs>
+			<marker id="tcr-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+			<marker id="tcr-head-muted" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line-muted)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

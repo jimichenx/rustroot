@@ -1,18 +1,13 @@
 use std::mem::size_of;
 
-fn first_positive(nums: &[i32]) -> Option<&i32> {
-    for n in nums {
-        if *n > 0 {
-            return Some(n);
-        }
-    }
-    None
+fn first_item(nums: &[i32]) -> Option<&i32> {
+    nums.first()
 }
 
 fn main() {
-    let data: [i32; 4] = [-3, 0, 7, 12];
+    let data: [i32; 4] = [3, 5, 7, 12];
     let slice: &[i32] = &data;
-    let found: Option<&i32> = first_positive(slice);
+    let found: Option<&i32> = first_item(slice);
 
     println!("found: {:?}", found);
     println!("size of [i32; 4]:     {} bytes", size_of::<[i32; 4]>());

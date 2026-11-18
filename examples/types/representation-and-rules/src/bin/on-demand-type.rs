@@ -1,4 +1,4 @@
-// Uncomment the marked line to trigger error[E0308].
+// Expect: E0308
 struct User {
     id: i32,
 }

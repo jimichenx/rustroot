@@ -1,0 +1,106 @@
+---
+/**
+ * 3.3「构造器的组合：从预制件到零件组装」。
+ * 左侧三层嵌套圆角矩形，由外向内读 items: &mut Vec<String>：
+ *   第 1 层 &mut（.object）决定变量自身的栈槽、移动与释放；
+ *   第 2 层 Vec（.panel）决定被借用的容器；
+ *   第 3 层 String（.slot）决定容器里的单个元素。
+ * 右侧三张说明卡，水平箭头从每一层右缘连出，不穿过文字。
+ * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	lang?: 'zh' | 'en';
+}
+
+const copy = {
+	zh: {
+		caption:
+			'变量 items 的类型是 &mut Vec<String>，由外向内读。最外层 &mut 决定 items 自身：栈上 8 字节，赋值即移动，不负责释放。中间 Vec 决定被借用的容器可以增删元素。最内层 String 是容器里的 UTF-8 文本，由 Vec 统一释放。',
+		title: '由外向内读 &mut Vec<String>：最外层决定栈槽、移动与释放',
+		desc: '左侧是三层嵌套的圆角矩形。最外层高亮，是可变引用构造器 &mut，标注为第 1 层。中间层是动态数组构造器 Vec，标注为第 2 层。最内层是元素类型 String，标注为第 3 层。三条水平箭头从每一层的右缘指向右侧三张说明卡。第一张说明 &mut 决定变量 items 自身：栈上 8 字节地址，赋值即移动，不负责释放。第二张说明 Vec 决定被借用的容器形态，可经由 &mut 增删元素。第三张说明 String 决定容器内单个元素，是由 Vec 统一释放的 UTF-8 文本。',
+		shell1Code: '&mut …',
+		shell1Label: '第 1 层（最外层）：可变引用构造器 &mut',
+		shell2Code: 'Vec<…>',
+		shell2Label: '第 2 层：动态数组构造器 Vec',
+		shell3Code: 'String',
+		shell3Label: '第 3 层（最内层）：元素类型 String',
+		card1Title: '决定变量 items 自身',
+		card1Sub: '栈占 8B 地址 · 赋值即移动 · 不负责释放',
+		card2Title: '决定借用目标的容器形态',
+		card2Sub: '可经由 &mut 增删元素（如 push）',
+		card3Title: '决定容器内单个元素',
+		card3Sub: 'UTF-8 堆文本（由 Vec 统一管理释放）',
+	},
+	en: {
+		caption:
+			'The type of items is &mut Vec<String>, read from the outside in. The outer &mut fixes items itself: 8 bytes on the stack, moved on assignment, with no drop duty. Vec fixes the borrowed container, which can grow. String is each UTF-8 element, freed by the Vec.',
+		title: 'Read &mut Vec<String> from the outside in: the outer layer fixes the stack slot, move, and drop',
+		desc: "On the left, three nested rounded rectangles. The outer shell is the &mut constructor, drawn with an accent stroke and labeled layer 1. The middle shell is the Vec constructor, labeled layer 2. The inner core is the element type String, labeled layer 3. Three horizontal arrows run from each shell's right edge to a card on the right. The first card says &mut governs the variable items itself: an 8-byte stack address, moved on assignment, with no drop duty. The second says Vec governs the borrowed container, which can grow through &mut. The third says String governs each element: UTF-8 text freed by the Vec.",
+		shell1Code: '&mut …',
+		shell1Label: 'Layer 1 (outermost): &mut constructor',
+		shell2Code: 'Vec<…>',
+		shell2Label: 'Layer 2: Vec constructor',
+		shell3Code: 'String',
+		shell3Label: 'Layer 3 (core): element String',
+		card1Title: 'Governs variable items itself',
+		card1Sub: '8B stack addr · Move · no drop duty',
+		card2Title: 'Governs target container',
+		card2Sub: 'growable sequence via &mut',
+		card3Title: 'Governs each element',
+		card3Sub: 'UTF-8 text (freed by Vec)',
+	},
+} as const;
+
+const { lang } = Astro.props;
+const locale = lang ?? (SITE_LOCALE === 'en' ? 'en' : 'zh');
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 340" role="img" aria-labelledby="po-title po-desc">
+		<title id="po-title">{t.title}</title>
+		<desc id="po-desc">{t.desc}</desc>
+
+		{/* 左：三层嵌套。外层高亮，中层只描边，内核再高亮。 */}
+		<rect class="object" x="12" y="22" width="308" height="296" rx="12"></rect>
+		<rect class="panel" x="28" y="110" width="276" height="192" rx="10"></rect>
+		<rect class="slot" x="44" y="198" width="244" height="88" rx="8"></rect>
+
+		{/* 右：每一层管什么。最外层那张与变量 items 自身对齐，用 .slot 高亮。 */}
+		<rect class="slot" x="360" y="30" width="268" height="72" rx="8"></rect>
+		<rect class="panel" x="360" y="118" width="268" height="72" rx="8"></rect>
+		<rect class="panel" x="360" y="206" width="268" height="72" rx="8"></rect>
+
+		{/* 箭头从各层右缘水平指出，停在说明卡左缘之前。 */}
+		<path class="arrow" d="M 320 66 H 354" marker-end="url(#po-head)"></path>
+		<path class="arrow" d="M 304 154 H 354" marker-end="url(#po-head)"></path>
+		<path class="arrow" d="M 288 242 H 354" marker-end="url(#po-head)"></path>
+
+		<text class="code" x="166" y="58" text-anchor="middle">{t.shell1Code}</text>
+		<text class="edge-sub" x="166" y="80" text-anchor="middle">{t.shell1Label}</text>
+
+		<text class="code" x="166" y="146" text-anchor="middle">{t.shell2Code}</text>
+		<text class="edge-sub" x="166" y="168" text-anchor="middle">{t.shell2Label}</text>
+
+		<text class="code" x="166" y="234" text-anchor="middle">{t.shell3Code}</text>
+		<text class="edge-sub" x="166" y="256" text-anchor="middle">{t.shell3Label}</text>
+
+		<text class="edge-label" x="494" y="58" text-anchor="middle">{t.card1Title}</text>
+		<text class="edge-sub" x="494" y="80" text-anchor="middle">{t.card1Sub}</text>
+
+		<text class="edge-label" x="494" y="146" text-anchor="middle">{t.card2Title}</text>
+		<text class="edge-sub" x="494" y="168" text-anchor="middle">{t.card2Sub}</text>
+
+		<text class="edge-label" x="494" y="234" text-anchor="middle">{t.card3Title}</text>
+		<text class="edge-sub" x="494" y="256" text-anchor="middle">{t.card3Sub}</text>
+
+		<defs>
+			<marker id="po-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

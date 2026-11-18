@@ -1,0 +1,144 @@
+---
+/**
+ * 3.2「表面都写成 &String，填入不同的无名有效区间数据后，得到两个独立的类型实体」。
+ * 左列：外层 r_outer 与内层块 r_inner 的写法都是 &String，无需给区间起名 'a。
+ * 中列：& 构造器接收（无名区间数据, String），两处填进的区间数据一长一短。
+ * 右列：绑定无名外层区间的 &String 与绑定无名内层区间的 &String 是两个独立的类型实体（具体类型）。
+ * 下栏：把内层短区间赋给外层变量，区间覆盖不足，虚线箭头标出赋值被拦住（E0597）。
+ * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	lang?: 'zh' | 'en';
+}
+
+const copy = {
+	zh: {
+		caption:
+			'两处局部变量在源码里都写成 &String，无需给区间起名 \'a。& 构造器在内部测算并填入两份一长一短的无名区间数据，合成两个独立的类型实体。把内层短区间赋给外层变量时，区间覆盖不足，赋值被拦截（E0597）。',
+		title: '表面都写成 &String，填入不同的无名区间数据后是两个独立的类型实体',
+		desc: '左列是源码表面：外层变量 r_outer 与内层块里的 r_inner 都写成 &String，局部借用无需给区间定义名字 \'a。中列是 & 构造器：它接收无名区间数据和目标类型 String，按借用位置分别填入无名外层长区间与无名内层短区间。右列是填参后的结果：绑定外层长区间的 &String 是类型实体 A，绑定内层短区间的 &String 是类型实体 B，两者是不同的具体类型。下方虚线表示把仅含内层短区间的 r_inner 赋给要求外层长区间的 r_outer 会被拦截（E0597）。',
+		leftKicker: '源码表面写法',
+		leftSub: '两处都写成 &String',
+		outerMeta: '外层借用 · 无需起名',
+		outerCode: 'r_outer: &String',
+		innerMeta: '内层借用 · 无需起名',
+		innerCode: 'r_inner: &String',
+		midKicker: '& 构造器填入无名区间',
+		outerSpan: '无名外层区间数据',
+		innerSpan: '无名内层区间数据',
+		ctorMark: '&',
+		ctorParams: '(无名区间数据, String)',
+		rightKicker: '合成两个独立的类型实体',
+		typeA: '&String · 类型实体 A',
+		typeAMeta: '已填入无名外层长区间',
+		typeB: '&String · 类型实体 B',
+		typeBMeta: '已填入无名内层短区间',
+		blockNote: '短区间无法覆盖外层长区间，赋值被拦截（E0597）',
+		shortCode: 'r_inner',
+		shortMeta: '仅含无名内层短区间',
+		longCode: 'r_outer',
+		longMeta: '要求覆盖外层长区间',
+	},
+	en: {
+		caption:
+			'Both local variables are written &String with no need to name the span \'a. The & constructor fills two unnamed span values of different lengths, producing two distinct concrete types. Assigning the shorter inner span to the outer variable is rejected (E0597).',
+		title: 'Both written &String; two distinct concrete types once unnamed spans are filled',
+		desc: 'The left column is the source text: the outer variable r_outer and the inner-block variable r_inner are both written &String, because local borrows do not need to name their span \'a. The center column is the & constructor: it takes an unnamed span value and the target type String, filling the longer outer span or the shorter inner span. The right column is the result: &String bound to the outer span is concrete type A and &String bound to the inner span is concrete type B, two distinct types. The dashed arrow below shows that assigning r_inner with the shorter span to r_outer is rejected (E0597).',
+		leftKicker: 'Written in source',
+		leftSub: 'both written &String',
+		outerMeta: 'outer · unnamed span',
+		outerCode: 'r_outer: &String',
+		innerMeta: 'inner · unnamed span',
+		innerCode: 'r_inner: &String',
+		midKicker: '& fills unnamed span',
+		outerSpan: 'unnamed outer span',
+		innerSpan: 'unnamed inner span',
+		ctorMark: '&',
+		ctorParams: '(unnamed span, String)',
+		rightKicker: 'Two distinct concrete types',
+		typeA: '&String · Concrete type A',
+		typeAMeta: 'bound to unnamed outer span',
+		typeB: '&String · Concrete type B',
+		typeBMeta: 'bound to unnamed inner span',
+		blockNote: 'short span cannot cover outer span — rejected (E0597)',
+		shortCode: 'r_inner',
+		shortMeta: 'unnamed inner span',
+		longCode: 'r_outer',
+		longMeta: 'requires outer span',
+	},
+} as const;
+
+const { lang } = Astro.props;
+const locale = lang ?? (SITE_LOCALE === 'en' ? 'en' : 'zh');
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 400" role="img" aria-labelledby="crs-title crs-desc">
+		<title id="crs-title">{t.title}</title>
+		<desc id="crs-desc">{t.desc}</desc>
+
+		{/* 框在下，箭头居中，文字最后画，避免笔画压住标签 */}
+		<rect class="panel" x="12" y="12" width="164" height="268" rx="10"></rect>
+		<rect class="panel" x="192" y="12" width="208" height="268" rx="10"></rect>
+		<rect class="panel" x="416" y="12" width="212" height="268" rx="10"></rect>
+
+		<rect class="slot" x="18" y="74" width="152" height="78" rx="6"></rect>
+		<rect class="slot" x="18" y="184" width="152" height="78" rx="6"></rect>
+		<rect class="object" x="208" y="128" width="176" height="58" rx="6"></rect>
+		<rect class="object" x="236" y="109" width="148" height="10" rx="4"></rect>
+		<rect class="object" x="236" y="219" width="76" height="10" rx="4"></rect>
+
+		<rect class="object" x="424" y="74" width="196" height="78" rx="6"></rect>
+		<rect class="slot" x="424" y="184" width="196" height="78" rx="6"></rect>
+		<rect class="object" x="452" y="128" width="140" height="10" rx="4"></rect>
+		<rect class="object" x="452" y="238" width="64" height="10" rx="4"></rect>
+
+		<rect class="panel" x="12" y="292" width="616" height="96" rx="10"></rect>
+		<rect class="slot" x="28" y="324" width="176" height="54" rx="6"></rect>
+		<rect class="object" x="436" y="324" width="176" height="54" rx="6"></rect>
+
+		<path class="arrow" d="M 178 113 H 236" marker-end="url(#crs-head)"></path>
+		<path class="arrow" d="M 178 223 H 236" marker-end="url(#crs-head)"></path>
+		<path class="arrow" d="M 392 113 H 422" marker-end="url(#crs-head)"></path>
+		<path class="arrow" d="M 320 223 H 422" marker-end="url(#crs-head)"></path>
+		<path class="arrow danger" d="M 212 351 H 428" marker-end="url(#crs-head-muted)"></path>
+
+		<text class="edge-label" x="24" y="36">{t.leftKicker}</text>
+		<text class="edge-sub" x="24" y="58">{t.leftSub}</text>
+		<text class="edge-sub" x="94" y="100" text-anchor="middle">{t.outerMeta}</text>
+		<text class="code" x="94" y="126" text-anchor="middle">{t.outerCode}</text>
+		<text class="edge-sub" x="94" y="210" text-anchor="middle">{t.innerMeta}</text>
+		<text class="code" x="94" y="236" text-anchor="middle">{t.innerCode}</text>
+
+		<text class="edge-label" x="296" y="36" text-anchor="middle">{t.midKicker}</text>
+		<text class="edge-sub" x="236" y="101" text-anchor="start">{t.outerSpan}</text>
+		<text class="node-name" x="296" y="152" text-anchor="middle">{t.ctorMark}</text>
+		<text class="edge-label" x="296" y="174" text-anchor="middle">{t.ctorParams}</text>
+		<text class="edge-sub" x="236" y="211" text-anchor="start">{t.innerSpan}</text>
+
+		<text class="edge-label" x="522" y="36" text-anchor="middle">{t.rightKicker}</text>
+		<text class="code" x="522" y="96" text-anchor="middle">{t.typeA}</text>
+		<text class="edge-sub" x="522" y="116" text-anchor="middle">{t.typeAMeta}</text>
+		<text class="code" x="522" y="206" text-anchor="middle">{t.typeB}</text>
+		<text class="edge-sub" x="522" y="226" text-anchor="middle">{t.typeBMeta}</text>
+
+		<text class="edge-label" x="320" y="314" text-anchor="middle">{t.blockNote}</text>
+		<text class="code" x="116" y="346" text-anchor="middle">{t.shortCode}</text>
+		<text class="edge-sub" x="116" y="366" text-anchor="middle">{t.shortMeta}</text>
+		<text class="code" x="524" y="346" text-anchor="middle">{t.longCode}</text>
+		<text class="edge-sub" x="524" y="366" text-anchor="middle">{t.longMeta}</text>
+
+		<defs>
+			<marker id="crs-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+			<marker id="crs-head-muted" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line-muted)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

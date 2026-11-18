@@ -1,0 +1,182 @@
+---
+/**
+ * 3.1「类型的两面：编译期类型表与双表联动」。
+ * 上半：源码里 r1 与内层块的 r2 都写成 &i32，有效区间一长一短，
+ * 编译期类型表里是两个独立的类型实体；另外两行是 &mut i32 与 String。
+ * 下半：编译 let m2 = m1; 时，先查类型实体的 Copy 约束，再改编译期状态表。
+ * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	lang?: 'zh' | 'en';
+}
+
+const copy = {
+	zh: {
+		caption:
+			'源码里外层的 r1 与内层块的 r2 都写成 &i32，有效区间一长一短，在编译期类型表里是两个独立的类型实体。每个类型实体记下物理表示、安全约束和它所绑定的有效区间。编译 let m2 = m1; 时，先查出 m1 的类型实体 Copy: 否，再把编译期状态表里的 m1 记为已移出。',
+		title: '同写 &i32、有效区间不同，在类型表里是两个独立的类型实体',
+		desc: '左侧四格是源码变量和它们所在的范围：外层作用域的 r1: &i32，内层块里的 { r2: &i32 }，可变引用 m1: &mut i32，所有者 s: String。四条水平实线箭头指向右侧编译期类型表中的四个类型实体。前两张卡片的类型符号都是 &i32，物理表示都是 8B 地址且 Sized，约束都是只读、Copy 为是，但一张绑定外层有效区间，另一张绑定内层有效区间，所以是两个独立的类型实体。第三张是 &mut i32，表示同样是 8B 地址，约束是独占写、Copy 为否，有效区间为当前这段。第四张是 String，表示是 24B 控制头，约束是合法 UTF-8、Copy 为否，Drop 时释放堆，没有借用区间。底部说明编译 let m2 = m1; 时的双表联动：先查编译期类型表里 m1 的类型实体，读出 Copy: 否，再把编译期状态表里的变量 m1 记为已移出，再用时报告 E0382。',
+		sourceTitle: '源码变量与所在范围',
+		slot1Code: 'r1: &i32',
+		slot1Sub: '外层作用域 · 长区间',
+		slot2Code: '{ r2: &i32 }',
+		slot2Sub: '内层块 · 表面同写 &i32',
+		slot3Code: 'm1: &mut i32',
+		slot3Sub: '可变引用变量',
+		slot4Code: 's: String',
+		slot4Sub: '所有者变量',
+		tableTitle: '编译期类型表（每个具体类型是一个独立类型实体）',
+		type1: '&i32',
+		span1: '外层区间实体',
+		repr1: '表示：8B 地址 · Sized',
+		rules1: '约束：只读 · Copy: 是 · 有效区间: 外层',
+		type2: '&i32',
+		span2: '内层区间实体',
+		repr2: '表示：8B 地址 · Sized',
+		rules2: '约束：只读 · Copy: 是 · 有效区间: 内层',
+		type3: '&mut i32',
+		span3: '当前区间实体',
+		repr3: '表示：8B 地址 · Sized',
+		rules3: '约束：独占写 · Copy: 否 · 有效区间: 当前',
+		type4: 'String',
+		span4: '无借用区间',
+		repr4: '表示：24B 控制头 (ptr, len, cap)',
+		rules4: '约束：合法 UTF-8 · Copy: 否 · Drop 释放堆',
+		linkTitle: '编译 let m2 = m1; 时的双表联动',
+		step1: '1. 查「编译期类型表」：m1 的类型实体',
+		step1Sub: '读出约束 Copy: 否（赋值即移动）',
+		step2: '2. 改「编译期状态表」：变量 m1',
+		step2Sub: '将 m1 记为「已移出」，再用报 E0382',
+	},
+	en: {
+		caption:
+			'Outer r1 and inner r2 are both written &i32, but the spans differ, so the compile-time type table stores two concrete types. Each standalone entry records representation, safety rules, and its span. On let m2 = m1;, the compiler reads Copy: no from m1\'s entry, then marks m1 moved in the compile-time state table.',
+		title: 'Two &i32 annotations with different spans are two concrete types',
+		desc: 'The left column shows four source variables and the scopes they sit in: r1: &i32 in an outer scope, { r2: &i32 } inside an inner block, the mutable reference m1: &mut i32, and the owner s: String. Four solid arrows point at four standalone entries in the compile-time type table. The first two cards are both spelled &i32, both an 8B address and Sized, both read-only with Copy yes, but one is bound to the outer span and the other to the inner span, so they are two concrete types. The third is &mut i32, also an 8B address, with exclusive write, Copy no, and the current span. The fourth is String, a 24B header that must be valid UTF-8, is not Copy, frees the heap on Drop, and has no borrow span. The bottom strip shows let m2 = m1;: look up m1\'s entry and read Copy: no, then mark variable m1 moved in the compile-time state table, so a later use reports E0382.',
+		sourceTitle: 'Variables & scopes',
+		slot1Code: 'r1: &i32',
+		slot1Sub: 'outer scope · long span',
+		slot2Code: '{ r2: &i32 }',
+		slot2Sub: 'inner block · also &i32',
+		slot3Code: 'm1: &mut i32',
+		slot3Sub: 'mutable ref var',
+		slot4Code: 's: String',
+		slot4Sub: 'owner var',
+		tableTitle: 'Compile-time type table (one standalone entry per type)',
+		type1: '&i32',
+		span1: 'outer-span entry',
+		repr1: 'Repr: 8B addr · Sized',
+		rules1: 'Rules: read · Copy: yes · span: outer',
+		type2: '&i32',
+		span2: 'inner-span entry',
+		repr2: 'Repr: 8B addr · Sized',
+		rules2: 'Rules: read · Copy: yes · span: inner',
+		type3: '&mut i32',
+		span3: 'current-span entry',
+		repr3: 'Repr: 8B addr · Sized',
+		rules3: 'Rules: write · Copy: no · span: current',
+		type4: 'String',
+		span4: 'owned type',
+		repr4: 'Repr: 24B header (ptr, len, cap)',
+		rules4: 'Rules: UTF-8 · Copy: no · Drop heap',
+		linkTitle: 'How the two compiler tables work on let m2 = m1;',
+		step1: "1. Look up m1's entry in type table",
+		step1Sub: 'reads Copy: no (moves on =)',
+		step2: '2. Update state table for var m1',
+		step2Sub: 'marks m1 moved; reuse hits E0382',
+	},
+} as const;
+
+const { lang } = Astro.props;
+const locale = lang ?? (SITE_LOCALE === 'en' ? 'en' : 'zh');
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 640 524" role="img" aria-labelledby="ctt-title ctt-desc">
+		<title id="ctt-title">{t.title}</title>
+		<desc id="ctt-desc">{t.desc}</desc>
+
+		{/*
+		 * 背景矩形。四格与四张卡片的垂直中心都是 82 / 168 / 254 / 340。
+		 * 竖分割线在 x=356：英文 “current-span entry” 约 106px，
+		 * 放不进 x=230..334 的 104px 左格，右移后两侧各留约 9px。
+		 */}
+		<rect class="panel" x="10" y="12" width="176" height="390" rx="10"></rect>
+		<rect class="slot" x="22" y="49" width="152" height="66" rx="6"></rect>
+		<rect class="slot" x="22" y="135" width="152" height="66" rx="6"></rect>
+		<rect class="slot" x="22" y="221" width="152" height="66" rx="6"></rect>
+		<rect class="slot" x="22" y="307" width="152" height="66" rx="6"></rect>
+
+		<rect class="panel" x="218" y="12" width="412" height="390" rx="10"></rect>
+		<rect class="object" x="230" y="45" width="388" height="74" rx="6"></rect>
+		<rect class="object" x="230" y="131" width="388" height="74" rx="6"></rect>
+		<rect class="slot" x="230" y="217" width="388" height="74" rx="6"></rect>
+		<rect class="slot" x="230" y="303" width="388" height="74" rx="6"></rect>
+
+		<rect class="panel" x="10" y="416" width="620" height="96" rx="10"></rect>
+		<rect class="slot" x="26" y="446" width="268" height="54" rx="6"></rect>
+		<rect class="object" x="346" y="446" width="268" height="54" rx="6"></rect>
+
+		{/* 卡片内部分割线：竖线分开类型实体标识，横线分开表示与约束 */}
+		<line x1="356" y1="53" x2="356" y2="111" stroke="var(--dg-border)" stroke-width="1"></line>
+		<line x1="356" y1="82" x2="610" y2="82" stroke="var(--dg-border)" stroke-width="1"></line>
+		<line x1="356" y1="139" x2="356" y2="197" stroke="var(--dg-border)" stroke-width="1"></line>
+		<line x1="356" y1="168" x2="610" y2="168" stroke="var(--dg-border)" stroke-width="1"></line>
+		<line x1="356" y1="225" x2="356" y2="283" stroke="var(--dg-border)" stroke-width="1"></line>
+		<line x1="356" y1="254" x2="610" y2="254" stroke="var(--dg-border)" stroke-width="1"></line>
+		<line x1="356" y1="311" x2="356" y2="369" stroke="var(--dg-border)" stroke-width="1"></line>
+		<line x1="356" y1="340" x2="610" y2="340" stroke="var(--dg-border)" stroke-width="1"></line>
+
+		{/* 箭头：槽位右缘外侧 4px 出发，箭头尖贴住目标左缘 */}
+		<path class="arrow" d="M 178 82 H 228" marker-end="url(#ctt-head)"></path>
+		<path class="arrow" d="M 178 168 H 228" marker-end="url(#ctt-head)"></path>
+		<path class="arrow" d="M 178 254 H 228" marker-end="url(#ctt-head)"></path>
+		<path class="arrow" d="M 178 340 H 228" marker-end="url(#ctt-head)"></path>
+		<path class="arrow" d="M 298 473 H 344" marker-end="url(#ctt-head)"></path>
+
+		{/* 文字最后画，避免压住边框和箭头 */}
+		<text class="edge-label" x="98" y="32" text-anchor="middle">{t.sourceTitle}</text>
+		<text class="code" x="98" y="76" text-anchor="middle">{t.slot1Code}</text>
+		<text class="edge-sub" x="98" y="98" text-anchor="middle">{t.slot1Sub}</text>
+		<text class="code" x="98" y="162" text-anchor="middle">{t.slot2Code}</text>
+		<text class="edge-sub" x="98" y="184" text-anchor="middle">{t.slot2Sub}</text>
+		<text class="code" x="98" y="248" text-anchor="middle">{t.slot3Code}</text>
+		<text class="edge-sub" x="98" y="270" text-anchor="middle">{t.slot3Sub}</text>
+		<text class="code" x="98" y="334" text-anchor="middle">{t.slot4Code}</text>
+		<text class="edge-sub" x="98" y="356" text-anchor="middle">{t.slot4Sub}</text>
+
+		<text class="edge-label" x="424" y="32" text-anchor="middle">{t.tableTitle}</text>
+		<text class="code" x="293" y="76" text-anchor="middle">{t.type1}</text>
+		<text class="edge-sub" x="293" y="98" text-anchor="middle">{t.span1}</text>
+		<text class="edge-label" x="364" y="68" text-anchor="start">{t.repr1}</text>
+		<text class="edge-sub" x="364" y="105" text-anchor="start">{t.rules1}</text>
+		<text class="code" x="293" y="162" text-anchor="middle">{t.type2}</text>
+		<text class="edge-sub" x="293" y="184" text-anchor="middle">{t.span2}</text>
+		<text class="edge-label" x="364" y="154" text-anchor="start">{t.repr2}</text>
+		<text class="edge-sub" x="364" y="191" text-anchor="start">{t.rules2}</text>
+		<text class="code" x="293" y="248" text-anchor="middle">{t.type3}</text>
+		<text class="edge-sub" x="293" y="270" text-anchor="middle">{t.span3}</text>
+		<text class="edge-label" x="364" y="240" text-anchor="start">{t.repr3}</text>
+		<text class="edge-sub" x="364" y="277" text-anchor="start">{t.rules3}</text>
+		<text class="code" x="293" y="334" text-anchor="middle">{t.type4}</text>
+		<text class="edge-sub" x="293" y="356" text-anchor="middle">{t.span4}</text>
+		<text class="edge-label" x="364" y="326" text-anchor="start">{t.repr4}</text>
+		<text class="edge-sub" x="364" y="363" text-anchor="start">{t.rules4}</text>
+
+		<text class="edge-label" x="320" y="435" text-anchor="middle">{t.linkTitle}</text>
+		<text class="edge-label" x="160" y="468" text-anchor="middle">{t.step1}</text>
+		<text class="edge-sub" x="160" y="488" text-anchor="middle">{t.step1Sub}</text>
+		<text class="edge-label" x="480" y="468" text-anchor="middle">{t.step2}</text>
+		<text class="edge-sub" x="480" y="488" text-anchor="middle">{t.step2Sub}</text>
+
+		<defs>
+			<marker id="ctt-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

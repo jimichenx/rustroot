@@ -281,6 +281,24 @@ starlight-toc {
 	color: var(--sl-color-white);
 }
 
+/*
+ * 段内重点语句标注（<span class="rr-keypoint">）。
+ * 留在自然段内不独立成块，用字体加粗 + 底部锈橙虚线托出全节最关键的 1～2 句核心判断。
+ */
+.sl-markdown-content .rr-keypoint {
+	color: var(--sl-color-white);
+	font-weight: 600;
+	padding-bottom: 0.16em;
+	border-bottom: 1.5px dashed var(--sl-color-accent);
+	-webkit-box-decoration-break: clone;
+	box-decoration-break: clone;
+}
+
+.sl-markdown-content .rr-keypoint > code {
+	font-weight: 600;
+	border-color: var(--rr-home-to-border);
+}
+
 /* ---------- 中文正文排版与行内代码精修 ---------- */
 :root {
 	--rr-inline-code-bg: rgba(255, 255, 255, 0.06);
@@ -293,7 +311,7 @@ starlight-toc {
 }
 
 html[lang='zh-CN'] .sl-markdown-content {
-	line-height: 1.8;
+	line-height: 1.88;
 	letter-spacing: 0.01em;
 }
 
@@ -408,9 +426,33 @@ html[lang='zh-CN'] .sl-markdown-content :is(h1, h2, h3, h4) {
 	margin-block: 0.75rem 0.25rem;
 }
 
-/* 中文段落之间留稍多的呼吸空间 */
+/* 中文段落与正文原生列表（1. 2. 3. / -）留足呼吸空间，拉开条内折行与条目间距的层次 */
 html[lang='zh-CN'] .sl-markdown-content :not(li, .sl-steps) > p {
 	margin-block: 1.25em;
+}
+
+.sl-markdown-content :is(ul, ol):not([class], :where(.not-content *)) {
+	margin-block: 1.15em;
+}
+
+.sl-markdown-content :is(ul, ol):not([class], :where(.not-content *)) > li + li {
+	margin-top: 0.7rem;
+}
+
+.sl-markdown-content
+	:is(ul, ol):not([class], :where(.not-content *))
+	> li
+	> :is(ul, ol):not([class]) {
+	margin-block: 0.45rem 0.2rem;
+}
+
+.sl-markdown-content
+	:is(ul, ol):not([class], :where(.not-content *))
+	> li
+	> :is(ul, ol):not([class])
+	> li
+	+ li {
+	margin-top: 0.45rem;
 }
 
 /* Show source paths without competing with the lesson text. */
@@ -496,6 +538,7 @@ html[lang='zh-CN'] .sl-markdown-content .epigraph p + p {
 .sl-markdown-content .table-scroll :is(th, td) {
 	padding: 0.65rem 0.9rem;
 	border-bottom: 1px solid var(--sl-color-gray-5);
+	line-height: 1.68;
 	text-align: left;
 	vertical-align: top;
 }

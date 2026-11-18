@@ -1,0 +1,154 @@
+---
+/**
+ * 3.1「类型只是内存布局吗？」。
+ * 64 位平台上五个类型的栈上字节，宽度按 size_of 等比例：
+ *   i32       4 字节整数
+ *   &i32      8 字节地址
+ *   &mut i32  8 字节地址（与上一行同宽）
+ *   String    ptr / len / cap，各 8 字节，共 24
+ *   Vec<u8>   与 String 同一块 24 字节
+ * 格子从左到右的 ptr、len、cap 沿用前文控制头的列举顺序，
+ * 不表示标准库结构体的字段偏移。样式复用 diagrams.css，不写组件内 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	lang?: 'zh' | 'en';
+}
+
+const copy = {
+	zh: {
+		caption:
+			'按上面程序测得的字节数，等比例画出这五个类型在 64 位栈上的宽度，横轴每 8 字节一刻度。',
+		title: '五个类型的栈上字节宽度',
+		desc: '横轴从 0 到 24 字节，每 8 字节一刻度。第一行 i32 是 4 字节，格内标着整数。第二行 &i32 与第三行 &mut i32 都是 8 字节，格内标着地址，括号标出这两行都是 8 字节地址。第四行 String 与第五行 Vec<u8> 都是 24 字节，每行切成 ptr、len、cap 三格，每格 8 字节，括号标出这两行都是 24 字节。',
+		unit: '字节',
+		intBits: '整数',
+		address: '地址',
+		ptr: 'ptr',
+		len: 'len',
+		cap: 'cap',
+		i32: 'i32',
+		ref: '&i32',
+		mutRef: '&mut i32',
+		string: 'String',
+		vec: 'Vec<u8>',
+		i32Note: '4 字节',
+		refNote: '都是 8 字节地址',
+		headerNote: '都是 24 字节',
+	},
+	en: {
+		caption:
+			'Bar widths match the byte counts printed above. On a 64-bit machine the axis ticks every 8 bytes.',
+		title: 'Stack bytes of five types, drawn to scale',
+		desc: 'The axis runs from 0 to 24 bytes, with a tick every 8 bytes. The first row, i32, is 4 bytes and labeled integer. The second row, &i32, and the third row, &mut i32, are each 8 bytes and labeled address; a bracket says both are 8-byte addresses. The fourth row, String, and the fifth row, Vec<u8>, are each 24 bytes, split into ptr, len, and cap at 8 bytes each; a bracket says both are 24 bytes.',
+		unit: 'bytes',
+		intBits: 'int',
+		address: 'address',
+		ptr: 'ptr',
+		len: 'len',
+		cap: 'cap',
+		i32: 'i32',
+		ref: '&i32',
+		mutRef: '&mut i32',
+		string: 'String',
+		vec: 'Vec<u8>',
+		i32Note: '4 bytes',
+		refNote: 'both 8-byte addresses',
+		headerNote: 'both 24 bytes',
+	},
+} as const;
+
+const { lang } = Astro.props;
+const locale = lang ?? (SITE_LOCALE === 'en' ? 'en' : 'zh');
+const t = copy[locale];
+
+/** 1 字节 = 14px，24 字节的长条止于 x=476，右侧留给括号标注。 */
+const byte = 14;
+const x0 = 140;
+const barH = 32;
+const at = (n: number) => x0 + n * byte;
+const nameX = x0 - 12;
+
+const yI32 = 46;
+const yRef = 96;
+const yMut = yRef + barH + 8;
+const yStr = yMut + barH + 22;
+const yVec = yStr + barH + 8;
+const base = (y: number) => y + 21;
+
+const refTop = yRef;
+const refBot = yMut + barH;
+const refLabelY = (refTop + refBot) / 2 + 5;
+const refBrace = at(8) + 10;
+
+const strTop = yStr;
+const strBot = yVec + barH;
+const strLabelY = (strTop + strBot) / 2 + 5;
+const strBrace = at(24) + 10;
+
+const height = strBot + 16;
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox={`0 0 640 ${height}`} role="img" aria-labelledby="tml-title tml-desc">
+		<title id="tml-title">{t.title}</title>
+		<desc id="tml-desc">{t.desc}</desc>
+
+		<text class="edge-sub" x={at(0)} y="18" text-anchor="middle">0</text>
+		<text class="edge-sub" x={at(8)} y="18" text-anchor="middle">8</text>
+		<text class="edge-sub" x={at(16)} y="18" text-anchor="middle">16</text>
+		<text class="edge-sub" x={at(24)} y="18" text-anchor="middle">24</text>
+		<text class="edge-sub" x={at(24) + 18} y="18">{t.unit}</text>
+		<line x1={at(0)} y1="26" x2={at(24)} y2="26" stroke="var(--dg-line-muted)" stroke-width="1.5"></line>
+		<line x1={at(0)} y1="26" x2={at(0)} y2="32" stroke="var(--dg-line-muted)" stroke-width="1.5"></line>
+		<line x1={at(8)} y1="26" x2={at(8)} y2="32" stroke="var(--dg-line-muted)" stroke-width="1.5"></line>
+		<line x1={at(16)} y1="26" x2={at(16)} y2="32" stroke="var(--dg-line-muted)" stroke-width="1.5"></line>
+		<line x1={at(24)} y1="26" x2={at(24)} y2="32" stroke="var(--dg-line-muted)" stroke-width="1.5"></line>
+
+		<rect class="slot" x={x0} y={yI32} width={at(4) - x0} height={barH} rx="6"></rect>
+		<rect class="slot" x={x0} y={yRef} width={at(8) - x0} height={barH} rx="6"></rect>
+		<rect class="slot" x={x0} y={yMut} width={at(8) - x0} height={barH} rx="6"></rect>
+		<rect class="slot" x={x0} y={yStr} width={at(24) - x0} height={barH} rx="6"></rect>
+		<rect class="slot" x={x0} y={yVec} width={at(24) - x0} height={barH} rx="6"></rect>
+
+		<line x1={at(8)} y1={yStr + 2} x2={at(8)} y2={yStr + barH - 2} stroke="var(--dg-border)" stroke-width="1.5"></line>
+		<line x1={at(16)} y1={yStr + 2} x2={at(16)} y2={yStr + barH - 2} stroke="var(--dg-border)" stroke-width="1.5"></line>
+		<line x1={at(8)} y1={yVec + 2} x2={at(8)} y2={yVec + barH - 2} stroke="var(--dg-border)" stroke-width="1.5"></line>
+		<line x1={at(16)} y1={yVec + 2} x2={at(16)} y2={yVec + barH - 2} stroke="var(--dg-border)" stroke-width="1.5"></line>
+
+		<path
+			d={`M ${refBrace} ${refTop} H ${refBrace + 8} V ${refBot} H ${refBrace}`}
+			fill="none"
+			stroke="var(--dg-line-muted)"
+			stroke-width="1.5"
+		></path>
+		<path
+			d={`M ${strBrace} ${strTop} H ${strBrace + 8} V ${strBot} H ${strBrace}`}
+			fill="none"
+			stroke="var(--dg-line-muted)"
+			stroke-width="1.5"
+		></path>
+
+		<text class="code" x={nameX} y={base(yI32)} text-anchor="end">{t.i32}</text>
+		<text class="code" x={nameX} y={base(yRef)} text-anchor="end">{t.ref}</text>
+		<text class="code" x={nameX} y={base(yMut)} text-anchor="end">{t.mutRef}</text>
+		<text class="code" x={nameX} y={base(yStr)} text-anchor="end">{t.string}</text>
+		<text class="code" x={nameX} y={base(yVec)} text-anchor="end">{t.vec}</text>
+
+		<text class="code" x={(x0 + at(4)) / 2} y={base(yI32)} text-anchor="middle">{t.intBits}</text>
+		<text class="code" x={(x0 + at(8)) / 2} y={base(yRef)} text-anchor="middle">{t.address}</text>
+		<text class="code" x={(x0 + at(8)) / 2} y={base(yMut)} text-anchor="middle">{t.address}</text>
+		<text class="code" x={(x0 + at(8)) / 2} y={base(yStr)} text-anchor="middle">{t.ptr}</text>
+		<text class="code" x={(at(8) + at(16)) / 2} y={base(yStr)} text-anchor="middle">{t.len}</text>
+		<text class="code" x={(at(16) + at(24)) / 2} y={base(yStr)} text-anchor="middle">{t.cap}</text>
+		<text class="code" x={(x0 + at(8)) / 2} y={base(yVec)} text-anchor="middle">{t.ptr}</text>
+		<text class="code" x={(at(8) + at(16)) / 2} y={base(yVec)} text-anchor="middle">{t.len}</text>
+		<text class="code" x={(at(16) + at(24)) / 2} y={base(yVec)} text-anchor="middle">{t.cap}</text>
+
+		<text class="edge-label" x={at(4) + 12} y={base(yI32)}>{t.i32Note}</text>
+		<text class="edge-label" x={refBrace + 14} y={refLabelY}>{t.refNote}</text>
+		<text class="edge-label" x={strBrace + 14} y={strLabelY}>{t.headerNote}</text>
+	</svg>
+</figure>
