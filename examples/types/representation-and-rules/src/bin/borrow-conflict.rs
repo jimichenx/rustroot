@@ -1,4 +1,4 @@
-// Uncomment the marked line to trigger error[E0502].
+// Expect: E0502
 fn main() {
     let mut s = String::from("hello");
     let r: &String = &s;

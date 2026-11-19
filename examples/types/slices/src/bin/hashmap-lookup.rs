@@ -1,4 +1,4 @@
-// Uncomment the marked insert line to trigger error[E0502].
+// Expect: E0502
 use std::collections::HashMap;
 
 #[allow(unused_mut)]

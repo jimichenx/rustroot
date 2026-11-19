@@ -1,5 +1,6 @@
 use std::mem::size_of;
 
+// ANCHOR: three_forms
 struct User {
     name: String,
     age: u64,
@@ -8,22 +9,26 @@ struct User {
 
 struct Color(u8, u8, u8);
 struct AlwaysEqual;
+// ANCHOR_END: three_forms
 
+// ANCHOR: shorthand
 fn build_user(name: String, age: u64) -> User {
     User {
-        name, // field init shorthand for `name: name`
+        name,
         age,
         active: true,
     }
 }
+// ANCHOR_END: shorthand
 
 fn main() {
+    // ANCHOR: update_syntax
     let u1 = build_user(String::from("Alice"), 28);
-    // Struct update syntax `..u1` moves or copies remaining fields from `u1`.
     let u2 = User {
         name: String::from("Bob"),
         ..u1
     };
+    // ANCHOR_END: update_syntax
 
     let red = Color(255, 0, 0);
     let _marker = AlwaysEqual;

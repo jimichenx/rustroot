@@ -1,6 +1,4 @@
-//! Two `i32` fields, no heap. Without a `Copy` declaration the struct still moves.
-//! Uncomment the last line to get error[E0382]: borrow of moved value: `a`.
-
+// Expect: E0382
 struct Point {
     x: i32,
     y: i32,

@@ -1,4 +1,4 @@
-// Uncomment the marked line to trigger error[E0277].
+// Expect: E0277
 fn main() {
     let s = String::from("Rust语言");
     println!("byte length (.len()): {}", s.len());

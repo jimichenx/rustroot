@@ -1,6 +1,3 @@
-//! An associated function with no receiver acts as the constructor.
-//! With the field private, `from_half` is the only way in, so `value` stays even.
-
 mod parity {
     pub struct Even {
         value: u32,

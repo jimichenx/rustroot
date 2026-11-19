@@ -7,9 +7,9 @@
  * 变量名与 examples/types/slices/src/bin/string-and-str.rs 一致。
  * 样式见 src/styles/diagrams.css。
  */
-import { CURRENT } from '../../config/site';
+import { SITE_LOCALE } from '../../config/site';
 
-const isEn = CURRENT.code === 'en';
+const isEn = SITE_LOCALE === 'en';
 const t = isEn
 	? {
 			caption:
@@ -41,7 +41,7 @@ const t = isEn
 		}
 	: {
 			caption:
-				'栈上的 owned 用 24 字节控制头拥有堆里的 11 个字节；borrowed_full 是指向这块控制头的 8 字节瘦指针。slice_part 与 literal 都是 16 字节胖指针，前者零拷贝看堆上的 0..5，后者看只读数据段里的 hello rust。',
+				'栈上的 owned 用 24 字节控制头拥有堆里的 11 个字节；borrowed_full 是指向这块控制头的 8 字节瘦指针。slice_part 与 literal 都是 16 字节胖指针，前者不复制字节直接借用堆上的 0..5，后者指向只读数据段里的 hello rust。',
 			title: 'owned、borrowed_full、slice_part 与 literal 的指向',
 			desc: '左侧是栈帧 main 的四个局部变量。owned 是 24 字节的 String 控制头，字段为 ptr、len 11、cap 11，箭头从 ptr 指向堆上 hello world 的首字节，这块缓冲区由它负责释放。borrowed_full 是 8 字节瘦指针，弯箭头指回 owned 的左侧。slice_part 是 16 字节胖指针，字段为 ptr 与 len 5，箭头同样落在堆的首字节，虚线框标出 0..5。literal 是 16 字节胖指针，字段为 ptr 与 len 10，箭头指向只读数据段里 hello rust 的首字节；这段字面量在编译期写入可执行文件，静态存活，没有堆分配。',
 			stack: '栈帧 main',
@@ -64,7 +64,7 @@ const t = isEn
 			len5: 'len: 5',
 			len10: 'len: 10',
 			ownedRange: 'owned · 0..11 · len 11 · 负责释放',
-			sliceRange: 'slice_part · 0..5 · len 5 · 零拷贝子串',
+			sliceRange: 'slice_part · 0..5 · len 5 · 不复制字节',
 			literalRange: '0..10 · len 10',
 		};
 

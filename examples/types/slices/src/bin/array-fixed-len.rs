@@ -1,4 +1,4 @@
-// Uncomment the marked line to trigger error[E0308].
+// Expect: E0308
 fn sum4(arr: &[i32; 4]) -> i32 {
     arr[0] + arr[1] + arr[2] + arr[3]
 }

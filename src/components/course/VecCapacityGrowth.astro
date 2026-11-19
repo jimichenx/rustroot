@@ -7,10 +7,10 @@
  * 3. push(30) 触发扩容（len: 3, cap: 4，示例中搬到新地址）
  * 样式见 src/styles/diagrams.css。
  */
-import { CURRENT } from '../../config/site';
+import { SITE_LOCALE } from '../../config/site';
 import FigureControls from './FigureControls.astro';
 
-const isEn = CURRENT.code === 'en';
+const isEn = SITE_LOCALE === 'en';
 
 const t = isEn
 	? {

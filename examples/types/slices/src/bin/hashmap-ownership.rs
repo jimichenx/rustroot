@@ -1,4 +1,4 @@
-// Uncomment the println! line to trigger error[E0382].
+// Expect: E0382
 use std::collections::HashMap;
 
 fn main() {

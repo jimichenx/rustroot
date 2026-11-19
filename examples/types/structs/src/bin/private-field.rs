@@ -1,8 +1,4 @@
-//! Outside its module, a private field can be neither read nor written.
-//! The only way to get an `Even` is through a function inside the module,
-//! so the value inside stays even.
-//! Uncomment the last line to get error[E0451]: field `value` of struct `Even` is private.
-
+// Expect: E0451
 mod parity {
     pub struct Even {
         value: u32,

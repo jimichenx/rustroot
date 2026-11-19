@@ -1,4 +1,4 @@
-// Uncomment the marked line to trigger error[E0384].
+// Expect: E0384
 fn main() {
     let mut x = 1;
     let mut y = 10;

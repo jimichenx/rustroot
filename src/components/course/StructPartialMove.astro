@@ -1,23 +1,23 @@
 ---
 /**
  * 5.2「部分移动」。
- * let name = user.name; 之后：user.name 是虚线空位，user.age 仍是 7，
+ * let name = user.name; 之后：编译期状态表将 user.name 记为已移出（虚线框），user.age 仍保持有效值 7，
  * name 持有 String 的 ptr / len / cap，并负责释放堆上那一份 Ferris。
- * user 整体已残缺，不能再当作完整的 User 使用。
+ * user 因字段缺失不能再当作完整的 User 整体使用。
  * 样式见 src/styles/diagrams.css。
  */
-import { CURRENT } from '../../config/site';
+import { SITE_LOCALE } from '../../config/site';
 
-const isEn = CURRENT.code === 'en';
+const isEn = SITE_LOCALE === 'en';
 const t = isEn
 	? {
 			caption:
-				'After let name = user.name;, field user.name is a dashed hole and reading it is E0382, while user.age still holds 7 and can be used. The whole user is incomplete, so it cannot be used as a User. The 6-byte buffer Ferris on the heap is now freed by name; when user goes out of scope, only the fields still inside it are dropped.',
+				'After let name = user.name;, field user.name is marked moved out (dashed box, reading it triggers E0382), while user.age still holds 7 and remains usable. Because a field is missing, user cannot be used as a whole User. The 6-byte buffer Ferris on the heap is now freed by name; when user leaves scope, only the remaining valid fields are dropped.',
 			title: 'Stack and heap after moving user.name',
-			desc: 'On the left, stack frame main. The binding user: User is outlined as incomplete: it cannot be used as a whole value (E0382). Inside it, user.name is a dashed hole labeled moved out, and user.age is a solid slot still holding 7: u32. Below the struct, name: String holds ptr, len 6, and cap 6. A solid arrow labeled move ownership runs from user.name down to name. On the right, the heap holds one buffer, Ferris, 6 bytes. A solid arrow runs from name to that buffer; name now frees it. When user leaves the scope, only fields still inside, such as age, are dropped.',
+			desc: 'On the left, stack frame main. The binding user: User is marked partially moved and cannot be used as a whole value (E0382). Inside it, user.name is a dashed slot marked moved out, and user.age is a solid slot still holding 7: u32. Below the struct, name: String holds ptr, len 6, and cap 6. A solid arrow labeled move ownership runs from user.name down to name. On the right, the heap holds one buffer, Ferris, 6 bytes. A solid arrow runs from name to that buffer; name now frees it. When user leaves scope, only remaining unmoved fields are dropped.',
 			stack: 'stack frame · main',
 			heap: 'heap',
-			partial: 'incomplete · cannot use whole · E0382',
+			partial: 'partially moved · cannot use whole · E0382',
 			moved: 'moved out (cannot read · E0382)',
 			alive: 'not moved (still usable)',
 			move: 'move ownership',
@@ -26,12 +26,12 @@ const t = isEn
 		}
 	: {
 			caption:
-				'执行 let name = user.name; 之后，user.name 变成虚线空位，再读会报 E0382；user.age 仍是 7，可以继续用。user 整体已经残缺，不能再当作完整的 User。堆上 6 字节的 Ferris 改由 name 负责释放；user 离开作用域时，只清理还留在里面的字段。',
+				'执行 let name = user.name; 后，编译期状态表将 user.name 记为已移出（虚线框，再读报 E0382），user.age 仍保持有效值 7；user 因缺失字段不能再当作完整的 User 整体使用。堆上 6 字节的 Ferris 改由 name 负责释放；user 离开作用域时，仅对尚未移出的剩余有效字段执行释放。',
 			title: '移出 user.name 之后的栈与堆',
-			desc: '左侧是栈帧 main。绑定 user: User 标成整体已残缺，不能再当作完整的 User 使用（E0382）。里面 user.name 是虚线空位，标明已移出；user.age 是实线槽，里面仍是 7: u32。结构体下方，name: String 持有 ptr、len 6 和 cap 6。一条标着移动所有权的实线箭头从 user.name 向下指向 name。右侧堆上只有一份缓冲区 Ferris，6 字节。实线箭头从 name 指向这块缓冲区，释放责任已经交给 name。user 离开作用域时，只清理还留在里面的字段，例如 age。',
+			desc: '左侧是栈帧 main。绑定 user: User 标成部分移动，不能再当作完整的 User 整体使用（E0382）。内部 user.name 是虚线槽位，标明已移出；user.age 是实线槽位，仍存放 7: u32。结构体下方，name: String 持有 ptr、len 6 和 cap 6。一条标着移动所有权的实线箭头从 user.name 向下指向 name。右侧堆上只有一份缓冲区 Ferris，6 字节。实线箭头从 name 指向这块缓冲区，释放责任已移交给 name。user 离开作用域时，仅对尚未移出的剩余有效字段执行释放。',
 			stack: '栈帧 main',
 			heap: '堆',
-			partial: '整体已残缺 · 不可整体使用 E0382',
+			partial: '部分移动 · 不可整体使用 E0382',
 			moved: '已移出（禁止再读 E0382）',
 			alive: '未移动（仍可正常访问）',
 			move: '移动所有权',

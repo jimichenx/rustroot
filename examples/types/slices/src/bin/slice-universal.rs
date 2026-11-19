@@ -1,7 +1,7 @@
 fn sum(slice: &[i32]) -> i32 {
     let mut total = 0;
-    for &x in slice {
-        total += x;
+    for r in slice {
+        total += *r;
     }
     total
 }

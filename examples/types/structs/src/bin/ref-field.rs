@@ -1,7 +1,4 @@
-//! A field that holds a reference needs a lifetime parameter on the type.
-//! Uncomment the struct to get error[E0106]: missing lifetime specifier.
-//! Lesson 2.11 writes the parameter. Here the field owns its text.
-
+// Expect: E0106
 // struct BorrowedExcerpt {
 //     part: &str,
 // }

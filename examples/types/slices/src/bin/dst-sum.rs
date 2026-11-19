@@ -1,14 +1,17 @@
-// Uncomment the marked function to trigger error[E0277].
+// Expect: E0277
+// ANCHOR: bad_sum
 /*
 fn bad_sum(arr: [i32]) -> i32 {
     0
 }
 */
+// ANCHOR_END: bad_sum
 
+// ANCHOR: slice_sum
 fn sum(arr: &[i32]) -> i32 {
     let mut total = 0;
-    for &x in arr {
-        total += x;
+    for r in arr {
+        total += *r;
     }
     total
 }
@@ -21,3 +24,4 @@ fn main() {
     println!("sum of a3:       {}", sum(&a3));
     println!("sum of a4[1..3]: {}", sum(&a4[1..3]));
 }
+// ANCHOR_END: slice_sum

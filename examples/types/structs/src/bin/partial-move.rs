@@ -1,6 +1,4 @@
-//! Moving one field out leaves the other fields usable.
-//! Uncomment either commented `println!` line to trigger error[E0382].
-
+// Expect: E0382
 #[derive(Debug)]
 struct User {
     name: String,
@@ -13,7 +11,7 @@ fn main() {
         age: 7,
     };
 
-    let name = user.name; // the String moves out to `name`
+    let name = user.name;
     println!("moved name: {name}, remaining age: {}", user.age);
 
     // println!("cannot read moved field: {}", user.name);
