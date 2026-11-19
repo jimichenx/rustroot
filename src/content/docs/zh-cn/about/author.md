@@ -17,8 +17,8 @@ sidebar:
   正文勘误、代码问题或内容讨论欢迎提 Issue。为保持全站风格与主线统一，仓库暂不接受 PR。
 - **个人联系**：[hello@rustroot.dev](mailto:hello@rustroot.dev)
   用于授权许可、商业合作、出版等事宜；具体内容问题请尽量通过 Issue 反馈。
-- **微信公众号**
-  内容更新与工程笔记会同步发在这里。
+- **微信公众号 RustRoot**
+  内容更新与工程笔记会同步发在这里。在微信里搜索这个名字，或扫码关注。
 
   <img class="wechat-qr" src="/about/wechat-qr.jpg" width="200" height="200" alt="微信公众号二维码" />
 

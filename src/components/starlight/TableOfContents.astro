@@ -8,10 +8,19 @@
  *
  * 列表与当前标题高亮仍用 Starlight 内部组件。升级 Starlight 后若大纲高亮错位，
  * 对照 dist/components/TableOfContents.astro 与 TableOfContentsList.astro 重新合并。
+ *
+ * 中文站在目录列表下面放一张较小的公众号二维码，其下再放交流群二维码。
+ * 收起右栏时两张码跟着列表藏进窄轨。作者页正文已有公众号大图，这里不再重复。
+ * 英文站不显示。没有本页目录的页面右栏不出现。
+ * 交流群码来自微信群分享，大约 7 天失效（这张到 2026-11-24）。过期后替换
+ * public/about/wechat-group-qr.jpg。
  */
 import TableOfContentsList from '../../../node_modules/@astrojs/starlight/dist/components-internals/TableOfContents/TableOfContentsList.astro';
+import { CURRENT } from '../../config/site';
 
 const { toc } = Astro.locals.starlightRoute;
+const onAuthorPage = Astro.url.pathname.replace(/\/+$/, '') === '/about/author';
+const showWechat = CURRENT.code === 'zh' && !onAuthorPage;
 ---
 
 {
@@ -33,6 +42,33 @@ const { toc } = Astro.locals.starlightRoute;
 				<starlight-toc data-min-h={toc.minHeadingLevel} data-max-h={toc.maxHeadingLevel}>
 					<TableOfContentsList toc={toc.items} />
 				</starlight-toc>
+				{showWechat && (
+					<aside class="rr-toc-wechat" aria-label="微信公众号与交流群">
+						<img
+							src="/about/wechat-qr.jpg"
+							width="96"
+							height="96"
+							alt="微信公众号 RustRoot 的二维码"
+							decoding="async"
+						/>
+						<p>
+							关注公众号 <span class="rr-toc-wechat-id">RustRoot</span>，<br />
+							第一时间接收更新通知。
+						</p>
+						<img
+							class="is-group"
+							src="/about/wechat-group-qr.jpg"
+							width="116"
+							height="116"
+							alt="微信交流群 RustRoot 的二维码"
+							decoding="async"
+						/>
+						<p>
+							欢迎进群沟通，<br />
+							并及时接收通知。
+						</p>
+					</aside>
+				)}
 			</details>
 		</nav>
 	)

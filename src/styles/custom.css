@@ -248,6 +248,47 @@ starlight-toc {
 	line-height: 1.55;
 }
 
+/* 右栏目录下面的公众号码。收起时和列表一起藏进窄轨，不在 3.25rem 里硬塞。 */
+.rr-toc-wechat {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.55rem;
+	margin-top: 1.15rem;
+	padding-top: 0.9rem;
+	border-top: 1px solid var(--sl-color-gray-5);
+	text-align: center;
+}
+
+.rr-toc-wechat img {
+	width: 6rem;
+	height: 6rem;
+	border-radius: 0.25rem;
+	background: #fff;
+}
+
+.rr-toc-wechat img.is-group {
+	width: 7.25rem;
+	height: 7.25rem;
+	margin-top: 0.85rem;
+}
+
+.rr-toc-wechat p {
+	width: 100%;
+	margin: 0;
+	font-size: var(--sl-text-xs);
+	line-height: 1.55;
+	color: var(--sl-color-gray-2);
+	text-align: center;
+}
+
+.rr-toc-wechat-id {
+	color: var(--sl-color-white);
+	font-weight: 600;
+	white-space: nowrap;
+	user-select: all;
+}
+
 /* ---------- 字体：中英文各自友好的系统字体栈 ---------- */
 :root {
 	--sl-font:
