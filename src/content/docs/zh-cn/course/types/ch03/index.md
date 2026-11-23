@@ -2,11 +2,6 @@
 title: 一切皆类型
 description: 打破面向对象语言中「基本类型与类」的割裂认识，建立「表示与约束」「类型构造器」与「正交零件组合」三项基础认知。
 id: constructors
-draft: true
-sidebar:
-  badge:
-    text: 草稿
-    variant: caution
 ---
 
 上一篇顺着「唯一释放责任」推导出了所有权、移动与借用，并在变量声明、重新赋值和遮蔽的真实代码中核对了这套规则。

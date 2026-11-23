@@ -12,22 +12,74 @@
  * - Google 分析：只在英文构建写入 `<head>`。中文站不加载。
  *
  * 前提：两种语言的内容目录保持相同的相对路径。
- * 若对方语言尚未翻译该页，链接会落到对方站点的 404 页——这是可接受的过渡状态，
- * 后续可用构建脚本对比两侧目录，只为双侧都存在的页面输出 hreflang。
+ * 构建期通过 hasLivePage 检查对方语言是否已公开同一路径，仅为双侧都存在的页面输出互指 hreflang，
+ * 避免中文连载阶段指向英文站 404 页触发搜索引擎告警。
  */
 import Default from '@astrojs/starlight/components/Head.astro';
-import { CURRENT, OTHER, X_DEFAULT_LOCALE, siteOrigin } from '../../config/site';
+import { hasLivePage } from '../../config/release';
+import { CURRENT, OTHER, REPOSITORY, X_DEFAULT_LOCALE, siteOrigin } from '../../config/site';
 
 const isDev = import.meta.env.DEV;
 const isZh = CURRENT.code === 'zh';
 const isEn = CURRENT.code === 'en';
 const preview = new URL(CURRENT.site).hostname === 'preview.rustroot.cn';
 const pathname = Astro.url.pathname;
+const isHome = pathname === '/' || pathname === '';
 
-const currentHref = siteOrigin(CURRENT, isDev) + pathname;
+const currentOrigin = siteOrigin(CURRENT, isDev);
+const currentHref = currentOrigin + pathname;
 const otherHref = siteOrigin(OTHER, isDev) + pathname;
 const xDefaultHref = siteOrigin(X_DEFAULT_LOCALE, isDev) + pathname;
-const ogImage = `${siteOrigin(CURRENT, isDev)}/og/${CURRENT.code}.png`;
+const ogImage = `${currentOrigin}/og/${CURRENT.code}.png`;
+const hasAlternate = hasLivePage(CURRENT.code, pathname) && hasLivePage(OTHER.code, pathname);
+
+const homeJsonLd = isHome
+	? JSON.stringify({
+			'@context': 'https://schema.org',
+			'@graph': [
+				{
+					'@type': 'WebSite',
+					'@id': `${CURRENT.site}/#website`,
+					url: `${CURRENT.site}/`,
+					name: 'Rust Root',
+					description: CURRENT.description,
+					inLanguage: CURRENT.lang,
+					publisher: {
+						'@type': 'Person',
+						name: 'jimichen',
+						url: `${CURRENT.site}/about/author/`,
+					},
+				},
+				{
+					'@type': 'LearningResource',
+					'@id': `${CURRENT.site}/#guide`,
+					name: isZh
+						? 'Rust Root · 从内存与类型理解 Rust 的开源指南'
+						: 'Rust Root · Understand the principles behind Rust’s design',
+					description: CURRENT.description,
+					url: `${CURRENT.site}/`,
+					inLanguage: CURRENT.lang,
+					learningResourceType: 'Open Guide',
+					educationalLevel: 'Intermediate',
+					isAccessibleForFree: true,
+					license: isZh
+						? 'https://creativecommons.org/licenses/by-nc-nd/4.0/deed.zh-hans'
+						: 'https://creativecommons.org/licenses/by-nc-nd/4.0/deed.en',
+					author: {
+						'@type': 'Person',
+						name: 'jimichen',
+						url: `${CURRENT.site}/about/author/`,
+					},
+					sameAs: [REPOSITORY],
+					about: [
+						{ '@type': 'Thing', name: 'Rust Programming Language' },
+						{ '@type': 'Thing', name: 'Memory Management and Ownership' },
+						{ '@type': 'Thing', name: 'Type System' },
+					],
+				},
+			],
+		})
+	: undefined;
 
 ---
 
@@ -55,11 +107,16 @@ const ogImage = `${siteOrigin(CURRENT, isDev)}/og/${CURRENT.code}.png`;
 		<meta name="robots" content="noindex, nofollow" />
 	) : (
 		<>
-			<link rel="alternate" hreflang={CURRENT.lang} href={currentHref} />
-			<link rel="alternate" hreflang={OTHER.lang} href={otherHref} />
-			<link rel="alternate" hreflang="x-default" href={xDefaultHref} />
-			{/* Starlight 默认已输出 og:locale，这里只补充 alternate */}
-			<meta property="og:locale:alternate" content={OTHER.lang} />
+			{hasAlternate && (
+				<>
+					<link rel="alternate" hreflang={CURRENT.lang} href={currentHref} />
+					<link rel="alternate" hreflang={OTHER.lang} href={otherHref} />
+					<link rel="alternate" hreflang="x-default" href={xDefaultHref} />
+					{/* Starlight 默认已输出 og:locale，这里只补充 alternate */}
+					<meta property="og:locale:alternate" content={OTHER.lang} />
+				</>
+			)}
+			{homeJsonLd && <script type="application/ld+json" set:html={homeJsonLd} />}
 		</>
 	)
 }

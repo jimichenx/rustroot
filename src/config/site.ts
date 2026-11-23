@@ -42,7 +42,7 @@ export const LOCALES: Record<SiteLocale, LocaleConfig> = {
 		contentDir: 'zh-cn',
 		title: 'Rust Root',
 		description:
-			'面向有编程经验者的 Rust 开源指南：不堆砌零散的语法词典，带你跨越过往语言的习惯，从内存与类型出发建立自洽的 Rust 心智模型，贯通核心机制与工程实践。',
+			'面向有编程经验者的 Rust 开源指南：从栈帧、堆块与类型约束出发，跨越过往语言习惯，建立自洽的 Rust 心智模型与工程裁决力。',
 	},
 	en: {
 		code: 'en',

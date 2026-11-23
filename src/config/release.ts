@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadCourse, publicSlug, type ChapterNode, type PartNode } from './course-slugs';
-import { CURRENT } from './site';
+import { CURRENT, LOCALES, type SiteLocale } from './site';
 
 // 正式站的发布范围由正文 frontmatter 的 draft 决定，只在中文生产构建里生效。
 // 章描述页 draft: true：这一章整章不进正式站。某一节 draft: true：只扣这一节。
@@ -141,4 +141,39 @@ export function isHeldBack(slug: string): boolean {
 	const gate = releaseGate();
 	if (!gate) return false;
 	return gate.known.has(slug) && gate.held.has(slug);
+}
+
+const liveSlugCache = new Map<SiteLocale, Set<string>>();
+
+function computeLiveSlugs(locale: SiteLocale): Set<string> {
+	const cached = liveSlugCache.get(locale);
+	if (cached) return cached;
+
+	const contentDir = LOCALES[locale].contentDir;
+	const course = loadCourse(contentDir);
+	const held = new Set<string>();
+	const listed: string[] = [];
+	for (const part of course.parts) holdPart(part, held, listed);
+	if (course.appendix) holdPart(course.appendix, held, listed);
+	if (course.contents?.draft) held.add(course.contents.slug);
+	for (const slug of [...held]) {
+		if (frame(slug)) held.delete(slug);
+	}
+
+	const live = new Set<string>();
+	for (const entry of walk(docsRoot(contentDir))) {
+		const slug = publicSlug(contentDir, entry);
+		if (slug === '404' || held.has(slug)) continue;
+		live.add(slug);
+	}
+	liveSlugCache.set(locale, live);
+	return live;
+}
+
+/** 某语言正式站是否真实存在该公开路径（用于过滤指向未翻译页 404 的 hreflang）。 */
+export function hasLivePage(locale: SiteLocale, pathname: string): boolean {
+	const clean = pathname.split(/[?#]/, 1)[0]?.replace(/^\/+|\/+$/g, '') ?? '';
+	const slug = clean === '' ? 'index' : clean;
+	if (slug === '404') return false;
+	return computeLiveSlugs(locale).has(slug);
 }

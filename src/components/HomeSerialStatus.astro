@@ -1,0 +1,69 @@
+---
+/**
+ * 首页首屏下方的连载规模与进度横条。
+ * 所有章数、节数与附录就绪状态均从 zh-cn 内容目录实时计算，随每周去掉 draft 自动增长。
+ */
+import { loadCourse } from '../config/course-slugs';
+import { hasPendingRelease } from '../config/release';
+
+const course = loadCourse('zh-cn');
+const numberedParts = course.parts.filter((part) => !part.unnumbered);
+const totalParts = numberedParts.length;
+
+let releasedChapters = 0;
+let releasedLessons = 0;
+for (const part of numberedParts) {
+	if (part.draft) continue;
+	for (const chapter of part.chapters) {
+		if (chapter.draft || !chapter.hasIndex || !chapter.slug) continue;
+		const liveLessons = chapter.lessons.filter((lesson) => !lesson.draft);
+		if (liveLessons.length === 0) continue;
+		releasedChapters += 1;
+		releasedLessons += liveLessons.length;
+	}
+}
+
+const appendixReady = Boolean(
+	course.appendix?.hasIndex &&
+		!course.appendix.draft &&
+		course.appendix.chapters.some(
+			(chapter) => !chapter.draft && chapter.lessons.some((lesson) => !lesson.draft),
+		),
+);
+const pending = hasPendingRelease('zh-cn');
+---
+
+<div class="rr-serial-bar not-content" role="status" aria-label="连载更新进度">
+	<div class="rr-serial-main">
+		{
+			pending ? (
+				<>
+					<span class="rr-serial-badge">
+						<span class="rr-serial-dot" aria-hidden="true" />
+						每周连载
+					</span>
+					<p class="rr-serial-text">
+						主线共规划 <strong>{totalParts} 篇约 20 章</strong>
+						<span class="rr-serial-sep" aria-hidden="true">·</span>
+						目前已开放 <strong>{releasedChapters} 章（{releasedLessons} 节正文）</strong>
+						{appendixReady ? '与速查附录' : ''}
+						<span class="rr-serial-sep" aria-hidden="true">·</span>
+						每周发布 1–2 章
+					</p>
+				</>
+			) : (
+				<p class="rr-serial-text">
+					主线 <strong>{totalParts} 篇 {releasedChapters} 章（{releasedLessons} 节正文）</strong>
+					{appendixReady ? '与速查附录' : ''}已完整公开
+				</p>
+			)
+		}
+	</div>
+	{
+		appendixReady && (
+			<a class="rr-serial-link" href="/appendix/">
+				速查语法与跨语言对照 →
+			</a>
+		)
+	}
+</div>

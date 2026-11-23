@@ -1,26 +1,35 @@
 ---
 title: Rust Root
-description: 面向有编程经验者的 Rust 开源指南：不堆砌零散的语法词典，带你跨越过往语言的习惯，从内存与类型出发建立自洽的 Rust 心智模型，贯通核心机制与工程实践。
+description: 面向有编程经验者的 Rust 开源指南：从栈帧、堆块与类型约束出发，跨越过往语言习惯，建立自洽的 Rust 心智模型与工程裁决力。
 template: splash
 head:
   - tag: title
-    content: Rust Root · 跨越语言惯性，学会像 Rust 一样思考
+    content: Rust Root · 从内存与类型理解 Rust 的开源指南
 hero:
-  title: <span class="rr-home-title">Rust Root</span>
+  title: >-
+    <span class="rr-home-title">
+      <span class="rr-home-kicker">Rust Root · Rust 开源指南</span>
+      <span class="rr-home-headline">跨越语言惯性，学会像 Rust 一样思考</span>
+    </span>
   tagline: >-
-    <p class="rr-home-slogan">跨越语言惯性，学会像 Rust 一样思考</p>
-    <p class="rr-home-lead">学 Rust 真正的门槛不在语法，而在转换思维方式。</p>
-    <p class="rr-home-lead">本指南不堆砌零散的语法词典，而是带你跨越过往语言的习惯，从内存与类型出发建立一套自洽的 Rust 心智模型，贯通核心机制与工程实践。</p>
+    <p class="rr-home-lead">学 Rust 真正的门槛不在语法，而在转换思维方式。本指南不堆砌零散的语法词典，而是从栈帧、堆块与类型约束出发，带你建立自洽的 Rust 心智模型与工程裁决力。</p>
     <p class="rr-home-prerequisite">适合已掌握一门主流语言（Java / Go / Python / TS / C++ 等）的开发者；无需 Rust 基础，尤其适合曾被借用检查器劝退的开发者。</p>
   actions:
-    - text: 开始阅读
-      link: /about/preface/
+    - text: 开始阅读 · 内存与所有权
+      link: /memory/
       icon: right-arrow
+    - text: 查看章节与路线
+      link: '#course-route'
+      icon: down-arrow
+      variant: secondary
 ---
 
+import HomeSerialStatus from '../../../components/HomeSerialStatus.astro';
 import HomeCourseRoute from '../../../components/HomeCourseRoute.astro';
 
 <div class="rr-home">
+
+<HomeSerialStatus />
 
 <section class="rr-home-section" aria-labelledby="shifts-title">
 <p class="rr-home-eyebrow">为什么旧经验会失灵</p>
@@ -69,42 +78,27 @@ import HomeCourseRoute from '../../../components/HomeCourseRoute.astro';
 </div>
 </section>
 
-<section class="rr-home-section" aria-labelledby="outcomes-title">
-<p class="rr-home-eyebrow">你将获得什么</p>
-<h2 id="outcomes-title">从看懂编译检查，到掌握工程裁决</h2>
-<p>用内存事实、可运行的代码实验与跨语言视角对照，把思考方法直接迁移到真实项目开发中。</p>
-
-<div class="rr-home-outcomes">
-<article class="rr-home-outcome">
-<span class="rr-home-outcome-number">01</span>
-<h3>转换思维视角</h3>
-<p>看清旧语言的隐式习惯为何在 Rust 中失效，从内存责任与数据流出发建立原生直觉，不再与编译器反复拉锯。</p>
-</article>
-<article class="rr-home-outcome">
-<span class="rr-home-outcome-number">02</span>
-<h3>贯通核心机制</h3>
-<p>把所有权、代数数据类型（<code>struct</code> / <code>enum</code>）、Trait 分发、智能指针与异步并发连成一套前后咬合的体系，而非孤立的语法碎片。</p>
-</article>
-<article class="rr-home-outcome">
-<span class="rr-home-outcome-number">03</span>
-<h3>掌握工程裁决</h3>
-<p>在真实业务与 AI 辅助编码中，懂得如何用类型签名守住安全边界，识别并消除无谓的 <code>.clone()</code>、锁竞争与过度抽象。</p>
-</article>
-</div>
-</section>
-
-<section class="rr-home-section" aria-labelledby="route-title">
+<section id="course-route" class="rr-home-section" aria-labelledby="route-title">
 <p class="rr-home-eyebrow">阅读路线</p>
 <h2 id="route-title">从内存与所有权，一直走到系统边界</h2>
-<p>主线按认知依赖层层推进，前序章节建立的判断会在后续内容中持续复用；附录提供按需检索的语法、机制与跨语言对照。</p>
-<p>标为「规划中」的部分按每周一到两章陆续公开。</p>
+<p>主线共规划 6 篇约 20 章，按认知依赖层层推进，串联底层内存机制、类型签名设计与真实工程及 AI 辅助编码中的代码裁决；前序章节建立的判断会在后续内容中持续复用。</p>
 
 <HomeCourseRoute />
 </section>
 
-<section class="rr-home-section rr-home-about" aria-labelledby="feedback-title">
-<h2 id="feedback-title">持续修订与交流</h2>
-<p>本指南仍在持续精修与发布中。如果你想先了解写作方法与阅读建议，可以查看<a href="/about/preface/">前言</a>或<a href="/about/author/">关于作者</a>；阅读过程中若发现疏漏或有改进建议，欢迎前往 <a href="https://github.com/jimichenx/rustroot">GitHub 仓库</a>或通过<a href="mailto:hello@rustroot.dev">邮件反馈</a>交流。</p>
+<section class="rr-home-section" aria-labelledby="follow-title">
+<div class="rr-home-follow">
+<div class="rr-home-follow-body">
+<p class="rr-home-eyebrow">连载更新与交流</p>
+<h2 id="follow-title">每周更新 1–2 章，欢迎追更与反馈</h2>
+<p>本指南底稿已成体系，目前正按每周一到两章的节奏逐章精修并对外开放。关注微信公众号 <strong>RustRoot</strong> 可在每章上线时收到推送，也可前往 <a href="https://github.com/jimichenx/rustroot">GitHub 仓库</a>点亮 Star 追踪更新记录。</p>
+<p class="rr-home-follow-links">阅读前想了解推导方法与阅读建议，可先看<a href="/about/preface/">前言</a>或<a href="/about/author/">关于作者</a>；若在正文中发现疏漏，欢迎提交 <a href="https://github.com/jimichenx/rustroot/issues">GitHub Issue</a> 或通过<a href="mailto:hello@rustroot.dev">邮件反馈</a>交流。</p>
+</div>
+<div class="rr-home-follow-qr not-content">
+<img src="/about/wechat-qr.jpg" width="112" height="112" alt="微信公众号 RustRoot 二维码" loading="lazy" decoding="async" />
+<span>微信扫码或搜索公众号 <strong>RustRoot</strong></span>
+</div>
+</div>
 </section>
 
 </div>

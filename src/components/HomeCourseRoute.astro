@@ -4,169 +4,276 @@ import { compareLessons } from '../config/course-numbers';
 import { draftsVisible, isPublished } from '../config/release';
 
 interface Props {
-        locale?: 'zh' | 'en';
+	locale?: 'zh' | 'en';
 }
 
 const { locale = 'zh' } = Astro.props;
 const course = loadCourse(locale === 'en' ? 'en' : 'zh-cn');
 const chineseParts = [
-        {
-                title: '内存与所有权',
-                description: '放下 GC 语言的隐式假设，从栈帧与堆内存的释放责任出发，打通所有权、移动、借用与变量绑定。',
-                slug: 'memory',
-        },
-        {
-                title: '类型与数据',
-                description: '建立「类型 = 表示 + 约束」视角，掌握切片胖指针、容器与代数数据类型，告别空指针与隐式异常。',
-                slug: 'types',
-        },
-        {
-                title: '泛型、Trait 与函数式组合',
-                description: '跳出类继承思维，厘清泛型单态化与 dyn Trait 动态分发的取舍边界，串联迭代器与闭包。',
-                slug: 'abstraction',
-        },
+	{
+		title: '内存与所有权',
+		description: '放下 GC 语言的隐式假设，从栈帧与堆内存的释放责任出发，打通所有权、移动、借用与变量绑定。',
+		slug: 'memory',
+	},
+	{
+		title: '类型与数据',
+		description: '建立「类型 = 表示 + 约束」视角，掌握切片胖指针、容器与代数数据类型，告别空指针与隐式异常。',
+		slug: 'types',
+	},
+	{
+		title: '泛型、Trait 与函数式组合',
+		description: '跳出类继承思维，厘清泛型单态化与 dyn Trait 动态分发的取舍边界，串联迭代器与闭包。',
+		slug: 'abstraction',
+	},
 	{
 		title: '智能指针、借用与生命周期边界',
 		description: '拆解引用、智能指针与裸指针的分工，掌握 Box、Deref 与 Drop 机制，看懂跨边界的生命周期约束。',
 		slug: 'pointers',
 	},
-        {
-                title: '共享、并发与异步',
-                description: '跨越单一所有权与单线程边界，贯通 Rc / RefCell、多线程 Arc / Mutex、Send / Sync 与 async / Pin 状态机。',
-                slug: 'concurrency',
-        },
-        {
-                title: '工程架构与系统边界',
-                description: '落地多包封装、类型驱动设计、编译期宏与生产级服务基建，探明 unsafe 安全抽象与 FFI 通信边界。',
-                slug: 'architecture',
-        },
+	{
+		title: '共享、并发与异步',
+		description: '跨越单一所有权与单线程边界，贯通 Rc / RefCell、多线程 Arc / Mutex、Send / Sync 与 async / Pin 状态机。',
+		slug: 'concurrency',
+	},
+	{
+		title: '工程架构与系统边界',
+		description: '落地多包封装、类型驱动设计、编译期宏与生产级服务基建，探明 unsafe 安全抽象与 FFI 通信边界。',
+		slug: 'architecture',
+	},
 ];
 const englishParts = [
-        {
-                title: 'Memory and ownership',
-                description: 'Explore ownership, borrowing, and assignment, starting with the stack and the heap.',
-                slug: 'memory',
-        },
-        {
-                title: 'Types and data',
-                description: 'Understand type representation and constraints, and how types combine to organize data.',
-                slug: 'types',
-        },
-        {
-                title: 'Abstraction and composition',
-                description: 'Express shared behavior with generics, traits, iterators, and closures.',
-        },
-        {
-                title: 'Sharing and concurrency',
-                description: 'Understand shared ownership, interior mutability, and thread safety.',
-        },
-        {
-                title: 'System boundaries',
-                description: 'Explore advanced lifetimes, unsafe Rust, and asynchronous programming.',
-        },
+	{
+		title: 'Memory and ownership',
+		description: 'Explore ownership, borrowing, and assignment, starting with the stack and the heap.',
+		slug: 'memory',
+	},
+	{
+		title: 'Types and data',
+		description: 'Understand type representation and constraints, and how types combine to organize data.',
+		slug: 'types',
+	},
+	{
+		title: 'Abstraction and composition',
+		description: 'Express shared behavior with generics, traits, iterators, and closures.',
+	},
+	{
+		title: 'Sharing and concurrency',
+		description: 'Understand shared ownership, interior mutability, and thread safety.',
+	},
+	{
+		title: 'System boundaries',
+		description: 'Explore advanced lifetimes, unsafe Rust, and asynchronous programming.',
+	},
 ];
+
 const showDrafts = draftsVisible();
-const parts = (locale === 'en' ? englishParts : chineseParts).map((part, index) => {
-        const published = part.slug && course.parts.find(item => item.slug === part.slug && (showDrafts || !item.draft));
-        const chapters = published
-                ? published.chapters
-                        .filter(chapter => (showDrafts || !chapter.draft) && chapter.slug && chapter.label)
-                        .map(chapter => {
-                                const lessons = chapter.lessons.filter(lesson => (showDrafts || !lesson.draft) && isPublished(lesson.slug)).sort(compareLessons);
-                                // The chapter introduction is still a placeholder.
-                                const slug = locale === 'zh' && chapter.id === 'references-and-slices'
-                                        ? lessons[0]?.slug
-                                        : chapter.slug;
-                                return { ...chapter, lessons, link: slug ? `/${slug}/` : undefined };
-                        })
-                        .filter(chapter => chapter.lessons.length > 0 && chapter.link)
-                : [];
-        return { ...part, number: index + 1, chapters, hasPage: Boolean(published?.hasIndex && chapters.length > 0) };
+
+// 英文版保留原有章节卡片计算逻辑
+const enParts = englishParts.map((part, index) => {
+	const published = part.slug && course.parts.find((item) => item.slug === part.slug && (showDrafts || !item.draft));
+	const chapters = published
+		? published.chapters
+				.filter((chapter) => (showDrafts || !chapter.draft) && chapter.slug && chapter.label)
+				.map((chapter) => {
+					const lessons = chapter.lessons
+						.filter((lesson) => (showDrafts || !lesson.draft) && isPublished(lesson.slug))
+						.sort(compareLessons);
+					return { ...chapter, lessons, link: chapter.slug ? `/${chapter.slug}/` : undefined };
+				})
+				.filter((chapter) => chapter.lessons.length > 0 && chapter.link)
+		: [];
+	return { ...part, number: index + 1, chapters };
 });
-const hasAppendix =
-        locale === 'zh' &&
-        Boolean(
-                course.appendix?.hasIndex &&
-                        (showDrafts || !course.appendix.draft) &&
-                        isPublished('appendix') &&
-                        course.appendix.chapters.some(
-                                ch =>
-                                        (showDrafts || !ch.draft) &&
-                                        ch.lessons.some(l => (showDrafts || !l.draft) && isPublished(l.slug)),
-                        ),
-        );
+
+// 中文版按真实非草稿状态拆分「当前已开放（展开至章）」与「后续连载蓝图（仅展示规模，不暴露细目录）」
+const zhParts = chineseParts.map((part, index) => {
+	const partNode = course.parts.find((item) => item.slug === part.slug);
+	const totalChapterCount = partNode?.chapters.length ?? 0;
+	const liveChapters =
+		partNode && !partNode.draft
+			? partNode.chapters
+					.filter((chapter) => !chapter.draft && chapter.hasIndex && chapter.slug && chapter.label)
+					.map((chapter) => {
+						const lessons = chapter.lessons.filter((lesson) => !lesson.draft).sort(compareLessons);
+						return {
+							num: chapter.num,
+							label: chapter.label!,
+							href: `/${chapter.slug}/`,
+							lessonCount: lessons.length,
+						};
+					})
+					.filter((chapter) => chapter.lessonCount > 0)
+			: [];
+	const liveLessonCount = liveChapters.reduce((sum, ch) => sum + ch.lessonCount, 0);
+	const isLive = Boolean(partNode?.hasIndex && !partNode.draft && liveChapters.length > 0);
+	const previewHref = !isLive && showDrafts && partNode?.hasIndex ? `/${part.slug}/` : undefined;
+
+	return {
+		...part,
+		number: index + 1,
+		totalChapterCount,
+		liveChapters,
+		liveLessonCount,
+		isLive,
+		href: isLive ? `/${part.slug}/` : previewHref,
+	};
+});
+
+const zhLiveParts = zhParts.filter((part) => part.isLive);
+const zhUpcomingParts = zhParts.filter((part) => !part.isLive);
+
+const zhAppendixChapters =
+	locale === 'zh' && course.appendix?.hasIndex && !course.appendix.draft
+		? course.appendix.chapters
+				.filter((ch) => !ch.draft && ch.slug && ch.label)
+				.map((ch) => {
+					const lessons = ch.lessons.filter((lesson) => !lesson.draft).sort(compareLessons);
+					const letter = String.fromCharCode(64 + ch.num);
+					return {
+						letter,
+						label: ch.label!,
+						href: `/${ch.slug}/`,
+						lessonCount: lessons.length,
+					};
+				})
+				.filter((ch) => ch.lessonCount > 0)
+		: [];
+const hasZhAppendix = zhAppendixChapters.length > 0;
+const spanAppendixFull = hasZhAppendix && zhLiveParts.length % 2 === 0;
 ---
 
-{locale === 'zh' ? (
-        <div class="rr-home-route-wrap">
-                <ol class="rr-home-route-compact">
-                        {parts.map(part => (
-                                <li class:list={['rr-home-route-item', { 'is-available': part.hasPage }]}>
-                                        <div class="rr-home-route-head">
-                                                <span class="rr-home-route-number" aria-hidden="true">{String(part.number).padStart(2, '0')}</span>
-                                                <h3>
-                                                        {part.hasPage ? (
-                                                                <a class="rr-home-route-link" href={`/${part.slug}/`}>{part.title}</a>
-                                                        ) : (
-                                                                part.title
-                                                        )}
-                                                </h3>
-                                                <span class:list={['rr-home-route-status', { 'is-available': part.hasPage }]}>
-                                                        {part.hasPage ? '已有正文' : '规划中'}
-                                                </span>
-                                        </div>
-                                        <p class="rr-home-route-desc">{part.description}</p>
-                                </li>
-                        ))}
-                </ol>
-                {hasAppendix && (
-                        <div class="rr-home-appendix">
-                                <div class="rr-home-route-head">
-                                        <span class="rr-home-route-number" aria-hidden="true">A–D</span>
-                                        <h3>
-                                                <a class="rr-home-route-link" href="/appendix/">附录 · 语法、机制、跨语言对照与排障速查</a>
-                                        </h3>
-                                        <span class="rr-home-route-status is-available">按需查阅</span>
-                                </div>
-                                <p class="rr-home-route-desc">涵盖基础语法速查、底层编译展开机制、Java / Go / C++ 等跨语言视角对照，以及 Rust 工具链与高频编译错误码诊断。</p>
-                        </div>
-                )}
-        </div>
-) : (
-<div class="rr-home-route">
-        {
-                parts.map(part => (
-                        <article class:list={['rr-home-part', { 'rr-home-part-planned': part.chapters.length === 0 }]}>
-                                <div class="rr-home-part-meta">
-                                        <span>{locale === 'zh' ? `第 ${part.number} 篇` : `Part ${part.number}`}</span>
-                                        <span>{
-                                                part.chapters.length > 0
-                                                        ? (locale === 'zh' ? '已有正文' : 'Available')
-                                                        : (locale === 'zh' ? '规划中' : part.slug ? 'Translation pending' : 'Planned')
-                                        }</span>
-                                </div>
-                                <h3>{part.title}</h3>
-                                <p>{part.description}</p>
-                                {part.chapters.length > 0 && (
-                                        <ul class="rr-home-chapters">
-                                                {part.chapters.map(chapter => (
-                                                        <li>
-                                                                <a href={chapter.link}>{
-                                                                        locale === 'zh'
-                                                                                ? `第 ${chapter.num} 章 · ${chapter.label}`
-                                                                                : `Chapter ${chapter.num} · ${chapter.label}`
-                                                                }</a>
-                                                                <span>{
-                                                                        locale === 'zh'
-                                                                                ? `${chapter.lessons.length} 节可读`
-                                                                                : `${chapter.lessons.length} ${chapter.lessons.length === 1 ? 'section' : 'sections'} available`
-                                                                }</span>
-                                                        </li>
-                                                ))}
-                                        </ul>
-                                )}
-                        </article>
-                ))
-        }
-</div>
-)}
+{
+	locale === 'zh' ? (
+		<div class="rr-home-route-wrap not-content">
+			<div class="rr-route-live-grid">
+				{zhLiveParts.map((part) => {
+					const statusText =
+						part.liveChapters.length < part.totalChapterCount
+							? `连载中 · 已开放 ${part.liveChapters.length} / ${part.totalChapterCount} 章`
+							: `已开放 ${part.liveChapters.length} 章 · ${part.liveLessonCount} 节`;
+					return (
+						<article class="rr-route-live-card">
+							<div class="rr-route-card-top">
+								<div class="rr-home-route-head">
+									<span class="rr-home-route-number" aria-hidden="true">
+										{String(part.number).padStart(2, '0')}
+									</span>
+									<h3>
+										<a class="rr-route-title-link" href={part.href}>
+											{part.title}
+										</a>
+									</h3>
+									<span class="rr-home-route-status is-available">{statusText}</span>
+								</div>
+								<p class="rr-home-route-desc">{part.description}</p>
+							</div>
+							<ul class="rr-route-chapter-list">
+								{part.liveChapters.map((chapter) => (
+									<li>
+										<a class="rr-route-chapter-link" href={chapter.href}>
+											<span class="rr-route-chapter-num">第 {chapter.num} 章</span>
+											<span class="rr-route-chapter-name">{chapter.label}</span>
+											<span class="rr-route-chapter-meta">{chapter.lessonCount} 节 →</span>
+										</a>
+									</li>
+								))}
+							</ul>
+						</article>
+					);
+				})}
+
+				{hasZhAppendix && (
+					<article class:list={['rr-route-live-card rr-route-appendix-card', { 'is-full': spanAppendixFull }]}>
+						<div class="rr-route-card-top">
+							<div class="rr-home-route-head">
+								<span class="rr-home-route-number" aria-hidden="true">
+									附录
+								</span>
+								<h3>
+									<a class="rr-route-title-link" href="/appendix/">
+										语法、跨语言对照与排障速查
+									</a>
+								</h3>
+								<span class="rr-home-route-status is-available">按需查阅</span>
+							</div>
+							<p class="rr-home-route-desc">
+								基础语法、Java / Go / C++ 跨语言视角对照、工具链与高频编译错误码独立成册，随时检索而不打断主线推导。
+							</p>
+						</div>
+						<ul class="rr-route-chapter-list">
+							{zhAppendixChapters.map((ch) => (
+								<li>
+									<a class="rr-route-chapter-link" href={ch.href}>
+										<span class="rr-route-chapter-num">附录 {ch.letter}</span>
+										<span class="rr-route-chapter-name">{ch.label}</span>
+										<span class="rr-route-chapter-meta">{ch.lessonCount} 节 →</span>
+									</a>
+								</li>
+							))}
+						</ul>
+					</article>
+				)}
+			</div>
+
+			{zhUpcomingParts.length > 0 && (
+				<div class="rr-route-upcoming-block">
+					<div class="rr-route-upcoming-header">
+						<span class="rr-route-upcoming-title">后续连载蓝图</span>
+						<span class="rr-route-upcoming-note">底稿已成形，按每周 1–2 章依次精修公开</span>
+					</div>
+					<ol class="rr-home-route-compact">
+						{zhUpcomingParts.map((part) => (
+							<li class="rr-home-route-item is-upcoming">
+								<div class="rr-home-route-head">
+									<span class="rr-home-route-number" aria-hidden="true">
+										{String(part.number).padStart(2, '0')}
+									</span>
+									<h3>
+										{part.href ? (
+											<a class="rr-route-title-link" href={part.href}>
+												{part.title}
+											</a>
+										) : (
+											part.title
+										)}
+									</h3>
+									<span class="rr-home-route-status">
+										{part.totalChapterCount > 0 ? `规划 ${part.totalChapterCount} 章` : '连载排期中'}
+									</span>
+								</div>
+								<p class="rr-home-route-desc">{part.description}</p>
+							</li>
+						))}
+					</ol>
+				</div>
+			)}
+		</div>
+	) : (
+		<div class="rr-home-route">
+			{enParts.map((part) => (
+				<article class:list={['rr-home-part', { 'rr-home-part-planned': part.chapters.length === 0 }]}>
+					<div class="rr-home-part-meta">
+						<span>{`Part ${part.number}`}</span>
+						<span>
+							{part.chapters.length > 0 ? 'Available' : part.slug ? 'Translation pending' : 'Planned'}
+						</span>
+					</div>
+					<h3>{part.title}</h3>
+					<p>{part.description}</p>
+					{part.chapters.length > 0 && (
+						<ul class="rr-home-chapters">
+							{part.chapters.map((chapter) => (
+								<li>
+									<a href={chapter.link}>{`Chapter ${chapter.num} · ${chapter.label}`}</a>
+									<span>
+										{`${chapter.lessons.length} ${chapter.lessons.length === 1 ? 'section' : 'sections'} available`}
+									</span>
+								</li>
+							))}
+						</ul>
+					)}
+				</article>
+			))}
+		</div>
+	)
+}
