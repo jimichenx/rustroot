@@ -1,170 +1,92 @@
 ---
 /**
- * 4.1「读写排他：为什么 &T 与 &mut T 不能并存」。
- *
- * 三步：
- * 1. 只读引用 r（&String）保存栈上 s 的地址；读取时顺着 r → s 取出当时的堆地址 ptr；
- * 2. m.push_str 触发扩容，释放原 5 字节堆块并把 s.ptr 改指新 12 字节堆块；
- * 3. 若允许读写有效区间重叠，仍顺着旧堆地址读取就会落入已释放内存（编译器以 E0502 拦截）。
- *
- * 底部进度条可点节点逐步观看；入视口自动播一遍。
- * 关掉 JS 时直接是终态（第 3 步）。
- * 样式见 src/styles/diagrams.css，组件里不写 <style>。
+ * 4.1「读写排他：借用有效区间错开 vs 重叠（E0502）」。
+ * 左栏：先读完 r（有效区间在最后一次使用处结束），再创建可变引用 m 修改 s，区间不重叠，编译通过。
+ * 右栏：borrow-conflict.rs 取消 println!("{r}") 注释后，r 的共享借用区间延续到末尾，
+ *       中间创建 m (&mut String) 索要排他访问，两段有效区间重叠，被 E0502 拦截。
+ * 样式见 src/styles/diagrams.css。
  */
 import { SITE_LOCALE } from '../../config/site';
-import FigureControls from './FigureControls.astro';
 
 const en = SITE_LOCALE === 'en';
 const t = en
 	? {
 			caption:
-				'Why shared and mutable borrows cannot overlap: r (&String) points to s on the stack, and reading through it follows the old heap ptr; if m reallocates s and frees the old buffer while that read is active, the read dangles (blocked at compile time by E0502).',
-			title: 'Overlapping a shared read with a reallocating mutable borrow causes a dangling read',
-			desc: 'On the stack frame, shared reference r (&String) holds the stack address of s, shown by a curved arrow to s. Reading through r follows the old heap ptr to the 5-byte "hello" buffer, which becomes a dashed freed block after m (&mut String) calls push_str and reallocates s (ptr, len 12, cap 12) to the new 12-byte buffer "hello, world". That stale heap read is blocked by E0502.',
-			stack: 'stack frame',
-			heap: 'heap',
-			shared: 'shared ref',
-			mutable: 'mutable ref',
-			addrOfS: 'stack address of s',
-			viaOldPtr: 'read via *r → old ptr',
-			dangling: 'dangling read (blocked by E0502)',
-			stale1: 'old 5-byte buffer',
-			stale2: '(freed on reallocation)',
-			fresh1: 'newly allocated',
-			fresh2: '12-byte buffer',
-			len5: 'len · 5',
-			cap5: 'cap · 5',
-			len: 'len · 12',
-			cap: 'cap · 12',
-			stepper: 'Steps',
-			steps: [
-				'1. let r = &s; points to s and reads old ptr',
-				'2. m.push_str(...) reallocates & frees old buffer',
-				'3. reading via old ptr dangles (E0502)',
-			],
+				'Borrow validity spans are measured up to the last use. Finishing r before creating m leaves the spans disjoint; keeping r alive across m overlaps a shared borrow with an exclusive mutable borrow and triggers E0502.',
+			title: 'Disjoint vs overlapping borrow spans on s',
+			desc: 'Two panels compare borrow spans on local variable s: String. On the left, let r = &s is followed immediately by println!("{r}"), ending the shared borrow span; let m = &mut s and m.push_str("...") then run in a separate exclusive span, so the program compiles. On the right, println!("{r}") sits at the bottom, keeping the shared borrow r alive across let m = &mut s and m.push_str("..."); the dashed box highlights the overlap rejected by error[E0502].',
+			okHead: 'disjoint spans · compiles',
+			errHead: 'overlapping spans · E0502',
+			shared: 'shared',
+			exclusive: 'exclusive',
+			okFoot1: 'r ends at last use, then m borrows s',
+			okFoot2: 'borrow spans do not overlap',
+			errFoot1: 'r is still live when m requests &mut s',
+			errFoot2: 'overlap rejected with error[E0502]',
 		}
 	: {
 			caption:
-				'为什么读写必须排他：r（&String）指向栈上的 s，读取时顺着当时的 ptr 定位堆缓冲区；若同一区间内 m 触发扩容并释放旧堆块，读取就会落入已释放内存（编译器以 E0502 拦截）。',
-			title: '若读写区间重叠，扩容会让经由旧堆地址的读取悬垂',
-			desc: '栈帧上方，只读引用 r（&String）保存变量 s 的栈地址，左侧弯箭头指向 s。经由 *r 取出的旧堆地址原本指向 5 字节缓冲区 "hello"；下方可变引用 m（&mut String）修改 s 触发扩容后，原堆块释放为虚线框，s 的 ptr 改指新分配的 12 字节缓冲区 "hello, world"（len · 12、cap · 12），原读取路径随之悬垂（E0502 拦截）。',
-			stack: '栈帧',
-			heap: '堆',
-			shared: '只读引用',
-			mutable: '可变引用',
-			addrOfS: 's 的栈地址',
-			viaOldPtr: '经 *r 取出旧 ptr 读取',
-			dangling: '悬垂读取（E0502 拦截）',
-			stale1: '原 5 字节缓冲区',
-			stale2: '（扩容后释放）',
-			fresh1: '新分配的',
-			fresh2: '12 字节缓冲区',
-			len5: 'len · 5',
-			cap5: 'cap · 5',
-			len: 'len · 12',
-			cap: 'cap · 12',
-			stepper: '步骤',
-			steps: [
-				'1. let r = &s; 指向 s 并读取旧 ptr',
-				'2. m.push_str(...) 扩容并释放旧堆块',
-				'3. 顺着旧堆地址读取悬垂（报 E0502）',
-			],
+				'借用的有效区间算到最后一次使用处为止。先用完 r 再借出 m，两段区间错开即可通过编译；若 r 的使用跨越了 m，共享借用与排他可变借用重叠，编译器以 E0502 拦截。',
+			title: '借用有效区间错开与重叠对比',
+			desc: '左右两栏对比局部变量 s: String 上的借用有效区间。左栏在 let r = &s 后先执行 println!("{r}")，共享借用区间当场结束，随后 let m = &mut s 与 m.push_str("...") 独占修改 s，两段区间互不重叠，编译通过。右栏将 println!("{r}") 放在末尾，使共享借用 r 的有效区间一直延续到底部，与中间试图取得排他访问的 m（&mut String）纵向重叠，虚线框标出冲突区域，触发 error[E0502]。',
+			okHead: '区间错开 · 编译通过',
+			errHead: '区间重叠 · E0502 拦截',
+			shared: '共享只读',
+			exclusive: '独占可变',
+			okFoot1: '先读完 r，再借出 m 修改 s',
+			okFoot2: '两段有效区间互不重叠',
+			errFoot1: 'r 仍将使用，m 却索要排他访问',
+			errFoot2: '有效区间重叠，报 error[E0502]',
 		};
 ---
 
-<figure class="diagram borrow-figure" data-stepper>
+<figure class="diagram">
 	<figcaption>{t.caption}</figcaption>
-	<svg viewBox="0 0 640 380" role="img" aria-labelledby="bc-title bc-desc">
+	<svg viewBox="0 0 640 348" role="img" aria-labelledby="bc-title bc-desc">
 		<title id="bc-title">{t.title}</title>
 		<desc id="bc-desc">{t.desc}</desc>
 
-		<rect class="panel" x="16" y="16" width="280" height="348" rx="12"></rect>
-		<text class="label" x="48" y="42">{t.stack}</text>
+		{/* 左面板：有效区间错开，编译通过 */}
+		<rect class="panel" x="16" y="16" width="296" height="316" rx="12"></rect>
+		<text class="label" x="32" y="44">{t.okHead}</text>
 
-		<rect class="panel" x="344" y="16" width="280" height="348" rx="12"></rect>
-		<text class="label" x="364" y="42">{t.heap}</text>
+		<text class="code" x="32" y="90">{'let r = &s;'}</text>
+		<text class="code" x="32" y="124">{'println!("{r}");'}</text>
+		<text class="code" x="32" y="182">{'let m = &mut s;'}</text>
+		<text class="code" x="32" y="216">{'m.push_str("...");'}</text>
+		<text class="code" x="32" y="250">{'println!("{m}");'}</text>
 
-		{/* 第 1 步：r 与 s 登场，r 存放 s 的栈地址并指向 s */}
-		<g class="step" data-step="1">
-			<text class="name" x="48" y="72">r</text>
-			<text class="code" x="68" y="72">{'&String'}</text>
-			<text class="label" x="148" y="72">{t.shared}</text>
+		<rect class="slot" x="188" y="68" width="108" height="72" rx="8"></rect>
+		<text class="code" x="242" y="98" text-anchor="middle">{'r: &String'}</text>
+		<text class="edge-sub" x="242" y="122" text-anchor="middle">{t.shared}</text>
 
-			<rect class="slot" x="48" y="84" width="208" height="48" rx="8"></rect>
-			<text class="name" x="152" y="113" text-anchor="middle">{t.addrOfS}</text>
+		<rect class="slot" x="188" y="160" width="108" height="106" rx="8"></rect>
+		<text class="code" x="242" y="206" text-anchor="middle">{'m: &mut'}</text>
+		<text class="edge-sub" x="242" y="230" text-anchor="middle">{t.exclusive}</text>
 
-			<path
-				class="arrow"
-				d="M 48 108 H 32 Q 26 108 26 114 V 224 Q 26 230 32 230 H 44"
-				marker-end="url(#bc-head)"
-			></path>
+		<text class="edge-label" x="164" y="294" text-anchor="middle">{t.okFoot1}</text>
+		<text class="edge-sub" x="164" y="316" text-anchor="middle">{t.okFoot2}</text>
 
-			<text class="name" x="48" y="200">s</text>
-			<text class="code" x="68" y="200">String</text>
+		{/* 右面板：有效区间重叠，E0502 拦截 */}
+		<rect class="panel" x="328" y="16" width="296" height="316" rx="12"></rect>
+		<text class="label" x="344" y="44">{t.errHead}</text>
 
-			<rect class="slot" x="48" y="212" width="208" height="36" rx="8"></rect>
-			<text class="code" x="152" y="235" text-anchor="middle">ptr</text>
+		<text class="code" x="344" y="90">{'let r = &s;'}</text>
+		<text class="code" x="344" y="146">{'let m = &mut s;'}</text>
+		<text class="code" x="344" y="188">{'m.push_str("...");'}</text>
+		<text class="code" x="344" y="244">{'println!("{r}");'}</text>
 
-			<rect class="slot" x="48" y="254" width="208" height="36" rx="8"></rect>
-			<rect class="slot" x="48" y="296" width="208" height="36" rx="8"></rect>
-		</g>
+		<rect class="slot" x="494" y="68" width="52" height="192" rx="8"></rect>
+		<text class="code" x="520" y="156" text-anchor="middle">r</text>
+		<text class="edge-sub" x="520" y="178" text-anchor="middle">{'&s'}</text>
 
-		{/* 第 2 步：m 扩容。先画已释放的旧块，活块盖在上面，淡出后虚线露出来 */}
-		<g class="step" data-step="2">
-			<text class="name" x="48" y="168">m</text>
-			<text class="code" x="70" y="168">{'&mut String'}</text>
-			<text class="label" x="180" y="168">{t.mutable}</text>
+		<rect class="freed" x="556" y="124" width="52" height="84" rx="8"></rect>
+		<text class="code" x="582" y="156" text-anchor="middle">m</text>
+		<text class="edge-sub" x="582" y="178" text-anchor="middle">{'&mut'}</text>
 
-			<text class="code" x="152" y="277" text-anchor="middle">{t.len}</text>
-			<text class="code" x="152" y="319" text-anchor="middle">{t.cap}</text>
+		<rect class="edge" x="488" y="118" width="126" height="96" rx="8"></rect>
 
-			<text class="label" x="364" y="68">{t.stale1}</text>
-			<text class="label" x="364" y="90">{t.stale2}</text>
-			<rect class="freed" x="364" y="132" width="240" height="52" rx="10"></rect>
-
-			<text class="label" x="364" y="240">{t.fresh1}</text>
-			<text class="label" x="364" y="262">{t.fresh2}</text>
-			<rect class="object" x="364" y="278" width="240" height="56" rx="10"></rect>
-			<text class="name" x="484" y="311" text-anchor="middle">{'"hello, world"'}</text>
-
-			<path class="arrow" d="M256 230 H332 V306 H364" marker-end="url(#bc-head)"></path>
-		</g>
-
-		{/* 只在武装后的第 1 步：旧块仍有效，ptr 与 len/cap 仍是扩容前的样子 */}
-		<g class="bc-before">
-			<rect class="object" x="364" y="132" width="240" height="52" rx="10"></rect>
-			<text class="code" x="152" y="277" text-anchor="middle">{t.len5}</text>
-			<text class="code" x="152" y="319" text-anchor="middle">{t.cap5}</text>
-			<path class="arrow" d="M256 230 H304 V176 H364" marker-end="url(#bc-head)"></path>
-		</g>
-
-		<text class="label step" data-step="1" x="484" y="163" text-anchor="middle">{'"hello"'}</text>
-
-		{/* 经 *r 取出的旧堆读取路径：第 1、2 步为实线，第 3 步换成虚线标出悬垂读取 */}
-		<g class="bc-shared-arrow">
-			<text class="edge-sub" x="484" y="118" text-anchor="middle">{t.viaOldPtr}</text>
-			<path class="arrow" d="M256 108 H312 V158 H364" marker-end="url(#bc-head)"></path>
-		</g>
-
-		<g class="step" data-step="3">
-			<text class="edge-label" x="484" y="118" text-anchor="middle">{t.dangling}</text>
-			<path class="arrow danger" d="M256 108 H312 V158 H364" marker-end="url(#bc-danger)"></path>
-		</g>
-
-		<defs>
-			<marker id="bc-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
-				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
-			</marker>
-			<marker id="bc-danger" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
-				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line-muted)"></path>
-			</marker>
-		</defs>
+		<text class="edge-label" x="476" y="294" text-anchor="middle">{t.errFoot1}</text>
+		<text class="edge-sub" x="476" y="316" text-anchor="middle">{t.errFoot2}</text>
 	</svg>
-
-	<FigureControls controls="stepper" label={t.stepper} steps={t.steps} />
 </figure>
-
-<script>
-	import { initFigures } from '../../scripts/motion';
-	initFigures();
-</script>

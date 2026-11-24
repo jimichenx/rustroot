@@ -1,5 +1,3 @@
-//! Compare the memory sizes of a C-like enum, a struct (BadRole), and a payload enum (Role).
-
 use std::mem::{size_of, size_of_val};
 
 #[allow(dead_code)]

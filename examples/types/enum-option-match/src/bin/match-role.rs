@@ -1,6 +1,4 @@
-//! Destructuring `Role` with `match` and checking exhaustiveness.
-//! Comment out the `Role::Admin` arm to observe error[E0004]: non-exhaustive patterns.
-
+// Expect: E0004
 enum Role {
     Guest,
     Member(u64),

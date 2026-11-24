@@ -1,7 +1,4 @@
-//! Comparing static dispatch (`<T: Summary>`, monomorphized per type) with
-//! dynamic dispatch (`&dyn Summary`, single compiled function looking up `vtable`),
-//! plus the three physical boundaries where a trait is not `dyn` compatible (`E0038`).
-
+// Expect: E0038
 trait Summary {
     fn summarize(&self) -> String;
 }
@@ -27,23 +24,24 @@ impl Summary for Metric {
     }
 }
 
-// 1. Static dispatch: compiler generates `notify_static::<Article>` and `notify_static::<Metric>`
+// ANCHOR: dispatch_pair
 fn notify_static<T: Summary>(item: &T) -> String {
     item.summarize()
 }
 
-// 2. Dynamic dispatch: only ONE `notify_dynamic` exists in the binary; looks up `vtable` at runtime
 fn notify_dynamic(item: &dyn Summary) -> String {
     item.summarize()
 }
+// ANCHOR_END: dispatch_pair
 
-// A trait with a generic method or returning `Self` cannot build a fixed-slot vtable:
+// ANCHOR: not_dyn_compatible
 #[allow(dead_code)]
 trait NotDynCompatible {
-    fn make_default() -> u32;          // no `&self` receiver -> no fat pointer to find vtable
-    fn clone_self(&self) -> Self;      // returns `Self` by value -> caller doesn't know stack size
-    fn tag<U>(&self, extra: U) -> u32; // generic `<U>` -> infinite monomorphized functions won't fit in vtable
+    fn make_default() -> u32;
+    fn clone_self(&self) -> Self;
+    fn tag<U>(&self, extra: U) -> u32;
 }
+// ANCHOR_END: not_dyn_compatible
 
 fn main() {
     let post = Article { title: String::from("Rust") };
@@ -52,7 +50,5 @@ fn main() {
     println!("static:  {} | {}", notify_static(&post), notify_static(&cpu));
     println!("dynamic: {} | {}", notify_dynamic(&post), notify_dynamic(&cpu));
 
-    // Uncommenting the line below triggers error[E0038]:
-    // the trait `NotDynCompatible` is not dyn compatible
     // let _bad: &dyn NotDynCompatible;
 }

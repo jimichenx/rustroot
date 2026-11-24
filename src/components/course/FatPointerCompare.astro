@@ -11,16 +11,16 @@ const en = SITE_LOCALE === 'en';
 const t = en
 	? {
 			caption:
-				'The same & on [i32; 4] stores an 8-byte thin pointer: the length stays in the type. On [i32], which has erased ; N, it stores a 16-byte fat pointer whose second word holds the runtime length, here 2, covering a[1] and a[2].',
-			title: 'The same & yields a thin pointer or a fat pointer',
-			desc: 'On the upper left, r1 has type &[i32; 4] and is created by &a. Its compile-time type records N = 4 and takes 0 bytes at runtime. The stack holds one machine word, ptr, 8 bytes; an arrow points at a[0]. On the lower left, r2 has type &[i32] and is created by &a[1..3]. Because [i32] erased ; N, the pointer stores two machine words: ptr, 8 bytes, pointing at a[1], and len 2, another 8 bytes. On the right, array a has type [i32; 4]: four contiguous i32 slots, 10, 20, 30, and 40, 16 bytes in all, with no length field in the elements. A bracket marks the two slots r2 covers, [1] and [2]. [0] and [3] sit outside that slice.',
-			thinHead: 'thin pointer · 8 bytes',
+				'On a 64-bit target, &[i32; 4] is an 8-byte thin pointer (length stays in the type). &[i32] is a 16-byte slice fat pointer carrying address and element count (2, covering a[1] and a[2]; field order is illustrative).',
+			title: 'Thin array reference vs slice fat pointer (64-bit)',
+			desc: 'On a 64-bit platform, r1 on the upper left has type &[i32; 4] and is created by &a. Its compile-time type records N = 4 and takes 0 bytes at runtime; the stack holds one 8-byte word ptr pointing at a[0]. On the lower left, r2 has type &[i32] and is created by &a[1..3]. Because [i32] erased ; N, the slice reference carries two 8-byte words (illustrative order): ptr pointing at a[1], and len 2. On the right, array a: [i32; 4] holds four contiguous i32 slots (10, 20, 30, 40; 16 bytes total) with no length header; r2 covers [1] and [2].',
+			thinHead: 'thin pointer · 8 bytes (64-bit)',
 			thinCode: 'r1: &[i32; 4] = &a',
 			typeHead: 'compile-time type',
 			typeName: '&[i32; 4]',
 			typeNote: 'N = 4 · 0 bytes',
 			ptr: 'ptr · 8B',
-			fatHead: 'fat pointer · 16 bytes',
+			fatHead: 'slice fat pointer · 16 bytes (64-bit)',
 			fatCode: 'r2: &[i32] = &a[1..3]',
 			erased1: '[i32] erased ; N',
 			erased2: 'len stored in the pointer',
@@ -33,16 +33,16 @@ const t = en
 		}
 	: {
 			caption:
-				'同一个 & 碰到 &[i32; 4] 时，栈上的 r1 只有 8 字节，长度 4 留在类型里；碰到长度被擦掉的 &[i32] 时，栈上的 r2 有 16 字节，第二个机器字记下运行时长度 2，覆盖 a 的 [1] 与 [2]。',
-			title: '同一个 &，瘦指针或胖指针',
-			desc: '左上方是 r1，类型 &[i32; 4]，由 &a 得到。编译期类型记下 N = 4，运行时占 0 字节。栈上只有一个机器字 ptr，8 字节，箭头指向 a 的 [0]。左下方是 r2，类型 &[i32]，由 &a[1..3] 得到。[i32] 擦掉了 ; N，所以指针在栈上占两个机器字：ptr 为 8 字节，指向 [1]；len 为 2，再占 8 字节。右边是数组 a，类型 [i32; 4]，连续四格为 10、20、30、40，共 16 字节，元素里没有长度字段。括号标出 r2 覆盖的两格 [1] 与 [2]。[0] 与 [3] 不在这次切片里。',
-			thinHead: '瘦指针 · 8 字节',
+				'64 位平台下，&[i32; 4] 是 8 字节瘦指针（长度 4 留在类型里）；切片引用 &[i32] 是 16 字节胖指针，携带地址与运行时长度 2，覆盖 a 的 [1] 与 [2]（字段顺序仅作示意）。',
+			title: '定长数组引用与切片胖指针（64 位）',
+			desc: '64 位平台下，左上方 r1 类型为 &[i32; 4]，由 &a 得到；编译期类型记下 N = 4，栈上只存 1 个 8 字节机器字 ptr，指向 a 的 [0]。左下方 r2 类型为 &[i32]，由 &a[1..3] 得到；[i32] 擦掉了 ; N，切片引用在栈上占 2 个 8 字节机器字（顺序仅作示意）：ptr 指向 [1]，len 为 2。右边数组 a: [i32; 4] 连续四格为 10、20、30、40，共 16 字节，无长度头；括号标出 r2 覆盖的 [1] 与 [2]。',
+			thinHead: '瘦指针 · 8 字节（64 位）',
 			thinCode: 'r1: &[i32; 4] = &a',
 			typeHead: '编译期类型信息',
 			typeName: '&[i32; 4]',
 			typeNote: 'N = 4 · 0 字节',
 			ptr: 'ptr · 8B',
-			fatHead: '胖指针 · 16 字节',
+			fatHead: '切片胖指针 · 16 字节（64 位）',
 			fatCode: 'r2: &[i32] = &a[1..3]',
 			erased1: '[i32] 擦掉了 ; N',
 			erased2: '长度记在这个指针里',

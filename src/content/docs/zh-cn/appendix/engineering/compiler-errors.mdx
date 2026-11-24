@@ -54,7 +54,7 @@ error[E0382]: borrow of moved value: `tag`
 | 错误码 | 典型报错摘要 | 触发的底层约束 | 关联主线章节 |
 | --- | --- | --- | --- |
 | **`E0382`** | `use / borrow of moved value` | 非 `Copy` 值转移释放责任后，原变量在编译期状态表中已标记失效 | [复制与移动](/memory/minimal-model/) |
-| **`E0507`** | `cannot move out of ... which is behind a shared reference` | 引用不承担释放责任，禁止通过 `&T` / `&mut T` 把内部非 `Copy` 字段移走掏空 | [引用](/memory/references/)、[位置与值表达式](/appendix/mechanisms/place-and-value/) |
+| **`E0507`** | `cannot move out of ... which is behind a shared reference` | 引用不承担释放责任，禁止通过 `&T` / `&mut T` 把内部非 `Copy` 字段移走掏空 | [引用](/memory/references/)、[位置表达式与值表达式](/types/places-and-values/) |
 | **`E0502`** / **`E0499`** | `cannot borrow as mutable because it is also borrowed as immutable`（或 `more than once`） | 同一有效区间内，共享只读引用 `&T` 与独占可变引用 `&mut T` 互斥（且 `&mut T` 不可并存） | [引用类型构造器](/types/reference-constructors/)、[借用疑难排障](/pointers/borrowing-puzzles/) |
 | **`E0596`** | `cannot borrow ... as mutable, as it is not declared as mutable` | 变量绑定未声明 `let mut`，或试图穿透只读引用 `&T` 获取内部字段的 `&mut` | [变量绑定与可变性](/memory/bindings/) |
 | **`E0597`** | `... does not live long enough` | 被借用数据的存活作用域短于引用本身的有效使用区间，放行会产生悬垂引用 | [悬垂引用](/memory/lifetimes/) |

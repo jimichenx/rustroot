@@ -1,8 +1,7 @@
-//! Uncomment the marked line and compile to get error[E0507].
-
+// Expect: E0507
 static TEXT: String = String::new();
 
 fn main() {
-    // let s = TEXT; // error[E0507]: cannot move out of static item
+    // let s = TEXT;
     println!("{TEXT}");
 }

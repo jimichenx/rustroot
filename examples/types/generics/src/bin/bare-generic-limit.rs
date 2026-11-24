@@ -1,13 +1,10 @@
-//! Without a trait bound, an unknown `T` only supports moving, borrowing,
-//! and dropping. Uncomment `a + b` to get error[E0369]: cannot add `T` to `T`.
-
+// Expect: E0369
 fn keep_second<T>(_first: T, second: T) -> T {
-    // Moving `second` out and dropping `_first` works for any `T`:
     second
 }
 
 // fn add_values<T>(a: T, b: T) -> T {
-//     a + b // error[E0369]: cannot add `T` to `T`
+//     a + b
 // }
 
 fn main() {

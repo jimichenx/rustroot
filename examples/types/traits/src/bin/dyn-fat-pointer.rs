@@ -1,7 +1,3 @@
-//! Measuring `&Article` (8-byte thin pointer) vs `&dyn Summary` (16-byte fat pointer),
-//! and using `&dyn Summary` / `Box<dyn Summary>` to solve heterogeneous collections
-//! and runtime-branch return types.
-
 use std::mem::size_of;
 
 trait Summary {
@@ -29,7 +25,7 @@ impl Summary for Metric {
     }
 }
 
-// Solving Boundary 2 from 8.1: returning different concrete types across branches!
+// ANCHOR: solve_boundaries
 fn choose_item(is_article: bool) -> Box<dyn Summary> {
     if is_article {
         Box::new(Article { title: String::from("Breaking") })
@@ -48,7 +44,6 @@ fn main() {
     println!("size of &dyn Summary  = {} bytes", size_of::<&dyn Summary>());
     println!("thin = {}, fat = {}", thin_ref.summarize(), fat_ref.summarize());
 
-    // Solving Boundary 1 from 8.1: heterogeneous `Vec<&dyn Summary>`!
     let dashboard: Vec<&dyn Summary> = vec![&post, &cpu];
     for widget in dashboard {
         println!("dashboard item -> {}", widget.summarize());
@@ -57,3 +52,4 @@ fn main() {
     let dynamic_choice = choose_item(false);
     println!("chosen at runtime -> {}", dynamic_choice.summarize());
 }
+// ANCHOR_END: solve_boundaries

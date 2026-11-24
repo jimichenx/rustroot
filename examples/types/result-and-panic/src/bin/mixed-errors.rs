@@ -1,8 +1,4 @@
-//! `?` converts the error into the function's error type with `From`.
-//! `std::io::Error` has no conversion into `ParseIntError`.
-//! Uncomment the `read_to_string` line to get error[E0277]:
-//! `?` couldn't convert the error to `ParseIntError`.
-
+// Expect: E0277
 use std::num::ParseIntError;
 
 fn read_number(input: &str) -> Result<i32, ParseIntError> {

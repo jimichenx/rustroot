@@ -1,6 +1,4 @@
-//! Expected error when uncommented: E0573 (expected type, found variant `Role::Member`)
-//! Only the outer `Role` is a type; variants are constructors, not types.
-
+// Expect: E0573
 #[allow(dead_code)]
 enum Role {
     Guest,
@@ -8,9 +6,7 @@ enum Role {
     Admin { dept_id: u64, security_key: u64 },
 }
 
-// Uncomment to observe error[E0573]:
 // fn check_member(m: Role::Member) {}
-
 fn check_role(_r: Role) {}
 
 fn main() {

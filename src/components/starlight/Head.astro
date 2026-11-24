@@ -5,9 +5,9 @@
  * - hreflang：告诉搜索引擎 rustroot.cn/<path> 与 rustroot.dev/<path> 是同一页面的不同语言版本
  * - x-default：默认指向国际站（英文）
  * - og:locale:alternate（og:locale 由 Starlight 默认输出）
- * - og:image：分享图按当前构建的语言各一张，放在 public/og/ 下。
- *   Starlight 本身不输出 og:image，只能在这里补
- *   （生成脚本 scripts/brand/logo/build-og.mjs）。
+ * - og:image：首页用 public/og/<lang>.png。正文写了 share 的页面用构建时
+ *   生成的专属图（src/og/，写进 dist 的 /og/<slug>-<hash>.png）。
+ *   Starlight 本身不输出 og:image，只能在这里补。
  * - 百度统计：只在中文构建写入 `<head>`。英文站不加载。
  * - Google 分析：只在英文构建写入 `<head>`。中文站不加载。
  *
@@ -18,6 +18,7 @@
 import Default from '@astrojs/starlight/components/Head.astro';
 import { hasLivePage } from '../../config/release';
 import { CURRENT, OTHER, REPOSITORY, X_DEFAULT_LOCALE, siteOrigin } from '../../config/site';
+import { ogPublicPath } from '../../og/path';
 
 const isDev = import.meta.env.DEV;
 const isZh = CURRENT.code === 'zh';
@@ -30,7 +31,14 @@ const currentOrigin = siteOrigin(CURRENT, isDev);
 const currentHref = currentOrigin + pathname;
 const otherHref = siteOrigin(OTHER, isDev) + pathname;
 const xDefaultHref = siteOrigin(X_DEFAULT_LOCALE, isDev) + pathname;
-const ogImage = `${currentOrigin}/og/${CURRENT.code}.png`;
+const page = Astro.locals.starlightRoute?.entry;
+const pageData = page?.data as { title?: string; share?: string } | undefined;
+const share = pageData?.share?.trim() ?? '';
+const pageTitle = pageData?.title?.trim() ?? '';
+const ogImage =
+	share && pageTitle && page
+		? `${currentOrigin}${ogPublicPath({ slug: page.id, title: pageTitle, share })}`
+		: `${currentOrigin}/og/${CURRENT.code}.png`;
 const hasAlternate = hasLivePage(CURRENT.code, pathname) && hasLivePage(OTHER.code, pathname);
 
 const homeJsonLd = isHome

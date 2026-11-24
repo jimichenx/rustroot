@@ -1,11 +1,9 @@
-// ANCHOR: full
 use std::mem;
 
 // ANCHOR: port_contracts
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Port(u16);
 
-// Hand-written `Default` preserves the `1..=65535` invariant (`#[derive(Default)]` would yield illegal `Port(0)`).
 impl Default for Port {
     fn default() -> Self {
         Port(8080)
@@ -34,14 +32,12 @@ impl From<Port> for u16 {
 // ANCHOR: to_owned_and_take
 fn build_authority(host: &str, port: Option<Port>) -> String {
     let resolved = port.unwrap_or_default();
-    // `str` is unsized (`!Sized`), so `ToOwned` upgrades `&str` into heap-owned `String`
     let mut authority: String = host.to_owned();
     authority.push_str(&format!(":{}", u16::from(resolved)));
     authority
 }
 
 fn flush_buffer(buf: &mut String) -> Vec<u8> {
-    // `mem::take` swaps in `String::default()` (zero heap alloc) and extracts ownership
     let taken: String = mem::take(buf);
     taken.into_bytes()
 }
@@ -62,4 +58,3 @@ fn main() {
     let wire_bytes: Vec<u8> = flush_buffer(&mut pending);
     println!("into_bytes = {:?}, after take len = {}", wire_bytes, pending.len());
 }
-// ANCHOR_END: full

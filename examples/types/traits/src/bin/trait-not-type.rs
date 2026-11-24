@@ -1,7 +1,5 @@
-//! Defining a `Summary` trait and implementing it for two distinct structs.
-//! Uncomment `fn bad_notify(item: Summary)` to see that a bare Trait is a
-//! contract without a known stack size, not a concrete type (error[E0277] / E0782).
-
+// Expect: E0782
+// ANCHOR: define_and_impl
 trait Summary {
     fn summarize(&self) -> String;
 }
@@ -27,13 +25,15 @@ impl Summary for Metric {
         format!("{} = {}", self.name, self.value)
     }
 }
+// ANCHOR_END: define_and_impl
 
-// A bare trait `Summary` is a contract, not a concrete value type:
-// fn bad_notify(item: Summary) {} // error[E0277]: size cannot be known at compilation time
+// ANCHOR: notify_bound
+// fn bad_notify(item: Summary) {}
 
 fn notify<T: Summary>(item: &T) {
     println!("[notify] {}", item.summarize());
 }
+// ANCHOR_END: notify_bound
 
 fn main() {
     let post = Article {

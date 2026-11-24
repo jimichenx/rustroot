@@ -27,7 +27,7 @@ import derefMechanism from '../../../../../../../examples/types/box-deref-drop/s
 
 要分清 `*` 操作符和 `Deref` Trait，我们必须先明确一个最底层的物理事实：**语言内建的 `*` 解引用操作符，它的本质作用不是「算出一个值」，而是「在内存里定位一个位置」**。
 
-在 Rust 中，当我们想操作内存里的某份数据时，必须先通过**位置表达式（Place Expression）**指明「要操作哪块内存槽位」。回想你早就熟知的四种定位方式（详见[附录：位置表达式与值表达式](/appendix/mechanisms/place-and-value/)）：
+在 Rust 中，当我们想操作内存里的某份数据时，必须先通过**位置表达式（Place Expression）**指明「要操作哪块内存槽位」。回顾[位置表达式与值表达式](/types/places-and-values/)梳理过的四种定位方式：
 
 | 位置表达式形式 | 代码示例 | 物理定位动作 |
 | --- | --- | --- |

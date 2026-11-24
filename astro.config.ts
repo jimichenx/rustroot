@@ -9,6 +9,7 @@ import { exampleSourcePlugin } from './src/plugins/example-source';
 import { cjkEmphasisPlugin } from './src/plugins/cjk-emphasis';
 import { unpublishedLinkPlugin } from './src/plugins/unpublished-links';
 import { wrapTablesPlugin } from './src/plugins/wrap-tables';
+import { ogImages } from './src/integrations/og-images';
 
 function releasedRedirects(map: Record<string, string>): Record<string, string> {
 	return Object.fromEntries(
@@ -75,6 +76,7 @@ export default defineConfig({
 			social: [{ icon: 'github', label: 'GitHub', href: REPOSITORY }],
 			editLink: { baseUrl: `${REPOSITORY}/edit/main/` },
 		}),
+		ogImages(),
 	],
 	// 两台 dev server 不能共用 Vite 预构建缓存，否则后启动的语言会盖掉先启动的模块。
 	cacheDir: `./node_modules/.astro-cache-${SITE_LOCALE}`,

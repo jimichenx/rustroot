@@ -13,7 +13,7 @@ const isEn = SITE_LOCALE === 'en';
 const t = isEn
 	? {
 			caption:
-				'On the stack, owned is a 24-byte String header that owns the 11-byte heap buffer. borrowed_full is an 8-byte thin pointer to that header. slice_part and literal are 16-byte fat pointers: one views heap bytes 0..5 with no copy, and the other views hello rust in read-only data.',
+				'On a 64-bit platform, owned is a 24-byte String header owning the 11-byte heap buffer (field order is illustrative). borrowed_full is an 8-byte thin pointer to that header; slice_part and literal are 16-byte fat pointers viewing heap bytes 0..5 and read-only data.',
 			title: 'Where owned, borrowed_full, slice_part, and literal point',
 			desc: 'The stack frame main holds four locals. owned is a 24-byte String header with ptr, len 11, and cap 11; its arrow leaves ptr and lands on the first byte of hello world on the heap, the buffer it frees. borrowed_full is an 8-byte thin pointer; a curved arrow points back at the left side of owned. slice_part is a 16-byte fat pointer with ptr and len 5; its arrow lands on the same first heap byte, and a dashed box marks bytes 0..5. literal is a 16-byte fat pointer with ptr and len 10; its arrow lands on the first byte of hello rust in read-only data, a literal written into the executable with a static lifetime and no heap allocation.',
 			stack: 'stack frame · main',
@@ -41,7 +41,7 @@ const t = isEn
 		}
 	: {
 			caption:
-				'栈上的 owned 用 24 字节控制头拥有堆里的 11 个字节；borrowed_full 是指向这块控制头的 8 字节瘦指针。slice_part 与 literal 都是 16 字节胖指针，前者不复制字节直接借用堆上的 0..5，后者指向只读数据段里的 hello rust。',
+				'64 位平台下，栈上的 owned 用 24 字节控制头拥有堆里的 11 个字节（字段顺序仅作示意）；borrowed_full 是指向该控制头的 8 字节瘦指针。slice_part 与 literal 都是 16 字节胖指针，分别借用堆上的 0..5 与只读数据段里的 hello rust。',
 			title: 'owned、borrowed_full、slice_part 与 literal 的指向',
 			desc: '左侧是栈帧 main 的四个局部变量。owned 是 24 字节的 String 控制头，字段为 ptr、len 11、cap 11，箭头从 ptr 指向堆上 hello world 的首字节，这块缓冲区由它负责释放。borrowed_full 是 8 字节瘦指针，弯箭头指回 owned 的左侧。slice_part 是 16 字节胖指针，字段为 ptr 与 len 5，箭头同样落在堆的首字节，虚线框标出 0..5。literal 是 16 字节胖指针，字段为 ptr 与 len 10，箭头指向只读数据段里 hello rust 的首字节；这段字面量在编译期写入可执行文件，静态存活，没有堆分配。',
 			stack: '栈帧 main',

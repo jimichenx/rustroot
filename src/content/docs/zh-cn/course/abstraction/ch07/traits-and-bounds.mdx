@@ -1,6 +1,7 @@
 ---
 title: "Trait 契约与泛型约束：双向检查与事后扩展"
-description: 澄清「把 Trait 当作变量类型」的常见误解，理解 Trait 作为编译期能力契约如何通过泛型约束打开未知类型 T，并认识数据布局与行为挂载分离带来的事后扩展能力。
+description: "说明为什么裸 Trait 不能直接充当变量类型，掌握泛型约束 <T: Trait> 在单态化前的双向静态检查，以及数据定义与行为挂载分离带来的事后扩展能力。"
+share: "`Trait` 是能力契约而非具体值类型。`<T: Trait>` 对内锁权限，对外做准入检查。"
 sidebar:
   label: Trait 契约与泛型约束
   order: 2
@@ -11,197 +12,77 @@ import traitNotType from '../../../../../../../examples/types/traits/src/bin/tra
 import twoWayContract from '../../../../../../../examples/types/traits/src/bin/two-way-contract.rs?raw';
 import retroactive from '../../../../../../../examples/types/traits/src/bin/retroactive.rs?raw';
 
-在上一节末尾，我们遇到了一个边界：在未加任何附加说明的泛型函数 `fn add_values<T>(a: T, b: T) -> T` 中，编译器必须在**单态化展开之前**就对函数体完成静态检查，而未知的 `T` 除了移动、借用与释放外，没有向编译器承诺任何额外能力。
+上一节末尾遇到了裸 `<T>` 的能力边界：编译器在单态化之前就会静态审查函数体，未知的 `T` 除了移动、借用与释放外不具备任何额外方法。要让不同的具体类型进入同一个泛型函数并调用共同方法，需要引入跨类型的能力契约——**`Trait`**。
 
-要让不同的具体类型走进同一个泛型函数并调用共同方法，我们需要引入 Rust 表达跨类型抽象的机制：**Trait（契约）**。
+## 定义与实现 `Trait`
 
-## 基础语法三步曲：定义契约、实现契约与调用
+在[方法接收者三件套与自动解引用](/types/methods/)中，`impl Article { ... }` 只为单个结构体挂载固有方法。当多个独立类型（如文章 `Article` 与监控指标 `Metric`）需要对外提供同一项能力时，分两步编写 `trait` 定义与 `impl Trait for Type` 实现：
 
-在[方法接收者三件套与自动解引用](/types/methods/)中，我们已经学过用 `impl Article { ... }` 为单个结构体定义固有方法。当多个不同的类型（如文章 `Article` 和监控指标 `Metric`）需要对外承诺同一项能力时，就要通过 **Trait** 分三步完成：
+<small class="code-source">源文件：<code>examples/types/traits/src/bin/trait-not-type.rs</code>（节选）</small>
+<Code code={traitNotType} lang="rust" anchor="define_and_impl" />
 
-**第一步：用 `trait` 定义契约（只写方法签名，以分号 `;` 结尾）**
+`trait Summary` 花括号内只列出方法签名并以分号 `;` 结尾；随后通过 `impl Summary for Article` 为具体类型补齐实现。只要 `Summary` 在当前作用域内，即可直接在实例上用点号调用 `post.summarize()`。
 
-```rust
-trait Summary {
-    fn summarize(&self) -> String;
-}
-```
+## 为什么不能直接写 `item: Summary`
 
-**第二步：用 `impl Trait名 for 类型名` 为具体类型签下契约**
+契约就绪后，编写接收任意可摘要数据的通用函数 `notify`。有 Java 或 Go 背景的开发者常会尝试把 `Summary` 直接写在参数类型位置：
 
-注意对比固有实现 `impl Article` 与这里的 **`impl Summary for Article`**：
+<small class="code-source">源文件：<code>examples/types/traits/src/bin/trait-not-type.rs</code>（节选）</small>
+<Code code={traitNotType} lang="rust" anchor="notify_bound" />
 
-```rust
-struct Article {
-    title: String,
-    author: String,
-}
+取消第 28 行 `// fn bad_notify(item: Summary) {}` 的注释后，编译器直接报出 `error[E0782]`：
 
-struct Metric {
-    name: &'static str,
-    value: u64,
-}
-
-impl Summary for Article {
-    fn summarize(&self) -> String {
-        format!("{} by {}", self.title, self.author)
-    }
-}
-
-impl Summary for Metric {
-    fn summarize(&self) -> String {
-        format!("{} = {}", self.name, self.value)
-    }
-}
-```
-
-**第三步：像调用普通方法一样用 `.` 调用**
-
-实现该 Trait 后（且 `Summary` 处于当前作用域内），即可直接在实例上调用 `.summarize()`：
-
-```rust
-let post = Article { title: String::from("Rust Root"), author: String::from("Ferris") };
-println!("{}", post.summarize()); // 输出：Rust Root by Ferris
-```
-
-## 为什么不能直接写 `item: Summary`？
-
-契约定义好之后，我们要写一个通用的通知函数 `notify`，接收任何实现了 `Summary` 的数据并打印摘要。有 Java、Go 或 TypeScript 背景的开发者，第一反应往往是直接拿 `Summary` 当作函数参数的类型：
-
-```rust
-fn bad_notify(item: Summary) {
-    println!("{}", item.summarize());
-}
-```
-
-这行代码在 Rust 里会编译失败：
-
-<small class="code-source">编译器诊断摘要（<code>examples/types/traits/src/bin/trait-not-type.rs</code>）</small>
+<small class="code-source">编译器输出摘要（取消 trait-not-type.rs 第 28 行注释后）</small>
 ```text
-error[E0277]: the size for values of type `(dyn Summary + 'static)` cannot be known at compilation time
-  --> src/bin/trait-not-type.rs:32:21
+error[E0782]: expected a type, found a trait
+  --> types/traits/src/bin/trait-not-type.rs:28:21
    |
-32 | fn bad_notify(item: Summary) {}
-   |                     ^^^^^^^ doesn't have a size known at compile-time
+28 | fn bad_notify(item: Summary) {}
+   |                     ^^^^^^^
+   |
+help: use a new generic type parameter, constrained by `Summary`
 ```
 
-回到[类型的两面](/types/representation-and-constraints/)确立的基础规则：**类型 = 内存表示（物理字节大小与布局）+ 约束**。
-1. **为什么 Java 的 `interface` 能直接当变量类型？** 因为 Java 对象一律分配在堆上，栈上的变量 `Summary item` 存放的并非对象本身，而是固定字长的对象引用。
-2. **Rust 变量默认按值内联在栈上，而 `Summary` 只有行为约束、没有内存表示**：满足 `Summary` 的既可能是 48 字节的 `Article`，也可能是 24 字节的 `Metric`。写下 `item: Summary` 时，编译器无法算出该为栈帧槽位预留多少字节。
+回到[类型的两面](/types/representation-and-constraints/)：Java 的 `Summary item` 变量在栈上存放的是固定字长的堆对象引用；而 Rust 变量默认按值内联在栈上，`Summary` 只规定了行为签名，没有规定栈尺寸（`Article` 占 48 字节，`Metric` 占 24 字节）。<span class="rr-keypoint">`Trait` 本身不是具体值类型，而是筛选类型的编译期契约。</span>
 
-因此要先立稳一个核心判断：**在 Rust 中，Trait 本身不是具体值类型，而是筛选类型的编译期契约。**
-
-正确的做法是拿它去**约束泛型类型参数 `<T>`**，写成 **`<T: Summary>`**：
-
-```rust
-fn notify<T: Summary>(item: &T) {
-    println!("[notify] {}", item.summarize());
-}
-```
-
-这里充当参数类型的依然是具体的泛型引用 `&T`（在单态化阶段分别展开为 `&Article` 和 `&Metric` 两份机器码），而 `: Summary` 是挂在 `T` 上的准入条件。（若运行时确实需要抹去具体类型实现动态多态，则须显式构造 16 字节胖指针 `&dyn Summary`，我们将在[dyn Trait 与 vtable](/abstraction/dyn-trait-and-vtable/)专门拆解。）
+静态多态下的标准写法是用它约束泛型参数，写成 **`fn notify<T: Summary>(item: &T)`**：真正充当参数类型的是泛型引用 `&T`（单态化阶段分别展开为 `&Article` 与 `&Metric`），`: Summary` 则是挂在 `T` 上的准入契约。
 
 <small class="code-source">源文件：<code>examples/types/traits/src/bin/trait-not-type.rs</code></small>
-<Code code={traitNotType} lang="rust" collapse={12} />
+<Code code={traitNotType} lang="rust" collapse={10} />
 
-## 泛型约束（Trait Bound）：单态化前的双向检查
+## 泛型约束的双向检查
 
-写在泛型参数后面的 `<T: Summary>` 称为**泛型约束（Trait Bound）**。需要同时满足多份契约时用 `+` 号叠加，约束较长时也可用 `where` 子句移到签名末尾：
+`<T: Summary>` 称为**泛型约束（Trait Bound）**。同时要求多项契约时用 `+` 叠加（如 `<T: Summary + std::fmt::Debug>`），约束较长时可用 `where` 子句移至签名末尾（`where T: Summary + std::fmt::Debug`）。
 
-```rust
-fn log_and_notify<T: Summary + std::fmt::Debug>(item: &T) { /* ... */ }
+在编译期，`<T: Summary>` 同时向内、向外执行双向静态检查：
 
-fn log_and_notify_where<T>(item: &T)
-where
-    T: Summary + std::fmt::Debug,
-{ /* ... */ }
-```
+<small class="code-source">源文件：<code>examples/types/traits/src/bin/two-way-contract.rs</code>（节选）</small>
+<Code code={twoWayContract} lang="rust" anchor="two_way" />
 
-在编译器的检查流水线中，`<T: Summary>` 承担双向检查：
-
-1. **对函数体内部的限制（单态化前只查一次模板）**：签名写下 `<T: Summary>` 后，函数体内获准调用 `item.summarize()`，但也**只能调用 `Summary` 契约声明过的方法**。哪怕你清楚稍后只传入带 `.value` 字段的 `Metric`，只要在 `notify` 内写下 `item.value`，编译器就会当场报 `error[E0609]: no field value on type &T`。
-2. **对函数调用点的准入核对（每次调用核对一次）**：在调用点传入未实现 `Summary` 的结构体 `Unregistered` 时，编译器立即拒绝放行，报出高频错误码 **`error[E0277]: the trait bound Unregistered: Summary is not satisfied`**。
+1. **对函数体内部的权限限制（`E0609`）**：函数体内获准调用 `item.summarize()`，但也**只能访问 `Summary` 契约声明过的方法**。即便稍后只传入带 `.value` 字段的 `Metric`，取消 `item.value` 的注释仍会当场触发 `error[E0609]: no field value on type &T`；
+2. **对调用点的准入核对（`E0277`）**：取消 `notify(&raw)` 的注释，传入未实现 `Summary` 的 `Unregistered` 时，编译器立即以 `error[E0277]: the trait bound Unregistered: Summary is not satisfied` 拒绝编译。
 
 <small class="code-source">源文件：<code>examples/types/traits/src/bin/two-way-contract.rs</code></small>
-<Code code={twoWayContract} lang="rust" collapse={12} />
+<Code code={twoWayContract} lang="rust" collapse={10} />
 
-<Aside type="tip" title="工程与 AI 协作视角：函数签名即能力边界">
-双向检查带来一项重要的代码审查性质：看到泛型签名 `fn process<T: Summary>(item: &T)` 时，无需翻阅函数体，编译期即可保证这段实现（无论由人还是 AI 编写）除了调用 `Summary` 的方法与基础借用外，不可能触碰 `T` 的任何其他字段或状态。
+<Aside type="tip" title="函数签名即能力边界">
+双向检查使泛型签名成为严格的审查边界：看到 `fn process<T: Summary>(item: &T)` 时，无需翻阅函数体实现，编译期即保证该函数（无论由人还是 AI 编写）除调用 `Summary` 方法外无法触碰 `T` 的任何私有字段或状态。
 </Aside>
 
-### 默认方法与前置父契约（Supertraits）
+### 默认方法与父契约约束
 
-Trait 契约自身还支持两项常用的组合语法：
+定义 `Trait` 时还支持两项复用语法：
 
-1. **默认方法（Default Methods）**：Trait 方法可以直接写出带 `{ ... }` 的默认方法体，并在内部调用同一契约中尚未实现的其他方法：
-   ```rust
-   trait Summary {
-       fn summarize(&self) -> String;
-       fn headline(&self) -> String {
-           format!("[Breaking] {}", self.summarize())
-       }
-   }
-   ```
-   具体类型只需实现 `summarize`，即可自动获得 `.headline()`。
-2. **前置父契约约束（Supertraits，如 `trait Printable: Summary`）**：要求任何想实现 `Printable` 的类型必须先实现 `Summary`，从而允许 `Printable` 的默认方法直接调用 `self.summarize()`。注意这不是面向对象的类继承，而是对实现者类型 `Self` 施加的前置约束。
+- **默认方法（Default Methods）**：在 `trait` 内直接写出方法体（如 `fn headline(&self) -> String { format!("[Breaking] {}", self.summarize()) }`），具体类型只需实现 `summarize` 即可自动获得 `.headline()`；
+- **前置父契约（Supertraits，如 `trait Printable: Summary`）**：要求实现 `Printable` 的类型必须先实现 `Summary`，使 `Printable` 的默认方法可直接调用 `self.summarize()`。这不是类继承，而是对 `Self` 施加的前置约束。
 
-## 数据与行为分离：为外部类型事后挂载本地契约
+## 为外部类型事后挂载契约
 
-除了默认走编译期单态化外，Rust 的 Trait 与 Java / C# 的 `interface` 还有一个结构性差异：**数据类型的定义与能力契约的挂载彼此独立**。
-
-在 Java 中，一个类实现哪些接口必须在声明 `class` 时写死；你定义了一个新接口 `Shout`，无法让标准库早已编译好的 `String` 去实现它。而在 Rust 中，`impl Trait for Type` 独立于类型定义之外。只要在当前包（`crate`）里定义了新契约 `Shout`，就能直接为标准库的 `String` 事后挂上这项能力：
+在 Java 中，一个类实现哪些 `interface` 必须在声明 `class` 时写死，你无法让标准库已编译好的 `String` 去实现自己新定义的接口。而 Rust 将类型定义与 `impl Trait for Type` 解耦——只要当前包（`crate`）定义了新契约 `Shout`，就能直接为标准库的 `String` 事后挂载该能力：
 
 <small class="code-source">源文件：<code>examples/types/traits/src/bin/retroactive.rs</code></small>
 <Code code={retroactive} lang="rust" />
 
-写下这段代码后，标准库的 `String` 即可直接调用 `s.shout()`。（顺着这个机制自然会产生一个追问：既然能给外部的 `String` 挂我们自己的 `Shout`，能不能给外部的 `Vec<i32>` 挂标准库的 `Display`？等学完泛型 Trait 与一揽子实现后，我们会在[孤儿规则与全局一致性](/abstraction/orphan-rule-and-coherence/)把这个边界彻底算清。）
+运行输出 `HELLO!`（跨包事后实现的边界限制将在[孤儿规则与全局一致性](/abstraction/orphan-rule-and-coherence/)中厘清；与传统 `class` 的对照也可参阅附录「[没有 `class` 的对象感](/appendix/comparisons/oop/)」）。
 
-## 小结
-
-1. **Trait 是编译期契约而非值类型**：Trait 不规定栈内存大小，不能直接写成 `x: Summary`；静态多态下用它约束泛型参数 `<T: Summary>`。
-2. **双向静态检查**：`<T: Trait>` 在单态化前限制函数体只能调用契约内的方法（越界报 `E0609`），在调用点核对实参是否已实现该契约（未实现报 `E0277`）。
-3. **事后能力扩展**：`impl Trait for Type` 将数据布局与行为契约解耦，支持在不修改原类型定义的前提下为已有类型扩展本地契约（更多与面向对象 `class` 的结构对照见[附录：没有 class 的对象感](/appendix/comparisons/oop/)）。
-
-本节见过的 `Summary` 和 `Shout`，方法签名里的类型都是固定的。如果一份契约自身还需要涉及另一个待定的类型（如「从某种源类型 `T` 转换过来」或「每次迭代产出某种元素 `Item`」），为什么标准库有时写成尖括号 `trait From<T>`，有时却写成花括号里的 `type Item;`？下一节，我们拆解这对设计分岔。
-
-[继续：关联类型 vs 泛型 Trait →](/abstraction/associated-types/)
-
-### 动手核对与小练习
-
-阅读下面这段代码，指出 `process` 函数体内部哪一行会编译失败、`main` 函数中哪一行调用会编译失败，并说明对应错误码的成因：
-
-```rust
-trait Measurable {
-    fn size_bytes(&self) -> usize;
-}
-
-struct Packet {
-    payload_len: usize,
-    retry_count: u8,
-}
-
-impl Measurable for Packet {
-    fn size_bytes(&self) -> usize {
-        self.payload_len
-    }
-}
-
-fn process<T: Measurable>(item: &T) -> usize {
-    let _retries = item.retry_count; // 位置 A
-    item.size_bytes()
-}
-
-fn main() {
-    let pkt = Packet { payload_len: 128, retry_count: 3 };
-    println!("{}", process(&pkt));
-    println!("{}", process(&100u64)); // 位置 B
-}
-```
-
-<details>
-<summary>点击核对参考答案</summary>
-
-- **位置 A 编译失败（`error[E0609]: no field retry_count on type &T`）**：`process` 签名仅声明了 `T: Measurable`，编译器在单态化前检查模板时，只允许调用 `Measurable` 契约内的 `size_bytes()`，禁止访问具体结构体 `Packet` 私有的字段 `retry_count`。
-- **位置 B 编译失败（`error[E0277]: the trait bound u64: Measurable is not satisfied`）**：标准库的 `u64` 未实现 `Measurable`，在调用点准入核对时被拦截。
-
-</details>
+本节的 `Summary` 和 `Shout` 签名中所有类型都是固定的。如果契约本身还需要引入另一个待定类型（如「从某种源类型 `T` 转换」或「每次迭代产出某种元素 `Item`」），为什么标准库有时写成尖括号 `trait From<T>`，有时却写成花括号内的 `type Item;`？下一节拆解这对设计分工。

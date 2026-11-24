@@ -1,8 +1,4 @@
-//! `impl Trait` in argument and return positions, plus the two boundaries
-//! where compile-time static monomorphization hits a wall:
-//! 1. Runtime branches returning different concrete types (`error[E0308]`)
-//! 2. Heterogeneous collections storing different concrete types (`error[E0308]`)
-
+// Expect: E0308
 trait Summary {
     fn summarize(&self) -> String;
 }
@@ -28,24 +24,23 @@ impl Summary for Metric {
     }
 }
 
-// 1. `impl Summary` in argument position (sugar for `<T: Summary>`):
+// ANCHOR: impl_trait_and_branch
 fn notify(item: &impl Summary) {
     println!("{}", item.summarize());
 }
 
-// 2. `impl Summary` in return position (must resolve to ONE concrete type):
 fn make_default_metric() -> impl Summary {
     Metric { name: "cpu", value: 10 }
 }
 
-// Boundary 1: Returning different concrete types across runtime branches fails!
 // fn choose_item(is_article: bool) -> impl Summary {
 //     if is_article {
 //         Article { title: String::from("News") }
 //     } else {
-//         Metric { name: "cpu", value: 10 } // error[E0308]: `if` and `else` have incompatible types
+//         Metric { name: "cpu", value: 10 }
 //     }
 // }
+// ANCHOR_END: impl_trait_and_branch
 
 fn main() {
     let a = Article { title: String::from("Rust 1.0") };
@@ -53,9 +48,10 @@ fn main() {
     notify(&a);
     notify(&m);
 
-    // Boundary 2: A generic `Vec<T>` cannot hold both `Article` and `Metric` directly!
+    // ANCHOR: hetero_vec
     // let _items = vec![
     //     Article { title: String::from("News") },
-    //     Metric { name: "cpu", value: 10 }, // error[E0308]: mismatched types
+    //     Metric { name: "cpu", value: 10 },
     // ];
+    // ANCHOR_END: hetero_vec
 }

@@ -1,11 +1,6 @@
-//! Comparing closed-set polymorphism (`enum`, stack-inlined, exhaustive `match`)
-//! with open-set polymorphism (`Trait` + `<T: Trait>` or `Box<dyn Trait>`).
-
 use std::mem::size_of;
 
-// =========================================================================
-// 1. Closed Set: Variants are fixed and known (`enum` Sum Type)
-// =========================================================================
+// ANCHOR: closed_enum
 enum PaymentMethod {
     Cash,
     Card { last4: u16 },
@@ -21,10 +16,9 @@ impl PaymentMethod {
         }
     }
 }
+// ANCHOR_END: closed_enum
 
-// =========================================================================
-// 2. Open Set: New types can be added by external modules (`Trait`)
-// =========================================================================
+// ANCHOR: open_trait
 trait Notifier {
     fn send(&self, msg: &str) -> String;
 }
@@ -54,6 +48,7 @@ fn broadcast(channels: &[&dyn Notifier], msg: &str) {
         println!("{}", ch.send(msg));
     }
 }
+// ANCHOR_END: open_trait
 
 fn main() {
     let payments = [

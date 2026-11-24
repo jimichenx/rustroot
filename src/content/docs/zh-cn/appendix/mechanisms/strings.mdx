@@ -63,18 +63,18 @@ combined: Rust Root (s2 is still valid: Root)
 
 如果取消最后一行 `// println!("s1 after +: {s1}");` 的注释，编译器会立刻报出 **`error[E0382]`（移动后使用）**：
 
-<small class="code-source">编译器诊断摘要：取消 string-concat.rs 中最后一行的注释后</small>
+<small class="code-source">编译器诊断摘要（取消 string-concat.rs 第 17 行注释后）</small>
 ```text
 error[E0382]: borrow of moved value: `s1`
-  --> src/bin/string-concat.rs:20:28
+  --> types/slices/src/bin/string-concat.rs:17:28
    |
-8  |     let s1 = String::from("Rust");
+ 8 |     let s1 = String::from("Rust");
    |         -- move occurs because `s1` has type `String`, which does not implement the `Copy` trait
 ...
-17 |     let combined = s1 + " " + &s2;
+14 |     let combined = s1 + " " + &s2;
    |                    -------- `s1` moved due to usage in operator
 ...
-20 |     println!("s1 after +: {s1}");
+17 |     println!("s1 after +: {s1}");
    |                            ^^ value borrowed here after move
 ```
 

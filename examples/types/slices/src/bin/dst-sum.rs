@@ -1,10 +1,8 @@
 // Expect: E0277
 // ANCHOR: bad_sum
-/*
-fn bad_sum(arr: [i32]) -> i32 {
-    0
-}
-*/
+// fn bad_sum(arr: [i32]) -> i32 {
+//     0
+// }
 // ANCHOR_END: bad_sum
 
 // ANCHOR: slice_sum

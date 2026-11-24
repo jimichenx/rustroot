@@ -1,6 +1,3 @@
-//! Monomorphization turns one generic function definition into distinct
-//! compiled functions with different machine-code addresses and sizes.
-
 use std::mem::size_of;
 
 #[inline(never)]

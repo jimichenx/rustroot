@@ -17,9 +17,10 @@ fn main() {
 
     // ANCHOR: move_out_of_index
     // let first = names[0];
-    println!("get(1): {:?}, get(99): {:?}", names.get(1), names.get(99));
+    let second: Option<&String> = names.get(1);
+    println!("get(1): {:?}, get(99): {:?}", second, names.get(99));
 
-    let popped = names.pop();
+    let popped: Option<String> = names.pop();
     println!("popped: {:?}, remaining: {:?}", popped, names);
     // ANCHOR_END: move_out_of_index
 }

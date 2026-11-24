@@ -1,0 +1,133 @@
+---
+title: "位置表达式与值表达式：内存槽位的读、写、借与移"
+description: 区分指明内存槽位的位置表达式与计算新结果的值表达式，用同一套模型串起变量、解引用、下标与字段上的赋值、借用及移动限制。
+share: "位置表达式指明内存槽位，值表达式算出新结果。有位置不等于能移走值。"
+sidebar:
+  label: 位置表达式与值表达式
+  order: 4
+---
+
+import { Aside, Code } from '@astrojs/starlight/components';
+import PlaceChain from '../../../../../../components/course/PlaceChain.astro';
+import placeAndValue from '../../../../../../../examples/types/structs/src/bin/place-and-value.rs?raw';
+
+在[函数、元组与表达式](/types/functions-and-expressions/)中，我们见过 `a + b`、`Counter::new()` 这类算出新结果的表达式。但回顾前两章的代码，另一些写法不仅能读取结果，还能直接放在等号左侧接收写入，或跟在 `&mut` 后面借出可变引用：
+
+```rust
+count = 20;
+*editor = 8;
+scores[0] = 95;
+user.age = 29;
+```
+
+反过来，如果写下 `(a + b) = 20;` 或 `names.get(0) = ...;`，编译器会当场报错。同样是表达式，为什么有的能写入和借用，有的只能读出结果？又为什么同样指向一块已有数据，`let s = single.name;` 允许移走字段，而 `let s = people[1].name;` 和 `let s = *r;` 却被编译器拒绝？
+
+答案取决于表达式是否指代一块已存在的存储槽位。
+
+## 位置表达式与值表达式
+
+求值时，Rust 按「是否指明一块已存在的存储槽位」将所有表达式划分为两类——**位置表达式（Place Expression）**与**值表达式（Value Expression）**（C / C++ 文献常沿用历史旧称「左值 `lvalue` / 右值 `rvalue`」，Rust 直接按物理语义命名）：
+
+1. **位置表达式（指明内存槽位）**：指出数据存放在内存的哪个具体槽位。日常编码中最核心的位置表达式就是前两章陆续见过的四种形式：
+   - **变量名**：如 `count`，直接指向当前栈帧上的变量槽位；
+   - **解引用**：如 `*editor`，顺着引用里的地址定位到目标槽位；
+   - **下标访问**：如 `scores[0]`，从连续序列起始处按索引定位到第 `0` 号元素槽位；
+   - **字段访问**：如 `user.age` 或元组 `pair.0`，从结构体起始处按字段偏移定位到对应槽位。
+2. **值表达式（算出新结果）**：负责计算并交出一个新值，不指代现成的可写槽位。常见形式包括字面量（`42`）、算术与逻辑运算（`a + b`）、函数与方法调用（`Vec::new()`、`people.len()`、`names.get(1)`）以及结构体构造（`Person { ... }`）。
+
+注意区分**「位置」**与**「内存地址（引用）」**：引用 `&T` 是一个占 8 字节（或 16 字节）的具体类型值，可以赋给变量或传给函数；而位置表达式只是源码中指明槽位的语法路径，本身不是值——你可以向该槽位写入、从它读取，或者用 `&` / `&mut` 取出它的地址。
+
+### 链式位置与赋值限制
+
+四种位置形式可以像路径一样层层串联，从外层变量一步步定位到内层槽位：
+
+<small class="code-source">源文件：<code>examples/types/structs/src/bin/place-and-value.rs</code>（节选）</small>
+<Code code={placeAndValue} lang="rust" anchor="place_chain" />
+
+`people[0].name` 从数组变量 `people` 出发，先按下标 `[0]` 选中第 0 号 `Person` 元素，再按 `.name` 落到它内部的 `String` 字段槽位。无论是直接赋值写入，还是用 `&mut people[0].name` 借出可变引用，操作的都只是链条末端的 `name` 槽位，不影响旁边的 `age` 或 `people[1]`（链条中途一旦遇到下标越界，运行期即触发 `panic` 终止）。
+
+<PlaceChain />
+
+而第 16 行被注释掉的 `people.len() = 1;` 把方法调用（值表达式）放在了等号左侧。取消注释后，编译器直接报出 `error[E0070]`：
+
+<small class="code-source">编译器输出摘要（取消 place-and-value.rs 第 16 行注释后）</small>
+```text
+error[E0070]: invalid left-hand side of assignment
+  --> types/structs/src/bin/place-and-value.rs:16:18
+   |
+16 |     people.len() = 1;
+   |     ------------ ^
+   |     |
+   |     cannot assign to this expression
+```
+
+`people.len()` 只算出数字结果 `2`，不对应任何等待写入的变量或字段槽位，赋值左侧要求位置表达式的前提无法成立。
+
+<Aside type="note" title="对值表达式直接取引用时发生了什么？">
+既然值表达式不指代现成槽位，为什么日常写 `let r = &String::from("temp");` 能通过编译？当借用运算符 `&` 直接作用于值表达式时，编译器会先在当前栈帧开辟一个匿名的**临时位置（Temporary）**存放算出的新值，再让 `r` 借用该临时槽位并延长其存活范围。临时位置的存活与提前释放边界（`E0716`）见附录「[位置表达式进阶](/appendix/mechanisms/place-and-value/)」。
+</Aside>
+
+## 写、借、读三种上下文
+
+同一个位置表达式（如 `people[0].name` 或 `*name_slot`），编译器会根据它所处的语法上下文执行不同操作：
+
+- **写入上下文（放在 `=`、`+=` 左侧）**：向该槽位写入新值（若槽位原先持有有效的移动类型旧值，会按[可变与重新赋值](/memory/reassignment/)规则当场释放旧值）。前提是该位置具备可变权限——来自 `let mut` 绑定或可变引用 `*m`，否则报 `E0384`。
+- **借用上下文（跟在 `&` 或 `&mut` 之后）**：不取走槽位里的值，只借出指向该槽位的引用（`&mut` 额外要求位置可写且满足读写排他，否则报 `E0596` 或 `E0502`）。
+- **取值上下文（放在 `=` 右侧、函数实参等需要值的地方）**：从槽位中读取值。读取后的行为完全由该槽位的**类型**决定：实现 `Copy` 的类型（如 `people[0].age: u32`）按位复制一份，原槽位继续有效；未实现 `Copy` 的类型（如 `String`），则试图将值从该槽位**移动**走。
+
+## 四种位置的移出裁决
+
+这就回到了开篇的第二个问题：同样在取值上下文中读取未实现 `Copy` 的 `String`，为什么有的位置允许移走，有的位置却报错？观察实验源码的后半段：
+
+<small class="code-source">源文件：<code>examples/types/structs/src/bin/place-and-value.rs</code>（节选）</small>
+<Code code={placeAndValue} lang="rust" anchor="move_from_places" />
+
+取消第 23、24 行注释后，从下标链 `people[1].name` 移出触发 `E0508`，从引用解引用 `*r` 移出触发 `E0507`：
+
+<small class="code-source">编译器输出摘要（取消 place-and-value.rs 第 23、24 行注释后）</small>
+```text
+error[E0508]: cannot move out of type `[Person; 2]`, a non-copy array
+  --> types/structs/src/bin/place-and-value.rs:23:23
+   |
+23 |     let _from_index = people[1].name;
+   |                       ^^^^^^^^^^^^^^ cannot move out of here
+
+error[E0507]: cannot move out of `*r` which is behind a shared reference
+  --> types/structs/src/bin/place-and-value.rs:24:21
+   |
+24 |     let _from_ref = *r;
+   |                     ^^ move occurs because `*r` has type `String`, which does not implement the `Copy` trait
+```
+
+<span class="rr-keypoint">位置表达式只负责回答「去哪块槽位找数据」；至于能不能把非 `Copy` 的值从槽位里搬空，取决于移走之后编译器能否在编译期准确追踪剩余数据的释放责任：</span>
+
+| 位置形式 | 取值写法（设类型为 `String`） | 能否移出 | 编译期裁决与物理原因 |
+| --- | --- | --- | --- |
+| **1. 变量名** | `let s = title;` | **允许（整格移动）** | 变量独占所有权，状态表直接将该变量记为已移出（再用报 `E0382`） |
+| **2. 结构体 / 元组字段** | `let s = single.name;` | **允许（部分移动）** | 字段名在编译期静态确定，状态表可单独将该字段记为已移出，其余字段照常访问与释放 |
+| **3. 数组 / `Vec` 下标** | `let s = names[0];`<br/>`let s = people[1].name;` | **禁止（`E0508` / `E0507`）** | 下标 `i` 通常在运行期算出，编译期无法静态标记单格失效，且连续缓冲区不能留下未初始化空位（需改用借用 `&names[0]`、`.get(0)` 或 `pop`） |
+| **4. 引用解引用** | `let s = *r;`<br/>`r.into_bytes()` | **禁止（`E0507`）** | 引用（无论 `&T` 还是 `&mut T`）只借用地址、不持有所有权，不能把借来的目标值移空（堆独占指针 `Box<T>` 的特例将在[内建 `*` 与 `Deref` Trait](/pointers/deref-mechanism/)中说明） |
+
+完整实验源码与默认输出如下：
+
+<small class="code-source">源文件：<code>examples/types/structs/src/bin/place-and-value.rs</code></small>
+<Code code={placeAndValue} lang="rust" collapse={10} />
+
+<small class="code-source">运行输出</small>
+```text
+updated: Al (28)
+moved: Carol, rest age: 25, borrowed: Carol
+```
+
+用这套二分法对照针对 `mut logs: Vec<String>` 的四行常见操作，差异便一清二楚：
+
+```rust
+let a = logs.get(0);
+let b = &logs[0];
+// let c = logs[0];
+let d = logs.pop();
+```
+
+`logs.get(0)` 与 `logs.pop()` 是方法调用，属于**值表达式**，分别算出新构造的 `Option<&String>`（借用）与 `Option<String>`（已缩减 `len` 移出所有权）；`&logs[0]` 对位置表达式 `logs[0]` 取引用，算出 `&String`；唯独取消 `let c = logs[0];` 的注释会触发 `E0507`，因为 `logs[0]` 是下标位置表达式，直接放在右侧会试图从连续缓冲区中移走单个 `String`。
+
+本章用 `struct` 将多个**同时存在**的字段打包成了积类型（Product Type），并理清了槽位访问与方法调用的全部基础规则。如果业务需要表达「一个值只处于几种互斥可能性之一（或关系）」，又该如何建模？下一章进入[枚举、模式匹配与错误建模](/types/enums-and-matching/)。

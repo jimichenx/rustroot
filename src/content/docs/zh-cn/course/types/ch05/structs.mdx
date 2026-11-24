@@ -1,6 +1,7 @@
 ---
 title: "结构体（struct）：所有权单元与部分移动"
 description: 拆解具名、元组与单元三种结构体的扁平内联内存布局，说明自定义结构体为何默认走移动语义，并追踪字段粒度的部分移动规则。
+share: "结构体字段扁平内联、无对象头，默认走移动语义。移出单字段后其余字段仍可用。"
 sidebar:
   label: 结构体与部分移动
   order: 2
@@ -17,7 +18,7 @@ import StructPartialMove from '../../../../../../components/course/StructPartial
 
 要在工程中建立语义明确的数据模型，需要用 **`struct`（结构体）**定义全新的**独立类型**。
 
-## 结构体的三种形态与初始化简写
+## 三种形态与初始化简写
 
 每写下一个 `struct` 定义，就在编译期类型表中注册了一个独立的类型。结构体共有三种声明形态：
 
@@ -34,9 +35,9 @@ import StructPartialMove from '../../../../../../components/course/StructPartial
 <Code code={structBasics} lang="rust" anchor="shorthand,update_syntax" />
 
 - **同名字段简写**：当变量名与字段名相同时（如参数 `name` 与 `age`），直接写 `User { name, age, active: true }`，无需重复写 `name: name`。
-- **结构体更新语法 `..u1`**：基于已有实例创建新实例时，末尾写 `..u1` 表示其余未列出的字段直接按 `=` 规则从 `u1` 赋值过来。注意其所有权后果：上例中从 `u1` 取用的 `age`（`u64`）与 `active`（`bool`）均实现了 `Copy`，因此 `u1` 仍保持有效；若 `..u1` 取走了未实现 `Copy` 的 `String` 字段，则 `u1` 对应字段会发生**移动**而失效。
+- **结构体更新语法 `..u1`**：基于已有实例创建新实例时，末尾写 `..u1` 表示其余未列出的字段直接按 `=` 规则从 `u1` 赋值过来。上例中从 `u1` 取用的 `age`（`u64`）与 `active`（`bool`）均实现了 `Copy`，`u1` 仍保持有效；若 `..u1` 取走了未实现 `Copy` 的 `String` 字段，则 `u1` 对应字段会发生**移动**而失效。
 
-## 物理表示：扁平内联，零对象头
+## 扁平内联布局
 
 运行完整程序，实测三种结构体在 64 位平台栈上占用的字节数：
 
@@ -58,7 +59,7 @@ sizes: User = 40B, Color = 3B, AlwaysEqual = 0B
 Rust 不支持在结构体定义中给单个字段标 `mut`（不能写 `struct User { mut age: u64 }`）。字段能否修改取决于实例绑定的声明方式：`let user = User { ... };` 下全部字段只读，`let mut user = User { ... };` 下全部字段均可修改（如 `user.age = 29;`）。
 </Aside>
 
-## 为什么自定义类型默认走移动语义
+## 为什么默认走移动语义
 
 定义一个仅含两个 `i32` 字段（共 8 字节、无堆分配）的结构体 `Point`：
 
@@ -76,7 +77,7 @@ Rust 不支持在结构体定义中给单个字段标 `mut`（不能写 `struct 
 
 `#[derive(Clone, Copy)]` 会让编译器为 `Point` 自动生成 `Clone`（显式 `.clone()` 复制契约）与 `Copy`（赋值时隐式按位复制契约；语言规定实现 `Copy` 必须同时实现前置契约 `Clone`）。若结构体内部含有 `String` 等未实现 `Copy` 的字段，强行标注 `Copy` 会被编译器以 `error[E0204]` 拒绝。
 
-## 部分移动（Partial Move）：字段粒度的状态追踪
+## 字段级部分移动
 
 如果结构体同时包含 `String` 字段与 `u32` 字段，不移动整个实例，只把其中的 `String` 字段单独赋给新变量，会发生什么？
 
@@ -118,17 +119,4 @@ error[E0382]: borrow of partially moved value: `user`
 | **结构体整体（`user`）** | **禁止（`E0382`）** | 内部字段已残缺，不能再作为完整的 `User` 整体传参或打印 |
 | **其余未移动字段（`user.age`）** | **允许** | 状态仍为有效，可单独读写；`user` 离开作用域时，编译器仅对尚未移出的剩余有效字段执行释放 |
 
-## 小结与动手核对
-
-1. **三种形态与扁平内联**：`struct` 分为具名字段、元组和 0 字节单元结构体；字段直接内联平铺、零对象头，可变性由外层 `let mut` 统一控制；
-2. **默认移动，显式 `Copy`**：自定义结构体默认走移动语义，仅在全部字段支持 `Copy` 且显式标注 `#[derive(Clone, Copy)]` 时按位复制；
-3. **字段级部分移动**：移出单个非 `Copy` 字段后，该字段与结构体整体均失效（`E0382`），未移出的其余字段仍可独立访问与释放。
-
-### 动手核对
-
-假设定义了 `struct Request { url: String, timeout_ms: u32 }`，执行 `let target = req.url;` 后：
-
-1. 继续写 `println!("{}", req.timeout_ms);` 能否通过编译？为什么？
-2. 若想定义一个只含 `width: u32` 和 `height: u32` 的 `Size` 结构体，使 `let s2 = s1;` 后 `s1` 仍可使用，应如何声明？
-
-核对结果：① **能通过编译**，`req.url` 移出触发部分移动后，`req` 整体与 `req.url` 失效，但编译期确定的字段 `req.timeout_ms` 未移动，仍保持有效；② 在 `struct Size` 上方添加 **`#[derive(Clone, Copy)]`**。下一节进入 `impl` 块，看如何为结构体挂载方法并通过接收者三件套控制访问权限。
+据此即可直接判断：对 `struct Request { url: String, timeout_ms: u32 }` 执行 `let target = req.url;` 后，`req` 整体与 `req.url` 均已失效，但继续读取 `req.timeout_ms` 仍可通过编译。下一节进入 `impl` 块，看如何为结构体挂载方法并通过接收者三件套控制访问权限。

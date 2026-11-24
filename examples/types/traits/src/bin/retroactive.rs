@@ -1,6 +1,3 @@
-//! A trait can be implemented for a type written by someone else.
-//! `String` comes from the standard library; `Shout` is ours.
-
 trait Shout {
     fn shout(&self) -> String;
 }

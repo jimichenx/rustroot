@@ -1,11 +1,9 @@
-// ANCHOR: full
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 // ANCHOR: path_and_slice
 pub fn has_toml_ext<P: AsRef<Path>>(path: P) -> bool {
-    // Thin generic shim converts to `&Path`, delegating to a single non-generic function
     has_toml_ext_inner(path.as_ref())
 }
 
@@ -46,10 +44,8 @@ impl<K> RouteEntry<K> {
 }
 // ANCHOR_END: borrow_lookup
 
-// ANCHOR: main_usage
 fn main() {
     let owned_path = PathBuf::from("config/service.toml");
-    // Pass `&owned_path` so `P = &PathBuf`, preserving ownership of `owned_path`
     println!(
         "toml? literal={}, borrowed={}",
         has_toml_ext("Cargo.toml"),
@@ -74,5 +70,3 @@ fn main() {
         ports.get("gateway"),
     );
 }
-// ANCHOR_END: main_usage
-// ANCHOR_END: full

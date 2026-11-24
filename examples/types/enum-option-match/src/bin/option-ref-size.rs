@@ -1,7 +1,3 @@
-//! Compare `size_of` before and after wrapping in `Option<T>`.
-//! `u32` has no invalid bit pattern, so `Option<u32>` adds a tag and pads to 8 bytes.
-//! `&i32` and `String` contain non-null pointers: the zero address (niche) represents `None` for free!
-
 use std::mem::size_of;
 
 fn main() {

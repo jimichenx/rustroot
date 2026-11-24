@@ -1,18 +1,16 @@
-// ANCHOR: full
+// Expect: E0117
 use std::fmt;
 
 // ANCHOR: generic_coverage
 #[derive(Debug, Clone, Copy)]
 struct LocalId(u8);
 
-// Allowed: `LocalId` appears uncovered in `From<LocalId>`, even though `From` and `Vec` are in `std`.
 impl From<LocalId> for Vec<u8> {
     fn from(id: LocalId) -> Self {
         vec![id.0]
     }
 }
 
-// Forbidden (error[E0117]): `LocalId` is wrapped inside foreign `Vec<...>`:
 // impl fmt::Display for Vec<LocalId> {
 //     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 //         write!(f, "ids")
@@ -52,4 +50,3 @@ fn main() {
     let steps = vec![10, 20, 30];
     println!("extension trait: {}", steps.join_arrow());
 }
-// ANCHOR_END: full

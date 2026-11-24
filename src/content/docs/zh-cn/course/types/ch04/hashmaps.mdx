@@ -1,6 +1,7 @@
 ---
 title: "键值容器：HashMap<K, V>、所有权交接与 Entry 模式"
-description: 从 HashMap<K, V> 的基础创建、写入与查询起步，剖析无 GC 与桶内联布局如何影响键值所有权与查询借用，并看清双重查找与所有权冲突如何逼出 Entry 原地更新模式。
+description: 从 HashMap<K, V> 的基础创建、写入与查询起步，剖析键值所有权交接与查询期间禁止可变写入的借用边界，掌握省去调用方先查再插的 Entry 原地更新模式。
+share: "`insert` 把键和值移进表里。`entry` 交出槽位入口原地更新，省去调用方先查再插。"
 sidebar:
   label: 键值容器 HashMap<K, V>
   order: 6
@@ -32,16 +33,16 @@ println!("Blue: {:?}, Green: {:?}", scores.get("Blue"), scores.get("Green"));
 - **写入与覆盖**：`scores.insert(k, v)` 写入键值对；若再次写入同名键 `"Blue"`，新值 `25` 会覆盖旧值 `10`；
 - **按键查询**：`scores.get("Blue")` 返回 `Option<&i32>`——键存在时返回指向表内值的 `Some(&25)`，键不存在（如 `"Green"`）时返回 `None`。
 
-单看这几行基础读写，用法与 Java 的 `HashMap` 或 Python 的 `dict` 十分相似。但在 Java 中，塞进表的变量可以继续随意读取、拿着查询结果也能随时往表里插入新键，全由垃圾回收器（GC）与独立堆对象在幕后兜底；而在没有 GC、且把键值直接内联存放在堆内存里的 Rust 中，继续顺着这套直觉往下写，会依次在三个环节遇到阻碍。
+单看这几行基础读写，用法与 Java 的 `HashMap` 或 Python 的 `dict` 十分相似。但在 Java 中，放进表的变量可以继续读取、拿着查询结果也能随时往表里插入新键，全由垃圾回收器（GC）与独立堆对象在幕后兜底；而在没有 GC、且把键值直接内联存放在桶内存里的 Rust 中，继续顺着这套直觉往下写，会依次在三个环节遇到边界。
 
 ## 为什么 `insert` 会移走键
 
-在 Java 中，把字符串变量 `team` 放进 `scores.put(team, 10)` 之后，继续打印 `team` 习以为常。在 Rust 中照着写 `scores.insert(team, initial_score)`，紧接着再读取 `team`，编译器会立刻报出 `error[E0382]`：
+在 Java 中，把字符串变量 `team` 放进 `scores.put(team, 10)` 之后继续打印 `team` 习以为常。在 Rust 中照着写 `scores.insert(team, initial_score)`，紧接着再读取 `team`，编译器会立刻报出 `error[E0382]`：
 
 <small class="code-source">源文件：<code>examples/types/slices/src/bin/hashmap-ownership.rs</code></small>
 <Code code={hashmapOwnership} lang="rust" />
 
-<small class="code-source">运行输出与编译器诊断摘要（取消 hashmap-ownership.rs 中注释行后）</small>
+<small class="code-source">运行输出与编译器诊断摘要（取消 hashmap-ownership.rs 第 11 行注释后）</small>
 ```text
 initial_score is still valid: 10
 replaced old value: Some(10), current map: {"Blue": 25}
@@ -58,9 +59,9 @@ error[E0382]: borrow of moved value: `team`
    |                      ^^^^ value borrowed here after move
 ```
 
-`i32` 复制、`String` 移动的基础规则在[声明与绑定](/memory/bindings/)中已经建立；这里真正值得追问的是接口设计意图：**为什么 `insert(k, v)` 默认要按值收走键和值的所有权，而不只存一份引用？**
+`i32` 复制、`String` 移动的基础规则在[声明与绑定](/memory/bindings/)中已经建立；这里真正值得明确的是接口设计意图：**为什么 `insert(k, v)` 默认按值收走键和值的所有权，而不只存一份引用？**
 
-原因在于生命周期的匹配：哈希表往往作为配置表或状态表长期存续，而构造键名的字符串变量可能只是某次函数调用或循环体内的短命局部变量。若哈希表默认只保存外部变量的借用地址，一旦外部局部变量离开作用域释放，表内的键就会变成悬垂引用。因此，常规业务通常定义为 `HashMap<String, V>`，在调用 `insert` 时将堆字符串的释放责任直接移交给哈希表统一保管（同名键覆盖时，`insert` 还会通过 `Option<V>` 交回被替换出的旧值 `Some(10)`）。
+原因在于有效区间的匹配：哈希表往往作为配置表或状态表长期存续，而构造键名的字符串变量可能只是某次函数调用或循环体内的短命局部变量。若哈希表默认只保存外部变量的借用地址，一旦外部局部变量离开作用域释放，表内的键就会变成悬垂引用。因此，常规业务通常定义为 `HashMap<String, V>`，在调用 `insert` 时将堆字符串的释放责任直接移交给哈希表统一保管（同名键覆盖时，`insert` 还会通过 `Option<V>` 交回被替换出的旧值 `Some(10)`）。
 
 ## 为什么持有查询结果时不能 `insert`
 
@@ -71,9 +72,9 @@ error[E0382]: borrow of moved value: `team`
 <small class="code-source">源文件：<code>examples/types/slices/src/bin/hashmap-lookup.rs</code></small>
 <Code code={hashmapLookup} lang="rust" />
 
-取消 `// scores.insert(String::from("Red"), 30);` 的注释后，编译器以 `error[E0502]` 拒绝编译：
+取消第 12 行 `// scores.insert(String::from("Red"), 30);` 的注释后，编译器以 `error[E0502]` 拒绝编译：
 
-<small class="code-source">编译器输出摘要（取消 hashmap-lookup.rs 中 scores.insert 行注释后）</small>
+<small class="code-source">编译器输出摘要（取消 hashmap-lookup.rs 第 12 行注释后）</small>
 ```text
 error[E0502]: cannot borrow `scores` as mutable because it is also borrowed as immutable
   --> types/slices/src/bin/hashmap-lookup.rs:12:5
@@ -86,39 +87,37 @@ error[E0502]: cannot borrow `scores` as mutable because it is also borrowed as i
    |                                         ---------- immutable borrow later used here
 ```
 
-读的是 `"Blue"`，写的是 `"Red"`，两个键毫无交集，为什么 Java 完全合法而 Rust 却严令禁止？根源在于两门语言的**堆内存布局差异**：
+这里同样需要分清编译期的直接规则与它所保护的底层内存原因：
 
-- **Java 的 `HashMap<String, Integer>` 在哈希桶里只存对象引用**：真正的 `Integer(10)` 是堆上另一块独立的对象。即便 `put("Red", 30)` 触发哈希表扩容（`resize`）丢弃了旧桶数组，`blue_score` 指向的那个 `Integer(10)` 依然存活在原处；
-- **Rust 的 `HashMap<String, i32>` 将键 `K` 和值 `V` 直接内联存放在堆上的哈希桶缓冲区（Buckets）里**：整数 `10` 就嵌在哈希表自己的那块堆内存槽位中，没有单独的对象外壳。`blue_score`（`Option<&i32>`）内部保存的地址，直接指向当前哈希桶缓冲区里的那个槽位。一旦 `scores.insert(...)` 因负载过高触发**扩容重哈希（Rehashing）**——申请更大的新桶缓冲区、重算哈希搬迁所有键值、并**当场释放旧桶内存**——`blue_score` 里的地址就会立即悬垂。
+1. **编译期的直接规则（不取决于当次是否扩容）**：`scores.get("Blue")` 对整张表发起了共享借用 `&scores`（返回的 `Option<&i32>` 绑定在该借用区间上），而 `scores.insert(...)` 的签名要求可变借用 `&mut scores`。只要第 13 行仍要读取 `blue_score`，共享借用就尚未结束；此时调用需要排他访问的 `insert`，无论当前哈希表剩余容量是否充裕、当次插入在运行时会不会扩容，都会因借用区间重叠直接触发 `E0502`；
+2. **`insert` 为什么必须要求 `&mut self`（内存布局差异）**：Java 的 `HashMap<String, Integer>` 在桶数组里只存独立堆对象的引用，即便 `put` 触发扩容换掉桶数组，旧 `Integer` 对象仍在原处；而 Rust 的 `HashMap<String, i32>` 将键 `K` 和值 `V` **直接内联存放在堆上的哈希桶缓冲区（Buckets）里**。`blue_score` 保存的地址直接指向当前桶缓冲区内部槽位——一旦某次 `insert` 因负载过高触发**扩容重哈希（Rehashing）**并释放旧桶内存，表内槽位地址就会悬垂。
 
-因此，只要指向表内槽位的引用还处于有效区间，整张表就不能执行可能引发重分配的写入。先用完 `blue_score` 再调用 `insert`，冲突便自然解除。
+先用完 `blue_score` 结束共享借用，再调用 `insert`，冲突便自然解除。
 
 ## 用 `Entry` 模式原地更新
 
 实际业务中最常写的哈希表逻辑，往往不是单纯的插入或查询，而是**「查不到就填入初始值，查到了就在原值基础上更新」**——例如统计词频、累加用户请求次数，或向 `HashMap<String, Vec<String>>` 的分组列表里追加元素。
 
-如果只用前面学过的判存、查询与 `insert`，按 Python 或 Java 早期的直觉来写词频统计，通常会写出下面这样的四步逻辑：
+如果只用前面学过的判存、查询与 `insert`，按手写分步逻辑来统计词频，通常会写成下面这样：
 
 <small class="code-source">源文件：<code>examples/types/slices/src/bin/hashmap-entry.rs</code>（节选）</small>
 <Code code={hashmapEntry} lang="rust" anchor="naive_count" />
 
-当键是可复制的 `&str` 时，这段代码虽然能勉强跑通，但暴露出两重工程缺陷：
+当键是可复制的 `&str` 时，这段代码虽然能跑通，但存在两处明显的工程短板：
 
-1. **成倍的重复哈希与槽位查找**：处理一个新词时，`contains_key` 算第 1 次哈希并查桶，`insert(word, 0)` 算第 2 次，`naive_counts[word]` 读取算第 3 次，最后 `insert(word, next)` 写回又算第 4 次——明明只是操作同一个词，却把哈希表反复查了三四遍；
-2. **一旦键换成 `String` 就会触发所有权冲突**：假如词是从外部读取的 `word: String`，第 1 步 `insert(word, 0)` 就会把 `word` 的所有权移入表中，导致下一行 `naive_counts[&word]` 直接报 `E0382`（移动后使用）。不少初学者或 AI 生成的代码为了绕过报错，只能妥协写成 `naive_counts.insert(word.clone(), 0)`，平白多做一次堆内存分配与字节复制。
+1. **调用方反复发起多次查表**：处理一个新词时，`contains_key` 查第 1 次，`insert(word, 0)` 查第 2 次，`naive_counts[word]` 读取查第 3 次，最后 `insert(word, next)` 写回又查第 4 次；
+2. **键换成 `String` 时触发所有权冲突**：若词是拥有所有权的 `word: String`，第 1 步 `insert(word, 0)` 就会把 `word` 移入表中，导致后续读取直接报 `E0382`。不少代码（包括未加留意的 AI 生成代码）为了绕过报错，只能妥协写成 `insert(word.clone(), 0)`，在键已存在时也平白多做堆分配与复制。
 
-回到物理操作本身：我们对哈希表真正想做的事只有一步——**对 `word` 计算一次哈希定位到目标槽位；若槽位为空就填入 `0`，随后直接把指向该槽位内部值的可变引用 `&mut V` 交出来，让我们原地加 `1`。**
-
-标准库将这套「一次定位槽位、按需填充并交出 `&mut V`」的机制设计成了 **`entry`（槽位入口）模式**：
+为消除「调用方先查再插」的割裂，标准库提供了 **`entry`（槽位入口）模式**，把查找与按需填充合成为一次入口操作：
 
 <small class="code-source">源文件：<code>examples/types/slices/src/bin/hashmap-entry.rs</code>（节选）</small>
 <Code code={hashmapEntry} lang="rust" anchor="entry_count" />
 
-循环体内的两行代码将四次查找压缩成了一次定位：
+循环体内的两行代码依次完成三步工作：
 
-1. **`counts.entry(word)`**：对 `word` 计算一次哈希并定位目标槽位，返回代表该槽位当前占用或空置状态的 `Entry` 入口视图；
-2. **`.or_insert(0)`**：若槽位为空则将 `0` 写入槽位，若已有值则保持原样；<span class="rr-keypoint">无论槽位原先是否为空，`.or_insert` 最终都返回指向该槽位内部值的可变引用 `&mut usize`；</span>
-3. **`*count += 1;`**：用解引用运算符 `*` 顺着可变引用直接修改哈希桶槽位里的计数值，既不产生二次哈希查找，也不会在 `String` 键已存在时发生多余的堆克隆。
+1. **`counts.entry(word)`**：定位 `word` 在哈希表中的目标槽位入口，返回表示该槽位当前已占用或空置的 `Entry` 视图（注意 `Entry` 的工程收益是**省去调用方先查再插的重复查找**，并非承诺底层在触发扩容重哈希时内部永远只算一次哈希）；
+2. **`.or_insert(0)`**：若槽位为空则填入初值 `0`（容量不足时内部自动完成扩容），若已有值则保持原样；<span class="rr-keypoint">无论槽位原先是否为空，`.or_insert` 最终都返回指向该槽位内部值的可变引用 `&mut usize`；</span>
+3. **`*count += 1;`**：用解引用运算符 `*` 顺着可变引用原地递增计数值，无需调用方二次查表写回。
 
 完整实验源码与运行输出核对如下：
 
@@ -131,7 +130,7 @@ rust: Some(3), types: Some(1) (same as naive: true)
 ```
 
 <Aside type="tip" title="用 entry 替代判存后插入">
-审查业务代码或 AI 生成的 Rust 代码时，若看到 `if !map.contains_key(&key) { map.insert(key.clone(), Vec::new()); }` 紧接着又调 `map.get_mut(&key)` 往里追加元素，可直接将其压缩为 **`map.entry(key).or_insert(Vec::new()).push(item);`**，一次消除重复哈希查找与防御性 `.clone()`。
+审查业务代码或 AI 生成的 Rust 代码时，若看到 `if !map.contains_key(&key) { map.insert(key.clone(), Vec::new()); }` 紧接着又调 `map.get_mut(&key)` 往里追加元素，可直接将其改写为 **`map.entry(key).or_insert(Vec::new()).push(item);`**，一次省去重复查表与防御性 `.clone()`。
 </Aside>
 
 最后用一段登录计数函数检验你对 `Entry` 所有权与返回类型的把握：
@@ -146,14 +145,14 @@ fn record_login(logins: &mut HashMap<String, u32>, user: String) {
 }
 ```
 
-这里 `count` 的类型是槽位内部值的可变引用 **`&mut u32`**，因此递增时须写 `*count += 1`；而 `logins.entry(user)` 为了在槽位为空时直接将键存入表中，按值接收了 `user: String`——调用当行 `user` 的所有权已发生移动，若取消末行 `println!` 的注释，编译器会以 `E0382` 拦截。
+这里 `count` 的类型是槽位内部值的可变引用 **`&mut u32`**，因此递增时须写 `*count += 1`；而 `logins.entry(user)` 为了在槽位为空时直接将键移入表中，按值接收了 `user: String`（避免键已存在时提前克隆，又无需在空置时二次复制）——调用当行 `user` 的所有权已发生移动，若取消末行 `println!` 的注释，编译器会以 `E0382` 拦截。
 
 <Aside type="note" title="标准库其余常用集合与本章容器的关系">
 除 `Vec<T>` 与 `HashMap<K, V>` 外，`std::collections` 中另外三个高频集合同样建立在本章的堆内存与所有权规则之上：
 
-- **`HashSet<T>`（去重集合）**：只需判断元素是否存在、无需关联值时使用。它在标准库内部就是 `HashMap<T, ()>` 的直接封装——值的位置填入占 `0` 字节的单元类型 `()`（见附录「[标量、元组与单元类型](/appendix/basics/scalars-and-tuples/)」），不额外占用堆空间，插入移动与等价查询规则与 `HashMap` 一致；
-- **`BTreeMap<K, V>` 与 `BTreeSet<T>`（有序映射与集合）**：`HashMap` 按哈希值散列存储，遍历顺序不固定；当业务需要按键的大小顺序遍历或执行范围查询时，换用基于多路 B 树的 `BTreeMap<K, V>`；
-- **`VecDeque<T>`（双端队列）**：`Vec<T>` 在头部插入或调用 `remove(0)` 需将后方元素整体平移（`O(N)`）；需要高频在首尾两端增删元素时，使用基于堆上环形缓冲区的 `VecDeque<T>`。
+- **`HashSet<T>`（去重集合）**：只需判断元素是否存在时使用，内部是 `HashMap<T, ()>` 的封装（值位填入占 `0` 字节的单元类型 `()`，见附录「[标量、元组与单元类型](/appendix/basics/scalars-and-tuples/)」）；
+- **`BTreeMap<K, V>` 与 `BTreeSet<T>`（有序映射与集合）**：需要按键的大小顺序遍历或执行范围查询时，换用基于多路 B 树的 `BTreeMap<K, V>`；
+- **`VecDeque<T>`（双端队列）**：`Vec<T>` 在头部增删需整体平移后方元素（`O(N)`），高频在首尾两端增删元素时使用基于环形缓冲区的 `VecDeque<T>`。
 </Aside>
 
 走完本章，从基础引用 `&T` / `&mut T`、连续内存三载体 `[T; N]` / `&[T]` / `Vec<T>`、UTF-8 字符串到双参数键值容器 `HashMap<K, V>`，你已经看到同一套「物理表示 + 编译期安全约束」规则如何贯通所有内置与标准库容器。下一章进入[函数与结构体](/types/custom-types/)，看如何定义函数签名契约并组装自己的复合类型。

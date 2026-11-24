@@ -1,6 +1,7 @@
 ---
 title: "方法接收者三件套与自动解引用"
 description: 通过 impl 块分离数据结构与行为实现，将 &self、&mut self、self 对位到借用与移动规则上，并厘清点号调用点自动补齐引用与解引用的边界。
+share: "方法用 `&self`、`&mut self`、`self` 声明权限。点号自动补借用或解引用，不越过安全检查。"
 sidebar:
   label: 方法与接收者三件套
   order: 3
@@ -16,15 +17,15 @@ import consumeThroughRef from '../../../../../../../examples/types/methods/src/b
 
 与 Java 或 C++ 把字段和方法捆在同一个 `class { ... }` 内不同，Rust 将**数据定义（`struct`）与行为实现（`impl`）分开书写**，并且取消了隐式的 `this` 指针——每个方法必须在第一个参数位置显式声明以何种权限接手当前实例。
 
-## 数据与行为分离：`impl` 块与两类函数
+## `impl` 块与接收者三件套
 
 要为结构体 `Counter` 挂载函数，使用 **`impl`（实现，implementation）**关键字开启实现块。一个类型与 `impl` 块之间是 **`1:N`（含 `0`）**关系：纯数据结构体可以不写 `impl` 块；也可以拆成多个独立的 `impl Counter` 块按职责分组，编译器会自动将它们合并到同一类型名下。
 
-在 `impl` 块内部，按「第一个参数是否为 `self`」分为两类函数：
+在 `impl` 块内部，按首个参数是否为 `self` 分为两类函数：
 
-### 1. 关联函数（Associated Functions）：无 `self`，用 `::` 调用
+### 关联函数与 `::`
 
-参数列表中不带 `self` 的函数称为**关联函数**：
+参数列表中不带 `self` 的函数称为**关联函数（Associated Functions）**：
 
 <small class="code-source">源文件：<code>examples/types/methods/src/bin/method-receivers.rs</code>（节选）</small>
 <Code code={methodReceivers} lang="rust" anchor="assoc_fn" />
@@ -32,10 +33,10 @@ import consumeThroughRef from '../../../../../../../examples/types/methods/src/b
 关联函数挂在类型名下，不依赖已有实例，调用时写**类型名加双冒号 `::`**（如 `Counter::new()`，前文见过的 `String::from("hi")` 与 `Vec::new()` 均属此类）。Rust 没有 `new` 构造函数关键字，工程上约定用名为 `new`（或 `with_capacity`、`from_...`）的关联函数构造新实例。
 
 <Aside type="note" title="大写 Self 与小写 self，以及成本命名惯例">
-在 `impl Counter` 内部，首字母大写的 **`Self`** 是当前目标类型 `Counter` 的内置别名（写 `-> Self` 与 `Self { count: 0 }` 等同于写 `Counter`）；全小写的 **`self`** 则是方法首个参数的名字，指代调用该方法的实例。此外，社区约定将所有权成本写进方法名前缀（如只读视图用 `as_`、复制新数据用 `to_`、消费所有权转换用 `into_`，读取字段不加 `get_` 前缀），完整对照见附录「[Rust 命名约定与工程惯例速查](/appendix/basics/conventions/)」。
+在 `impl Counter` 内部，首字母大写的 **`Self`** 是当前目标类型 `Counter` 的内置别名（写 `-> Self` 与 `Self { count: 0 }` 等同于写 `Counter`）；全小写的 **`self`** 则是方法首个参数的名字，指代调用该方法的实例。此外，社区约定将所有权成本写进方法名前缀（只读视图用 `as_`、复制新数据用 `to_`、消费所有权转换用 `into_`，读取字段不加 `get_` 前缀），完整对照见附录「[Rust 命名约定与工程惯例速查](/appendix/basics/conventions/)」。
 </Aside>
 
-### 2. 方法与接收者三件套：`&self`、`&mut self` 与 `self`
+### 接收者 `&self`、`&mut self` 与 `self`
 
 首个参数为 `self`、`&self` 或 `&mut self` 的函数称为**方法（Methods）**，对实例用点号 `.` 调用（如 `c.get()`）。
 
@@ -63,7 +64,7 @@ finished: 1
 
 `c.finish()` 按值接手 `Counter` 后，原变量 `c` 即告失效；若取消末尾 `// println!("after finish: {}", c.get());` 的注释，编译器会直接报 `error[E0382]: borrow of moved value: c`，在编译期阻止对已终结实例的后续误用。
 
-## 点号 `.` 调用点的自动借用与自动解引用
+## 点号调用的自动借用与解引用
 
 既然 `Counter`、`&Counter` 与 `&mut Counter` 是三个独立的类型，为什么拿着值 `c` 可以直接写 `c.get()`，拿着双层引用 `rr: &&Counter` 也能直接写 `rr.get()`，而不必每次手写 `(&c).get()` 或 `(**rr).get()`？
 
@@ -86,11 +87,11 @@ vec: [1, 2, 3, 4, 5, 6]
 
 正因为点号 `.` 同时具备双向适配能力，Rust 取消了 C / C++ 区分值访问（`.`）与指针访问（`->`）的两套运算符，无论手里持有值还是引用，统一使用 `.` 访问。
 
-## 自动适配越不过的三条安全边界
+## 点号适配的安全边界
 
 <span class="rr-keypoint">点号 `.` 只负责在语法层面代写 `&`、`&mut` 与 `*`，展开后的底层函数调用依然逐条接受所有权与借用检查器的审查。</span>判断一行 `x.method()` 能否编译，只需将它还原为 `Type::method(...)`：
 
-### 1. 不可变绑定借不出 `&mut self`（回应 `E0596`）
+### 不可变绑定借不出 `&mut self`
 
 回到[可变与重新赋值](/memory/reassignment/)留下的问题：为什么 `let v: Vec<i32> = Vec::new();` 不加 `mut` 时，连修改内部数据的 `v.push(1)` 都不能调用？
 
@@ -108,9 +109,9 @@ error[E0596]: cannot borrow `v` as mutable, as it is not declared as mutable
   |     ^ cannot borrow as mutable
 ```
 
-将调用还原后答案一目了然：`v.len()` 展开为 `Vec::len(&v)`（只需只读借用 `&self`），而 `v.push(1)` 展开为 **`Vec::push(&mut v, 1)`**——`v` 未声明为 `let mut`，编译器拒绝从不可变绑定借出 `&mut v`。同理，在[动态数组 `Vec<T>`](/types/vectors/)中持有元素借用 `let first = &v[0];` 期间调用 `v.push(4)`，也是因为展开后的 `Vec::push(&mut v, 4)` 与活跃的只读借用 `first` 冲突而触发 `E0502`。
+将调用还原后原因很直接：`v.len()` 展开为 `Vec::len(&v)`（只需只读借用 `&self`），而 `v.push(1)` 展开为 **`Vec::push(&mut v, 1)`**——`v` 未声明为 `let mut`，编译器拒绝从不可变绑定借出 `&mut v`。同理，在[动态数组 `Vec<T>`](/types/vectors/)中持有元素借用 `let first = &v[0];` 期间调用 `v.push(4)`，也是因为展开后的 `Vec::push(&mut v, 4)` 与活跃的只读借用 `first` 冲突而触发 `E0502`。
 
-### 2. 共享引用背后调不了消费所有权的 `self` 方法（`E0507`）
+### 引用背后调不了消费型 `self`
 
 若方法接收者是按值消费所有权的 **`self`**（如 `String::into_bytes(self)`），而调用方手里只有共享引用 `r: &String`：
 
@@ -130,15 +131,7 @@ error[E0507]: cannot move out of `*r` which is behind a shared reference
 
 点号自动解引用将 `r.into_bytes()` 还原为 **`String::into_bytes(*r)`**，试图从共享引用 `r` 背后把未实现 `Copy` 的 `String` 移走，直接被「引用不承担释放责任、禁止移出目标值」的规则拦截；唯有真正的所有者 `s` 才能调用 `s.into_bytes()` 移交底层字节缓冲区。
 
-## 小结与动手核对
-
-1. **`impl` 分离数据与行为**：`struct` 仅定义字段；`impl` 块内无 `self` 的是关联函数（用 `Type::func()` 调用），带接收者的是方法（用 `x.method()` 调用）；
-2. **接收者三件套**：`&self` 只读借用、`&mut self` 独占修改、`self` 接手所有权并消费实例；
-3. **点号 `.` 等价展开**：按签名自动补 `&` / `&mut` 或 `*`，展开后的调用仍受不可变绑定（`E0596`）、读写排他（`E0502`）与共享引用禁移（`E0507`）约束。
-
-### 动手核对
-
-阅读下面这段检票代码，判断 `check` 函数内哪一行无法通过编译，并写出编译器还原后的等价调用式：
+用下面这段检票代码检验还原规则：
 
 ```rust
 struct Ticket { id: u32 }
@@ -150,10 +143,10 @@ impl Ticket {
 
 fn check(t: &Ticket) {
     println!("{}", t.inspect());
-    let id = t.redeem();
+    // let id = t.redeem();
 }
 ```
 
-核对结果：`t.inspect()` 等价于 `Ticket::inspect(t)`，编译通过；**`let id = t.redeem();` 编译失败（报 `error[E0507]`）**——自动解引用将其还原为 `Ticket::redeem(*t)`，而 `Ticket` 默认未实现 `Copy`，不能从共享引用 `t: &Ticket` 背后移走实例。
+这里 `t.inspect()` 等价于 `Ticket::inspect(t)`，编译通过；而取消 `let id = t.redeem();` 的注释会报 `error[E0507]`——它等价于 `Ticket::redeem(*t)`，默认未实现 `Copy` 的 `Ticket` 不能从共享引用背后被移走。
 
-本章用 `struct` 将多个**同时存在**的字段打包成了积类型（Product Type）。如果业务需要表达「一个值只处于几种互斥可能性之一（或关系）」，又该如何建模？下一章进入[枚举、模式匹配与错误建模](/types/enums-and-matching/)。
+把这里的 `*t` 与上一节的 `user.name`、上一章的 `names[0]` 放在一起对比：它们都指向内存里的一块已有数据，为什么 `user.name` 允许把值移走，而 `names[0]` 和 `*t` 却被拒绝？下一节将表达式拆分为「指明位置」与「算出新值」两类，把读写、借用与移动限制归入同一套规则。

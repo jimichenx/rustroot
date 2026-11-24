@@ -1,6 +1,7 @@
 ---
 title: "受检转换、切片升级与默认契约：TryFrom、ToOwned、Default 与成本命名"
 description: 补齐从动态大小切片升级为堆所有者的 ToOwned、返回 Result 的受检转换 TryFrom 与守住业务不变量的 Default，并将全章转换契约收束为 as_ / to_ / into_ 成本审查准则。
+share: "`ToOwned` 将切片升级为堆所有者，`TryFrom` 拦截越界输入。方法前缀直接标明分配成本。"
 sidebar:
   label: 受检转换、ToOwned 与成本法则
   order: 6
@@ -9,32 +10,14 @@ sidebar:
 import { Aside, Code } from '@astrojs/starlight/components';
 import conventionTraits from '../../../../../../../examples/types/traits/src/bin/convention-traits.rs?raw';
 
-在前两节中，我们沿着两个方向打通了高频接口契约：用 `From<T>` / `Into<U>` 处理必定成功的消费转换，用 `AsRef<T>` / `Borrow<T>` 处理零堆分配的只读视图提取。
+前两节分别打通了必定成功的消费转换（`From` / `Into`）与零堆分配的只读视图提取（`AsRef` / `Borrow`）。沿着所有权流向与数据合法性继续核对，接口边界上还有三块拼图需要补齐：如何从动态大小切片 `&str` 反向升级为堆所有者 `String`？按值转换可能失败时如何避免 `panic!`？无隐式零值的 Rust 又靠什么提供安全的默认初值？这三项职责分别对应 **`ToOwned`、`TryFrom` 与 `Default`**。
 
-顺着所有权流向与数据合法性继续排查，真实工程的接口边界上还有三个问题尚未落定：
-1. 上一节的 `Borrow` 能从拥有者 `String` 借出 `&str`；反过来，当手里只有一个编译期大小未知的切片 `&str` 或 `&[u8]`，需要**申请新堆内存升级回对应的拥有者**（`String` 或 `Vec<u8>`）时，为什么普通的 `Clone` 办不到？
-2. 如果按值转换过程**可能失败**（例如把外部输入的 `u32` 缩窄为限定在 `1..=65535` 范围内的非零端口号），还能实现 `From` 并在越界时直接 `panic!` 吗？
-3. 没有隐式零值与 `null` 初始化的 Rust，泛型代码靠什么契约统一生成初始默认值？盲目派生默认值又会怎样破坏类型防线？
+## 切片升级：`ToOwned` 为何独立于 `Clone`
 
-负责解决这三个问题的标准库契约正是 **`ToOwned`、`TryFrom` 与 `Default`**。把它们补齐后，Rust 标志性的 **`as_` / `to_` / `into_` 方法前缀成本法则**也就完整浮出水面。
+对于编译期大小已知的具体类型，`Clone` 的签名为 `pub trait Clone: Sized { fn clone(&self) -> Self; }`——父契约 `: Sized` 与返回类型 `-> Self` 要求被借用目标与复制出的新值必须是**同一个固定大小的类型**。
 
-## 一、 从借用切片反向升级为所有者：为什么有了 `Clone` 还需要 `ToOwned`？
+而字符串切片 `&str` 指向的 `str` 是编译期大小未知的动态大小类型，函数在物理上无法按值返回裸 `str`，它对应的堆所有者是另一个结构体 **`String`**（同理 `[T]` 对应 **`Vec<T>`**）。为此，标准库在 `alloc::borrow` 中结合上一节的 `Borrow` 定义了 **`ToOwned`**：
 
-先看「只读借用 → 独占所有权」的复制方向。对于编译期大小已知的具体类型（如 `String` 或自定义结构体），我们一直使用标准库的 **`Clone`**：
-
-```rust
-pub trait Clone: Sized {
-    fn clone(&self) -> Self; // 输入 &String，返回同类型的 String
-}
-```
-
-留意 `Clone` 头顶的父契约约束 **`: Sized`** 与返回类型 **`-> Self`**：它要求被借用的目标与复制出来的新值**必须是同一个固定大小的类型**。
-
-如果我们手里拿的是字符串切片 `&str`（即对动态大小类型 `str` 的引用），想在堆上复制出一份自己拥有所有权的字符串——`str` 在编译期连固定字节长度都没有，函数在物理上无法按值返回裸 `str`；它对应的堆所有者其实是另一个名叫 **`String`** 的结构体（同理，切片 `[T]` 对应的堆所有者是 **`Vec<T>`**）。
-
-为了打通「动态大小切片 → 对应堆所有者」的升级通道，标准库在 `alloc::borrow` 中借助上一节刚学过的 `Borrow` 定义了 **`ToOwned`**：
-
-<small class="code-source">标准库源码结构示意（<code>alloc::borrow::ToOwned</code>）</small>
 ```rust
 pub trait ToOwned {
     type Owned: Borrow<Self>;
@@ -42,20 +25,14 @@ pub trait ToOwned {
 }
 ```
 
-有了上一节的基础，关联类型约束 `type Owned: Borrow<Self>;` 一眼就能读懂：**升级出来的堆所有者类型 `Owned`，必须反过来能够通过 `Borrow` 借出当前的切片类型 `Self`**，从而构成双向对称：
-- `str` 实现 `ToOwned` 时指定 `type Owned = String;`（因为 `String` 实现了 `Borrow<str>`），调用 `"localhost".to_owned()` 就在堆上分配缓冲区并复制字节返回 `String`；
-- `[T]` 实现 `ToOwned` 时（要求元素 `T: Clone`）指定 `type Owned = Vec<T>;`，调用 `slice.to_owned()` 返回 `Vec<T>`；
-- 同时标准库内置了一揽子实现：凡是已实现 `Clone` 的固定大小类型 `T`，自动实现 `ToOwned<Owned = T>`。这套双向桥接正是后续[写时复制智能指针 `Cow<'a, B>`](/architecture/cow-clone-on-write/)能够自由切换借用与拥有状态的底层基础。
+关联类型约束 `type Owned: Borrow<Self>` 锁定了双向对称关系：升级出的堆所有者 `Owned` 必须能反过来通过 `Borrow` 借出当前切片 `Self`。`str` 指定 `type Owned = String`（调用 `"localhost".to_owned()` 分配堆内存返回 `String`），`[T]` 指定 `type Owned = Vec<T>`，所有已实现 `Clone` 的定长类型 `T` 则通过一揽子实现自动满足 `ToOwned<Owned = T>`（后续[写时复制智能指针 `Cow<'a, B>`](/architecture/cow-clone-on-write/)即建立在这对桥接契约之上）。
 
-*(注：日常把 `&str` 升级为 `String` 时，优先写 `"hi".to_owned()` 或 `String::from("hi")`，它们直接按字节长度分配并复制内存；而 `"hi".to_string()` 原本来自 `Display` 格式化契约的一揽子实现，语义是「格式化打印成文本」而非「借用升级为所有者」，详查[字符串转换、拼接与高频操作机制](/appendix/mechanisms/strings/)。)*
+## 受检转换：`TryFrom<T>` 与 `TryInto<U>`
 
-## 二、 消费型受检转换：`TryFrom<T>` 与 `TryInto<U>`
+编写转换实现或审查代码时有一条硬性边界：**禁止在 `From::from` 内部因外部输入越界或格式错误而调用 `panic!` 或 `.unwrap()`**。`From<T>` 只用于无损且必定成功的转换（如从合法 `Port` 提取底层 `u16`）。
 
-再看按值转换的合法性边界。在编写转换代码或审查 AI 生成的实现时，有一条工程红线：**严禁在 `From::from` 的实现内部因为输入越界或格式非法而调用 `panic!` 或 `.unwrap()`**。
+一旦源类型的取值范围大于目标类型的合法域（例如把 `u32` 缩窄为限定在 `1..=65535` 内的非零端口 `Port`），必须改用受检转换契约 **`core::convert::TryFrom<T>`**：
 
-`From<T>` 向调用方承诺的是「无损且必定成功」（例如 `16` 位端口号 `Port` 提取回底层 `u16`）。一旦源数据的取值范围大于目标类型的合法域——例如把外部配置传入的 `u32` 转换成要求落在 `1..=65535` 内的 `Port`——就必须改用受检转换契约 **`core::convert::TryFrom<T>`**：
-
-<small class="code-source">标准库源码结构示意（<code>core::convert::TryFrom</code>）</small>
 ```rust
 pub trait TryFrom<T>: Sized {
     type Error;
@@ -63,34 +40,28 @@ pub trait TryFrom<T>: Sized {
 }
 ```
 
-这个签名直接实战了[关联类型 vs 泛型 Trait](/abstraction/associated-types/)的设计准则：对于给定的一对源类型 `T` 和目标类型 `Self`，转换失败的错误原因只有唯一确定的那一种，因此用关联类型 **`type Error;`** 将其锁定。
+给定源类型 `T` 与目标类型 `Self`，失败的错误类型唯一确定，因此用关联类型 `type Error;` 锁定。标准库同样内置了一揽子实现，只需手写 `TryFrom`，调用方即自动获得返回 `Result` 的 `.try_into()` 方法并可直接配合 `?` 传播错误。
 
-与 `From` / `Into` 对称，标准库同样提供了一揽子实现 `impl<T, U> TryInto<U> for T where U: TryFrom<T>`（并且为所有已实现 `Into` 的类型自动实现了 `Error = Infallible` 的 `TryFrom`）。你只需手写 `TryFrom`，调用方即可获得返回 `Result` 的 `.try_into()` 方法，并直接配合 `?` 运算符传播错误。
+## 默认初值：`Default` 与不变量保护
 
-## 三、 显式默认起点 `Default` 与业务不变量防线
+Rust 要求实例化结构体时显式初始化每个字段，由 **`core::default::Default`**（`fn default() -> Self;`）统一提供无参初始值。实现 `Default` 后，除了支持 `Config { timeout: 30, ..Default::default() }` 更新语法外，还解锁两项实用工具：
 
-在 C++、Go 或 Java 中，声明字段往往带有隐式的零值初始化（数字为 `0`，引用为 `null`）。Rust 为消除未初始化内存与空指针，要求创建实例时显式填满每个字段，并由标准库的 **`core::default::Default`** 统一承担「无参生成合理初始值」的职责：
+1. **`Option<T>::unwrap_or_default()`**：为 `None` 时自动调用 `T::default()` 回退；
+2. **`std::mem::take(&mut target)`**：面对可变借用 `&mut String` 或 `&mut Vec<T>`，无需外包 `Option`（对比[工程裁决：驾驭 `Option` / `Result`](/types/error-handling/)中的 `Option::take`），直接向原槽位填入 `Default::default()` 空壳并抽走原堆缓冲区所有权——空 `String::new()` 与 `Vec::new()` 容量为 `0`、不申请堆内存，整步置换零堆分配。
 
-```rust
-pub trait Default {
-    fn default() -> Self;
-}
-```
-
-一旦类型实现了 `Default`，除了能配合结构体更新语法 `Config { timeout: 30, ..Default::default() }` 外，还会解锁两项高频标准库工具：
-1. **`Option<T>::unwrap_or_default()`**：当 `Option` 为 `None` 时自动调用 `T::default()` 兜底；
-2. **`std::mem::take(&mut target)`**：在只有可变借用 `&mut String` 或 `&mut Vec<T>` 的方法里，无需外包一层 `Option`（对比[工程裁决：驾驭 Option / Result](/types/error-handling/)中的 `Option::take`），`mem::take` 直接往原位置塞入一个 `Default::default()` 空壳，把原变量的堆缓冲区所有权抽出来交给你——由于空 `String::new()` 和 `Vec::new()` 容量为 `0`、根本不申请堆内存，这一步置换是零分配的。
-
-<Aside type="caution" title="Code Review 防线：警惕 #[derive(Default)] 静默击穿业务不变量">
-基础数值类型 `u16` 的 `Default` 值是 `0`。如果你定义了一个受 `TryFrom` 严格把关、规定合法范围必须是 `1..=65535` 的 `struct Port(u16)`，却顺手在头顶贴了一行 `#[derive(Default)]`，编译器就会自动生成返回 **`Port(0)`** 的默认实现——外部代码只需调一句 `Port::default()`，就能绕过 `TryFrom` 造出非法对象。因此，对带有合法域约束的类型，要么手写 `impl Default` 返回合法默认值（如 `Port(8080)`），要么在无合理默认值时直接拒绝实现 `Default`。
+<Aside type="caution" title="防止 #[derive(Default)] 绕过受检边界">
+`u16` 的默认值是 `0`。若对规定合法域为 `1..=65535` 的 `struct Port(u16)` 直接标注 `#[derive(Default)]`，编译器会生成返回 **`Port(0)`** 的实现，使外部调用 `Port::default()` 即可绕过 `TryFrom` 造出非法实例。带有合法域不变量的类型，应手写 `impl Default` 返回合法初值（如 `Port(8080)`），或直接不实现 `Default`。
 </Aside>
 
-结合下面两段实验源码，核对 `Port` 的受检转换、手写 `Default`、`ToOwned` 升级与 `mem::take` 零分配抽取的协同工作：
+运行实验源码，核对 `Port` 的受检转换、手写 `Default`、`ToOwned` 升级与 `mem::take` 零分配抽取：
 
-<small class="code-source">源文件：<code>examples/types/traits/src/bin/convention-traits.rs</code>（节选：受检转换、手写 Default、ToOwned 与 mem::take）</small>
+<small class="code-source">源文件：<code>examples/types/traits/src/bin/convention-traits.rs</code>（节选）</small>
 <Code code={conventionTraits} lang="rust" anchor="port_contracts,to_owned_and_take" />
 
-<small class="code-source">运行输出（<code>examples/types/traits/src/bin/convention-traits.rs</code>）</small>
+<small class="code-source">源文件：<code>examples/types/traits/src/bin/convention-traits.rs</code></small>
+<Code code={conventionTraits} lang="rust" collapse={10} />
+
+<small class="code-source">运行输出</small>
 ```text
 default = localhost:8080
 try_from: ok=Ok(Port(9000)), err=Err("port out of 1..=65535 range")
@@ -98,41 +69,17 @@ as_bytes len = 4
 into_bytes = [80, 73, 78, 71], after take len = 0
 ```
 
-## 四、 工程裁决总表：转换契约与 `as_` / `to_` / `into_` 成本法则
+## 成本命名法则：`as_`、`to_` 与 `into_`
 
-把这三节学过的所有转换契约放在一起，就能看清 Rust 官方 [API 命名指南](https://rust-lang.github.io/api-guidelines/naming.html)（更多命名惯例见[命名约定与工程惯例速查](/appendix/basics/conventions/)）的底层逻辑——**方法名前缀直接编码了所有权流向与堆内存分配成本**：
+汇总前三节的全部转换契约，标准库 [API 命名指南](https://rust-lang.github.io/api-guidelines/naming.html)（详查附录「[Rust 命名约定与工程惯例速查](/appendix/basics/conventions/)」）将所有权流向与堆分配成本直接编码进了方法名前缀：
 
-| 转换方向 | 代表 Trait | 固有方法前缀 | 接收者 | 堆分配成本与原变量状态 | 标准库典型示例 |
+| 转换方向 | 代表 `Trait` | 方法前缀 | 接收者 | 分配成本与原变量状态 | 标准库示例 |
 | --- | --- | --- | --- | --- | --- |
-| **1. 借用取视图** | `AsRef<T>` / `Borrow<T>` | **`as_...`** | `&self` | **零堆分配**；只构造引用或胖指针，原变量继续有效 | `s.as_str()`、`s.as_bytes()`、`v.as_slice()` |
-| **2. 借用造新值** | `ToOwned` / `Clone` | **`to_...`** | `&self` | **有分配成本**；通常申请新堆内存并复制字节，原变量继续有效 | `s.to_owned()`、`s.to_lowercase()`、`slice.to_vec()` |
-| **3. 消费移交所有权** | `From<T>` / `Into<U>` | **`into_...`** | `self` | **原变量移动失效**；直接拆解并转交底层已有堆缓冲区，零额外字节复制 | `s.into_bytes()`（24B 控制头转交 `Vec<u8>`） |
-| **4. 受检转换** | `TryFrom<T>` / `TryInto<U>` | **`try_...`** | `self` 或源值 | 校验输入合法性并返回 `Result`，不因外部脏数据触发 `panic!` | `Port::try_from(n)`、`String::from_utf8(vec)` |
+| **借用取视图** | `AsRef` / `Borrow` | **`as_...`** | `&self` | **零堆分配**；构造引用或胖指针，原变量继续有效 | `s.as_str()`、`s.as_bytes()`、`v.as_slice()` |
+| **借用造新值** | `ToOwned` / `Clone` | **`to_...`** | `&self` | **有分配成本**；申请新堆块并复制字节，原变量继续有效 | `s.to_owned()`、`s.to_lowercase()`、`slice.to_vec()` |
+| **消费交所有权** | `From` / `Into` | **`into_...`** | `self` | **原变量移动失效**；原地转交底层堆缓冲区，零字节复制 | `s.into_bytes()`（24B 控制头直接转交 `Vec<u8>`） |
+| **受检转换** | `TryFrom` / `TryInto` | **`try_...`** | `self` 或源值 | 校验输入合法性并返回 `Result` | `Port::try_from(n)` |
 
-审查热路径循环代码时，紧盯密集的 `.to_vec()`、`.to_owned()` 与 `.clone()`：若下游只需临时读取字节，改为零分配的 `as_bytes()`；若原 `String` 后续不再使用（或可通过 `mem::take` 抽出），直接用 `into_bytes()` 原地移交底层堆内存。
+<span class="rr-keypoint">审查循环热路径代码时，重点核查密集的 `.to_vec()`、`.to_owned()` 与 `.clone()`：下游仅只读时换用 `as_bytes()`，原值不再使用时换用 `into_bytes()`（或 `mem::take`）复用已有堆内存。</span>
 
-## 小结
-
-1. **`ToOwned` 打通切片升级**：突破 `Clone: Sized` 的同类型固定大小限制，借助 `type Owned: Borrow<Self>` 将 `&str` / `&[T]` 升级为堆所有者 `String` / `Vec<T>`。
-2. **`TryFrom` 与 `Default` 守住类型边界**：可能失败的转换必须实现 `TryFrom` 返回 `Result`；实现 `Default` 解锁 `unwrap_or_default` 与零分配置换 `mem::take`，但有业务约束的类型切忌盲目 `#[derive(Default)]`。
-3. **前缀即成本契约**：记住 **`as_` 零分配借视图、`to_` 分配新堆复制、`into_` 移交所有权复用缓冲区**三条准则。
-
-走完这三节，我们已经见识了标准库如何用普通的 Trait 与一揽子实现构建起全套类型转换协议。但看到任何模块都能事后实现 Trait、标准库里还写满了 `impl<T>` 批量挂载，一个关乎全局安全的问题也随之浮现：**在成千上万个第三方包各自独立编译的生态里，如果两个互不相识的包对同一个类型实现了同一个契约，或者写了互相重叠的一揽子实现，编译器靠什么防止冲突？**
-
-下一节，我们拆解守护全生态契约唯一性的核心规则：**孤儿规则与全局一致性**。
-
-[继续：孤儿规则与全局一致性 →](/abstraction/orphan-rule-and-coherence/)
-
-### 附：本节完整可运行实验源码
-
-<details>
-<summary>点击展开完整源码（<code>examples/types/traits/src/bin/convention-traits.rs</code>）</summary>
-
-<Code
-  code={conventionTraits}
-  lang="rust"
-  anchor="full"
-  title="examples/types/traits/src/bin/convention-traits.rs"
-/>
-
-</details>
+看到任何模块都能事后实现 `Trait`、标准库还存在大量 `impl<T>` 一揽子实现，下一个全局问题随之浮现：当成千上万个第三方包各自独立编译并链接进同一个程序时，编译器靠什么防止两份 `Trait` 实现发生冲突？下一节拆解孤儿规则与全局一致性。

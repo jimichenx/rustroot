@@ -1,5 +1,3 @@
-//! Passing the error up by hand: every call unfolds into a `match`.
-
 use std::num::ParseIntError;
 
 fn sum_two(a: &str, b: &str) -> Result<i32, ParseIntError> {

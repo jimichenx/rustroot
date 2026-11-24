@@ -80,6 +80,8 @@ export const collections = {
 				id: z.string().regex(/^[a-z][a-z0-9-]*$/).optional(),
 				// 篇扉页。为 true 时这一篇不占篇序和章号，课直接放在篇文件夹里。
 				unnumbered: z.boolean().optional(),
+				// 分享卡上的那一句。有它才生成这一页专属的 og:image；不写则用全站总图。
+				share: z.string().optional(),
 			}),
 		}),
 	}),
