@@ -11,7 +11,7 @@ import { Aside, Code } from '@astrojs/starlight/components';
 import PlaceChain from '../../../../../../components/course/PlaceChain.astro';
 import placeAndValue from '../../../../../../../examples/types/structs/src/bin/place-and-value.rs?raw';
 
-在[函数、元组与表达式](/types/functions-and-expressions/)中，我们见过 `a + b`、`Counter::new()` 这类算出新结果的表达式。但回顾前两章的代码，另一些写法不仅能读取结果，还能直接放在等号左侧接收写入，或跟在 `&mut` 后面借出可变引用：
+在[元组、函数与表达式](/types/functions-and-expressions/)中，我们见过 `a + b`、`Counter::new()` 这类算出新结果的表达式。但回顾前两章的代码，另一些写法不仅能读取结果，还能直接放在等号左侧接收写入，或跟在 `&mut` 后面借出可变引用：
 
 ```rust
 count = 20;

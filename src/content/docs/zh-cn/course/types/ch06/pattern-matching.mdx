@@ -70,7 +70,7 @@ error[E0005]: refutable pattern in local binding
 
 默认运行输出 `quotas: 10, 600, 11999`。`match role` 读取开头的标签，自上而下比对每条分支（`模式 => 表达式`，若只需部分结构体字段可写 `Role::Admin { dept_id, .. }` 忽略其余字段），并遵守两条编译期规则：
 
-1. **各分支产出同一类型**：与[函数、元组与表达式](/types/functions-and-expressions/)中的 `if / else` 一致，`match` 作为表达式要求所有分支返回相同类型（此处均为 `u64`），否则报 `E0308`；
+1. **各分支产出同一类型**：与[元组、函数与表达式](/types/functions-and-expressions/)中的 `if / else` 一致，`match` 作为表达式要求所有分支返回相同类型（此处均为 `u64`），否则报 `E0308`；
 2. **穷尽性检查（Exhaustiveness Check，`E0004`）**：若注释掉第 12 行的 `Role::Admin` 分支，编译立即失败：
 
 <small class="code-source">编译器输出摘要（注释掉 match-role.rs 第 12 行后）</small>

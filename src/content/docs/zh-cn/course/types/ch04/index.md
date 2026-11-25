@@ -3,11 +3,6 @@ title: 引用与数据容器
 description: 把「类型构造器 → 具体类型」模型落到引用与核心数据容器上，拆解 &T 与 &mut T、定长数组 [T; N]、切片胖指针 &[T]、动态数组 Vec<T>、字符串与键值容器 HashMap<K, V>。
 share: "`&T`、`[T; N]`、`&[T]` 和 `Vec<T>`，都是构造器填上参数之后的具体类型。"
 id: references-and-slices
-draft: true
-sidebar:
-  badge:
-    text: 草稿
-    variant: caution
 ---
 
 上一章建立了本篇的分析主轴：每个具体类型都由**类型构造器**填入编译期参数后生成，同时承载运行时的物理表示与编译期的行为及安全约束。

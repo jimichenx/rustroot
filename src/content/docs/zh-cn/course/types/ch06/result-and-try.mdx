@@ -42,7 +42,7 @@ enum Result<T, E> {
 ```
 
 - 当函数成功返回计算结果、失败返回错误原因时，签名写为 `Result<i32, ParseIntError>`；
-- 当函数只需执行动作而无业务返回值（对应[函数、元组与表达式](/types/functions-and-expressions/)中的单元类型 `()`）、但执行可能失败时，签名写为 **`Result<(), std::io::Error>`**——成功返回 `Ok(())`，失败返回 `Err(e)`。
+- 当函数只需执行动作而无业务返回值（对应[元组、函数与表达式](/types/functions-and-expressions/)中的单元类型 `()`）、但执行可能失败时，签名写为 **`Result<(), std::io::Error>`**——成功返回 `Ok(())`，失败返回 `Err(e)`。
 
 运行下面这段解析整数的程序，核对两条分支的数据流向：
 

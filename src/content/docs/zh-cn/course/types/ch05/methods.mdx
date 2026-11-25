@@ -1,6 +1,6 @@
 ---
 title: "方法接收者三件套与自动解引用"
-description: 通过 impl 块分离数据结构与行为实现，将 &self、&mut self、self 对位到借用与移动规则上，并厘清点号调用点自动补齐引用与解引用的边界。
+description: 通过 impl 块分离数据结构与行为实现，看清方法作为类型名下普通函数的底层本质，将 &self、&mut self、self 对位到借用与移动规则上，并厘清点号调用点自动补齐引用与解引用的边界。
 share: "方法用 `&self`、`&mut self`、`self` 声明权限。点号自动补借用或解引用，不越过安全检查。"
 sidebar:
   label: 方法与接收者三件套
@@ -15,32 +15,42 @@ import consumeThroughRef from '../../../../../../../examples/types/methods/src/b
 
 上一节用 `struct` 将多个字段组合成了自定义类型，但 `struct` 花括号内只声明数据布局，不写任何方法。
 
-与 Java 或 C++ 把字段和方法捆在同一个 `class { ... }` 内不同，Rust 将**数据定义（`struct`）与行为实现（`impl`）分开书写**，并且取消了隐式的 `this` 指针——每个方法必须在第一个参数位置显式声明以何种权限接手当前实例。
+在 Java 或 Python 中，实例方法挂在堆对象上，通常依赖隐藏的对象头与虚表（`vtable`）在运行时寻址，并且自带隐式的 `this` / `self` 指针。而在 Rust 中，上一节刚实测过结构体采用扁平内联布局、没有任何隐藏对象头——既然内存里只有纯数据，方法究竟挂在哪里？编译器又如何知道某个方法只读取字段、修改字段还是直接取走内部资源？
 
-## `impl` 块与接收者三件套
+答案在于：Rust 将**数据定义（`struct`）与行为实现（`impl`）分开书写**，把方法还原为挂载在类型名命名空间下的普通函数，并要求首个参数显式写出访问权限。
 
-要为结构体 `Counter` 挂载函数，使用 **`impl`（实现，implementation）**关键字开启实现块。一个类型与 `impl` 块之间是 **`1:N`（含 `0`）**关系：纯数据结构体可以不写 `impl` 块；也可以拆成多个独立的 `impl Counter` 块按职责分组，编译器会自动将它们合并到同一类型名下。
+## `impl` 块与关联函数
 
-在 `impl` 块内部，按首个参数是否为 `self` 分为两类函数：
+要为结构体 `TextBuffer` 挂载函数，使用 **`impl`（实现，implementation）**关键字开启实现块。
 
-### 关联函数与 `::`
+在 Java 中，`class` 把字段和全部方法锁死在同一个花括号与同一个文件里，业务一多就会长成数千行的巨型类。Rust 将数据与行为拆开后，类型与 `impl` 块变成了 **`1:N`（含 `0`）**关系：纯数据结构体可以不写 `impl`；复杂类型则可以按职责拆成多个独立的 `impl TextBuffer` 块，甚至分散在当前包的不同模块文件中，编译时统一合并到同一类型名下。
 
-参数列表中不带 `self` 的函数称为**关联函数（Associated Functions）**：
+这种多块组织不仅避免了单文件膨胀，也为后续按不同泛型条件或契约分块挂载行为留出了空间。传统 `class` 的职责捆绑与 Rust 的拆分细节，见附录「[没有 `class` 的对象感](/appendix/comparisons/oop/)」。
+
+在 `impl` 块内部，定义的所有函数统称**关联函数（Associated Functions）**——字面意思就是「与当前类型关联的函数」。按首个参数是否为 `self`，它们在日常称呼与调用方式上分为两类：
+
+### 不带 `self` 的关联函数与 `::`
+
+参数列表中不带 `self` 的函数（社区日常直接简称「关联函数」），作用相当于 Java 或 C++ 中的**静态方法（`static` method）**：
 
 <small class="code-source">源文件：<code>examples/types/methods/src/bin/method-receivers.rs</code>（节选）</small>
 <Code code={methodReceivers} lang="rust" anchor="assoc_fn" />
 
-关联函数挂在类型名下，不依赖已有实例，调用时写**类型名加双冒号 `::`**（如 `Counter::new()`，前文见过的 `String::from("hi")` 与 `Vec::new()` 均属此类）。Rust 没有 `new` 构造函数关键字，工程上约定用名为 `new`（或 `with_capacity`、`from_...`）的关联函数构造新实例。
+它挂在类型名这个命名空间下，不依赖任何已有实例，调用时必须写**类型名加双冒号 `::`**，例如 `TextBuffer::new("[INFO] ")`（前文见过的 `String::from("hi")` 与 `Vec::new()` 均属此类）。与允许对实例调静态方法的 Java 不同，Rust 严格区分类型路径 `::` 与实例调用 `.`。
+
+此外，Rust 没有 `new` 构造函数关键字，工程上约定用名为 `new`（或 `with_capacity`、`from_...`）的关联函数构造新实例。
 
 <Aside type="note" title="大写 Self 与小写 self，以及成本命名惯例">
-在 `impl Counter` 内部，首字母大写的 **`Self`** 是当前目标类型 `Counter` 的内置别名（写 `-> Self` 与 `Self { count: 0 }` 等同于写 `Counter`）；全小写的 **`self`** 则是方法首个参数的名字，指代调用该方法的实例。此外，社区约定将所有权成本写进方法名前缀（只读视图用 `as_`、复制新数据用 `to_`、消费所有权转换用 `into_`，读取字段不加 `get_` 前缀），完整对照见附录「[Rust 命名约定与工程惯例速查](/appendix/basics/conventions/)」。
+在 `impl TextBuffer` 内部，首字母大写的 **`Self`** 是当前目标类型 `TextBuffer` 的内置别名（写 `-> Self` 与 `Self { ... }` 等同于写 `TextBuffer`）；全小写的 **`self`** 则是方法首个参数的名字，指代调用该方法的实例。此外，社区约定将所有权成本写进方法名前缀（只读视图用 `as_`、复制新数据用 `to_`、消费所有权转换用 `into_`，读取字段不加 `get_` 前缀），完整对照见附录「[Rust 命名约定与工程惯例速查](/appendix/basics/conventions/)」。
 </Aside>
 
-### 接收者 `&self`、`&mut self` 与 `self`
+### 方法：接收者 `&self`、`&mut self` 与 `self`
 
-首个参数为 `self`、`&self` 或 `&mut self` 的函数称为**方法（Methods）**，对实例用点号 `.` 调用（如 `c.get()`）。
+首个参数为 `self`、`&self` 或 `&mut self` 的关联函数特称为**方法（Methods）**，对实例用点号 `.` 调用（如 `buf.len()`）。
 
-在 Java 中，隐式的 `this` 始终具备读写权限，仅看一行方法签名无法判断调用它是否会改动内部状态。Rust 则把首个参数（称为**接收者 Receiver**）变成编译期的权限声明，直接对应[类型构造器](/types/type-constructors/)与[引用与可变引用](/types/reference-constructors/)确立的三个独立类型：
+在物理本质上，<span class="rr-keypoint">固有方法并不是「长在对象内存里的特殊构件」，它只是把目标类型实例作为第 1 个参数的普通关联函数。</span>编译器在编译期直接把 `buf.append("ok")` 静态解析为函数调用 `TextBuffer::append(&mut buf, "ok")`——直接跳转到固定机器码地址，既不需要对象头，也没有运行时查表开销。
+
+在 Java 中，隐式的 `this` 始终具备读写权限，仅看一行方法签名无法判断调用它是否会改动状态。Rust 则把首个参数（称为**接收者 Receiver**）变成编译期的权限声明，直接对应[类型构造器](/types/type-constructors/)与[引用与可变引用](/types/reference-constructors/)确立的三个独立类型：
 
 <small class="code-source">源文件：<code>examples/types/methods/src/bin/method-receivers.rs</code>（节选）</small>
 <Code code={methodReceivers} lang="rust" anchor="three_receivers" />
@@ -48,8 +58,17 @@ import consumeThroughRef from '../../../../../../../examples/types/methods/src/b
 | 接收者简写 | 等价完整签名 | 所有权与借用规则 | 调用后原实例状态 | 典型工程用途 |
 | --- | --- | --- | --- | --- |
 | **`&self`** | `self: &Self` | 共享只读借用 | 继续有效 | 读取字段、计算派生结果（如 `len()`、`is_empty()`） |
-| **`&mut self`** | `self: &mut Self` | 独占可变借用 | 继续有效（要求绑定声明 `let mut`） | 原地更新字段、增删元素（如 `push()`、`clear()`） |
-| **`self`** | `self: Self` | 按值接手所有权（非 `Copy` 则移动） | **已失效（被消费）** | 不复制堆字节的类型转换（如 `String::into_bytes`）或一次性终结操作 |
+| **`&mut self`** | `self: &mut Self` | 独占可变借用 | 继续有效（要求绑定声明 `let mut`） | 原地更新字段、增删元素（如 `append()`、`push()`） |
+| **`self`** | `self: Self` | 按值接手所有权（非 `Copy` 则移动） | **已失效（被消费）** | 零分配移交内部资源（如 `into_string()`）或一次性终结操作 |
+
+### 消费型 `self` 的两项工程能力
+
+前两种借用接收者（`&self` 与 `&mut self`）对应常规的只读与原地修改；而第三种按值接手的 **`self`**，在传统带隐式 `this` 的语言中根本无法表达——在 Java 里，对象方法无法在签名上声明「调用完我之后，原变量立即作废」。
+
+把所有权转移放进接收者位置，直接解锁了两项编译期能力：
+
+1. **零堆复制移交内部资源**：观察上面的 `into_string(self) -> String`。如果接收者写成 `&self`，由于不能从借用背后移走字段，就只能调用 `self.content.clone()` 在堆上重新分配并复制一份字符串；而写成按值接收的 **`self`**，`buf` 的所有权直接移入方法内部，`self.content` 可以原封不动地移交出去——只移动栈上 24 字节控制头，堆缓冲区一字节不抄。标准库的 `String::into_bytes(self) -> Vec<u8>` 能在零内存分配下把字符串直接拆成字节数组，靠的正是这一机制。
+2. **编译期封死「终结后误用（Use-After-Close）」**：网络连接、文件写入器或事务句柄在调用 `close(self)`、`commit(self)` 终结使命时，按值接手 `self` 会让原变量在调用行之后立即失效；任何后续误调都会在编译期被直接拦截，无需在每个方法开头手写 `if (this.isClosed)` 运行时检查（后续在[`Typestate` 模式](/architecture/typestate-pattern/)中还会将它扩展为编译期状态机）。
 
 运行完整的 `method-receivers.rs`，核对三种接收者的调用流转：
 
@@ -58,17 +77,17 @@ import consumeThroughRef from '../../../../../../../examples/types/methods/src/b
 
 <small class="code-source">运行输出</small>
 ```text
-current: 1
-finished: 1
+len: 20
+output: [INFO] service ready
 ```
 
-`c.finish()` 按值接手 `Counter` 后，原变量 `c` 即告失效；若取消末尾 `// println!("after finish: {}", c.get());` 的注释，编译器会直接报 `error[E0382]: borrow of moved value: c`，在编译期阻止对已终结实例的后续误用。
+`buf.into_string()` 按值接手 `TextBuffer` 并移交出内部的 `String` 后，原变量 `buf` 即告失效；若取消末尾 `// println!("after into_string: {}", buf.len());` 的注释，编译器会直接报 `error[E0382]: borrow of moved value: buf`。
 
 ## 点号调用的自动借用与解引用
 
-既然 `Counter`、`&Counter` 与 `&mut Counter` 是三个独立的类型，为什么拿着值 `c` 可以直接写 `c.get()`，拿着双层引用 `rr: &&Counter` 也能直接写 `rr.get()`，而不必每次手写 `(&c).get()` 或 `(**rr).get()`？
+既然方法本质上就是首个参数为 `Self`、`&Self` 或 `&mut Self` 的普通函数，而这三个类型又彼此独立，为什么拿着值 `v` 可以直接写 `v.push(4)`，拿着双层引用 `rr: &&Counter` 也能直接写 `rr.get()`，而不必每次手写 `(&mut v).push(4)` 或 `(**rr).get()`？
 
-原因是编译器在**点号 `.` 操作符**处内置了双向适配规则：对照目标字段或方法接收者的签名，自动在点号左侧表达式上补齐所需的 **`&` / `&mut`（自动借用 Autoref）**或 **`*`（自动解引用 Autoderef）**。
+原因是编译器在**点号 `.` 操作符**处内置了双向语法糖：对照目标字段或方法接收者的签名，自动在点号左侧表达式上补齐所需的 **`&` / `&mut`（自动借用 Autoref）**或 **`*`（自动解引用 Autoderef）**，再还原为底层函数调用。
 
 <small class="code-source">源文件：<code>examples/types/methods/src/bin/auto-ref.rs</code>（节选）</small>
 <Code code={autoRef} lang="rust" anchor="autoref,autoderef" />
@@ -89,7 +108,7 @@ vec: [1, 2, 3, 4, 5, 6]
 
 ## 点号适配的安全边界
 
-<span class="rr-keypoint">点号 `.` 只负责在语法层面代写 `&`、`&mut` 与 `*`，展开后的底层函数调用依然逐条接受所有权与借用检查器的审查。</span>判断一行 `x.method()` 能否编译，只需将它还原为 `Type::method(...)`：
+<span class="rr-keypoint">点号 `.` 只负责在语法层面代写 `&`、`&mut` 与 `*`，展开后的底层函数调用依然逐条接受所有权与借用检查器的审查。</span>判断任意一行 `x.method()` 能否编译，只需将它还原为 `Type::method(...)`：
 
 ### 不可变绑定借不出 `&mut self`
 
@@ -113,7 +132,7 @@ error[E0596]: cannot borrow `v` as mutable, as it is not declared as mutable
 
 ### 引用背后调不了消费型 `self`
 
-若方法接收者是按值消费所有权的 **`self`**（如 `String::into_bytes(self)`），而调用方手里只有共享引用 `r: &String`：
+若方法接收者是按值消费所有权的 **`self`**（如前面提到的 `String::into_bytes(self)`），而调用方手里只有共享引用 `r: &String`：
 
 <small class="code-source">源文件：<code>examples/types/methods/src/bin/consume-through-ref.rs</code></small>
 <Code code={consumeThroughRef} lang="rust" />

@@ -1,0 +1,137 @@
+---
+/**
+ * 5.2「扁平内联布局」。
+ * 64 位平台上 User 整块 40 字节铺在栈上：String 控制头 24、u64 8、bool 1，另有 7 字节对齐填充。
+ * 块的起点就是字段，前面没有对象头。name 的 ptr 指向堆上那一份 Bob。
+ * Color 是三个内联的 u8，AlwaysEqual 占 0 字节。
+ * 各行按体积标注，不表示 repr(Rust) 的字段先后或偏移（那是后面讲 #[repr(C)] 时的题目）。
+ * 变量与字节数对齐 examples/types/structs/src/bin/struct-basics.rs。
+ * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	lang?: 'zh' | 'en';
+}
+
+const copy = {
+	zh: {
+		caption:
+			'64 位平台上，User 整块 40 字节铺在栈上，由 String 控制头 24 字节、u64 8 字节、bool 1 字节和 7 字节对齐填充构成。块的起点就是字段，前面没有对象头；name 的 ptr 指向堆上那一份 Bob。Color 是三个内联的 u8，AlwaysEqual 占 0 字节。各行按体积标注，不表示字段的先后或偏移。',
+		title: 'User、Color 与 AlwaysEqual 的栈上布局',
+		desc: '栈帧 main 里，User 是一整块 40 字节，前面没有对象头。块内按体积标出 name: String 24 字节、age: u64 8 字节、active: bool 1 字节，以及 7 字节对齐填充。箭头从 name 指向堆上单独的缓冲区 Bob，3 字节。Color 是三个紧挨的 u8，取值 255、0、0，共 3 字节。AlwaysEqual 占 0 字节，栈上没有格子。各行只说明字节数，不表示字段偏移。',
+		stack: '栈帧 main',
+		user: 'User',
+		userSize: '40B · 无对象头',
+		name: 'name: String',
+		nameSize: '24B',
+		age: 'age: u64',
+		ageSize: '8B',
+		active: 'active: bool',
+		activeSize: '1B',
+		pad: '对齐填充',
+		padSize: '7B',
+		heap: '堆',
+		bytes: 'Bob',
+		byteNote: '3 字节',
+		ptr: 'ptr',
+		color: 'Color',
+		colorSize: '3B',
+		colorNote: '三个 u8 内联',
+		unit: 'AlwaysEqual',
+		unitSize: '0B · 栈上不占字节',
+		foot: '各行按体积标注，不表示字段的先后或偏移',
+	},
+	en: {
+		caption:
+			'On a 64-bit platform, User is one 40-byte stack value: a 24-byte String header, an 8-byte u64, a 1-byte bool, and 7 bytes of padding. The block starts at the first field, with no object header; name’s ptr aims at the separate heap buffer Bob. Color is three inline u8s, and AlwaysEqual occupies 0 bytes. Rows are labeled by size, not by field order or offset.',
+		title: 'Stack layout of User, Color, and AlwaysEqual',
+		desc: 'In stack frame main, User is a single 40-byte block with no object header in front. Inside it, the rows are labeled name: String 24 bytes, age: u64 8 bytes, active: bool 1 byte, and 7 bytes of alignment padding. An arrow marked ptr runs from name to a separate heap buffer, Bob, 3 bytes. Color is three adjacent u8 values, 255, 0, and 0, totaling 3 bytes. AlwaysEqual occupies 0 bytes and has no stack slot. The rows state sizes only, not field offsets.',
+		stack: 'stack frame · main',
+		user: 'User',
+		userSize: '40B · no object header',
+		name: 'name: String',
+		nameSize: '24B',
+		age: 'age: u64',
+		ageSize: '8B',
+		active: 'active: bool',
+		activeSize: '1B',
+		pad: 'padding',
+		padSize: '7B',
+		heap: 'heap',
+		bytes: 'Bob',
+		byteNote: '3 bytes',
+		ptr: 'ptr',
+		color: 'Color',
+		colorSize: '3B',
+		colorNote: 'three inline u8',
+		unit: 'AlwaysEqual',
+		unitSize: '0B · no stack bytes',
+		foot: 'Rows show sizes, not field order or offsets',
+	},
+} as const;
+
+const { lang } = Astro.props;
+const locale = lang ?? (SITE_LOCALE === 'en' ? 'en' : 'zh');
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 680 448" role="img" aria-labelledby="sil-title sil-desc">
+		<title id="sil-title">{t.title}</title>
+		<desc id="sil-desc">{t.desc}</desc>
+
+		<text class="label" x="16" y="18">{t.stack}</text>
+
+		<rect class="panel" x="16" y="32" width="400" height="236" rx="12"></rect>
+		<text class="code" x="32" y="56">{t.user}</text>
+		<text class="edge-sub" x="400" y="56" text-anchor="end">{t.userSize}</text>
+
+		<rect class="slot" x="32" y="72" width="368" height="44" rx="8"></rect>
+		<text class="code" x="48" y="99">{t.name}</text>
+		<text class="edge-sub" x="384" y="99" text-anchor="end">{t.nameSize}</text>
+
+		<rect class="slot" x="32" y="124" width="368" height="40" rx="8"></rect>
+		<text class="code" x="48" y="149">{t.age}</text>
+		<text class="edge-sub" x="384" y="149" text-anchor="end">{t.ageSize}</text>
+
+		<rect class="slot" x="32" y="172" width="368" height="40" rx="8"></rect>
+		<text class="code" x="48" y="197">{t.active}</text>
+		<text class="edge-sub" x="384" y="197" text-anchor="end">{t.activeSize}</text>
+
+		<rect class="panel" x="32" y="220" width="368" height="36" rx="8"></rect>
+		<text class="label" x="48" y="243">{t.pad}</text>
+		<text class="edge-sub" x="384" y="243" text-anchor="end">{t.padSize}</text>
+
+		<text class="edge-label" x="428" y="86" text-anchor="middle">{t.ptr}</text>
+		<path class="arrow" d="M400 94 H456" marker-end="url(#sil-head)"></path>
+
+		<rect class="panel" x="456" y="32" width="208" height="124" rx="12"></rect>
+		<text class="label" x="472" y="56">{t.heap}</text>
+		<rect class="object" x="472" y="72" width="176" height="68" rx="8"></rect>
+		<text class="name" x="560" y="104" text-anchor="middle">{t.bytes}</text>
+		<text class="label" x="560" y="126" text-anchor="middle">{t.byteNote}</text>
+
+		<text class="code" x="16" y="304">{t.color}</text>
+		<text class="edge-sub" x="400" y="304" text-anchor="end">{t.colorSize}</text>
+		<rect class="slot" x="16" y="316" width="44" height="36" rx="6"></rect>
+		<text class="code" x="38" y="339" text-anchor="middle">255</text>
+		<rect class="slot" x="68" y="316" width="44" height="36" rx="6"></rect>
+		<text class="code" x="90" y="339" text-anchor="middle">0</text>
+		<rect class="slot" x="120" y="316" width="44" height="36" rx="6"></rect>
+		<text class="code" x="142" y="339" text-anchor="middle">0</text>
+		<text class="edge-sub" x="176" y="339">{t.colorNote}</text>
+
+		<text class="code" x="16" y="388">{t.unit}</text>
+		<text class="edge-sub" x="400" y="388" text-anchor="end">{t.unitSize}</text>
+
+		<text class="edge-sub" x="16" y="428">{t.foot}</text>
+
+		<defs>
+			<marker id="sil-head" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+				<path d="M0 0 L8 4 L0 8 Z" fill="var(--dg-line)"></path>
+			</marker>
+		</defs>
+	</svg>
+</figure>

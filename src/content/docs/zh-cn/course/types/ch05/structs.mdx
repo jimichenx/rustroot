@@ -13,6 +13,8 @@ import pointMove from '../../../../../../../examples/types/structs/src/bin/point
 import pointCopy from '../../../../../../../examples/types/structs/src/bin/point-copy.rs?raw';
 import partialMove from '../../../../../../../examples/types/structs/src/bin/partial-move.rs?raw';
 import StructPartialMove from '../../../../../../components/course/StructPartialMove.astro';
+import StructInlineLayoutDiagram from '../../../../../../components/diagrams/StructInlineLayoutDiagram.astro';
+import StructCopyContractDiagram from '../../../../../../components/diagrams/StructCopyContractDiagram.astro';
 
 上一节的元组 `(i32, i32)` 可以临时打包多个值，但在业务建模中有两处局限：一是元素没有名字，靠 `.0`、`.1` 访问难以表达业务含义；二是任意两个 `(i32, i32)` 都是同一个类型，编译器无法区分「二维坐标」与「矩形宽高」。
 
@@ -55,6 +57,8 @@ sizes: User = 40B, Color = 3B, AlwaysEqual = 0B
 
 与 Java 或 Python 对象在堆上附带 12～16 字节对象头、内部字段再二次跳转不同，Rust 的 `struct` 采用**扁平内联（Flat Inline）**布局：所有字段紧挨着直接平铺在当前栈帧（或外层容器缓冲区）中，没有任何隐藏的运行时对象头。
 
+<StructInlineLayoutDiagram />
+
 <Aside type="note" title="字段可变性由外层绑定统一控制">
 Rust 不支持在结构体定义中给单个字段标 `mut`（不能写 `struct User { mut age: u64 }`）。字段能否修改取决于实例绑定的声明方式：`let user = User { ... };` 下全部字段只读，`let mut user = User { ... };` 下全部字段均可修改（如 `user.age = 29;`）。
 </Aside>
@@ -67,6 +71,8 @@ Rust 不支持在结构体定义中给单个字段标 `mut`（不能写 `struct 
 <Code code={pointMove} lang="rust" />
 
 一旦取消最后一行 `// println!("{}", a.x);` 的注释，编译器会报出 `error[E0382]: borrow of moved value: a`。同样装两个 `i32`，元组 `(i32, i32)` 与数组 `[i32; 2]` 自动实现了 `Copy`，自定义 `struct Point` 却默认走**移动**语义。
+
+<StructCopyContractDiagram />
 
 这是为了守住自定义类型的**演进兼容性**：如果编译器因 `Point` 当前只含整数就隐式替它开启 `Copy`，日后一旦向该结构体新增一个非 `Copy` 字段（如 `label: String`），下游所有依赖 `let b = a;` 按位复制的调用方都会编译断裂。
 
@@ -119,4 +125,6 @@ error[E0382]: borrow of partially moved value: `user`
 | **结构体整体（`user`）** | **禁止（`E0382`）** | 内部字段已残缺，不能再作为完整的 `User` 整体传参或打印 |
 | **其余未移动字段（`user.age`）** | **允许** | 状态仍为有效，可单独读写；`user` 离开作用域时，编译器仅对尚未移出的剩余有效字段执行释放 |
 
-据此即可直接判断：对 `struct Request { url: String, timeout_ms: u32 }` 执行 `let target = req.url;` 后，`req` 整体与 `req.url` 均已失效，但继续读取 `req.timeout_ms` 仍可通过编译。下一节进入 `impl` 块，看如何为结构体挂载方法并通过接收者三件套控制访问权限。
+据此即可直接判断：对 `struct Request { url: String, timeout_ms: u32 }` 执行 `let target = req.url;` 后，`req` 整体与 `req.url` 均已失效，但继续读取 `req.timeout_ms` 仍可通过编译。
+
+至此我们看到的 `struct` 花括号内只定义了数据字段，还没有挂载任何方法——Rust 把数据布局（`struct`）与行为实现（`impl`）拆开书写。下一节进入方法与 `impl` 块，看如何为结构体绑定关联函数与方法，并通过接收者签名控制访问权限。

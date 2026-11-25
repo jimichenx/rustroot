@@ -1,37 +1,40 @@
 // Expect: E0382
 // ANCHOR: assoc_fn
-struct Counter {
-    count: u32,
+struct TextBuffer {
+    content: String,
 }
 
-impl Counter {
-    fn new() -> Self {
-        Self { count: 0 }
+impl TextBuffer {
+    fn new(prefix: &str) -> Self {
+        Self {
+            content: String::from(prefix),
+        }
     }
 }
 // ANCHOR_END: assoc_fn
 
 // ANCHOR: three_receivers
-impl Counter {
-    fn get(&self) -> u32 {
-        self.count
+impl TextBuffer {
+    fn len(&self) -> usize {
+        self.content.len()
     }
 
-    fn bump(&mut self) {
-        self.count += 1;
+    fn append(&mut self, text: &str) {
+        self.content.push_str(text);
     }
 
-    fn finish(self) -> u32 {
-        self.count
+    fn into_string(self) -> String {
+        self.content
     }
 }
 // ANCHOR_END: three_receivers
 
 fn main() {
-    let mut c = Counter::new();
-    c.bump();
-    println!("current: {}", c.get());
-    let total = c.finish();
-    println!("finished: {total}");
-    // println!("after finish: {}", c.get());
+    let mut buf = TextBuffer::new("[INFO] ");
+    buf.append("service ready");
+    println!("len: {}", buf.len());
+
+    let output = buf.into_string();
+    println!("output: {output}");
+    // println!("after into_string: {}", buf.len());
 }

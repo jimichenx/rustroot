@@ -1,0 +1,111 @@
+---
+/**
+ * 5.2「为什么默认走移动语义」。
+ * 同样 8 字节、两个 i32：
+ *   (i32, i32) 与 [i32; 2] 在 let b = a; 之后两份都有效，自动 Copy。
+ *   struct Point { x, y } 默认移动，a 失效，再读报 E0382。
+ * 复制必须显式 #[derive(Copy)]；字段含 String 时该标注报 E0204。
+ * Point 的绑定名与初值对齐 examples/types/structs/src/bin/point-move.rs。
+ * 样式复用 src/styles/diagrams.css，不写组件内 <style>。
+ */
+import { SITE_LOCALE } from '../../config/site';
+
+interface Props {
+	lang?: 'zh' | 'en';
+}
+
+const copy = {
+	zh: {
+		caption:
+			'同样是 8 字节、两个 i32。let b = a; 之后，(i32, i32) 与 [i32; 2] 自动复制，a 和 b 都仍然有效。struct Point 默认移动，a 失效，再读报 E0382。体积再小、字段全是 Copy，也不会自动复制；要复制必须写 #[derive(Copy)]，字段里有 String 时该标注报 E0204。',
+		title: '同样 8 字节，复制契约不同',
+		desc: '三行都是两个 i32，共 8 字节，赋值都写成 let b = a。第一行 (i32, i32) 与第二行 [i32; 2] 自动 Copy，a 和 b 里都仍是 1, 2。第三行 struct Point 默认移动：a 标成已移动，b 持有 1, 2，再读 a 报 E0382。复制必须显式写 #[derive(Copy)]；字段含 String 时该标注报 E0204。',
+		code: 'let b = a;',
+		size: '每个值 8 字节',
+		a: 'a',
+		b: 'b',
+		tuple: '(i32, i32)',
+		array: '[i32; 2]',
+		point: 'Point',
+		fields: 'x, y: i32',
+		bits: '1, 2',
+		copy: 'Copy',
+		move: '移动',
+		both: '都有效',
+		moved: '已移动',
+		invalid: 'a 已失效',
+		error: 'E0382',
+		foot: '复制须显式 #[derive(Copy)]，含 String 则 E0204',
+	},
+	en: {
+		caption:
+			'The same 8 bytes, two i32 values. After let b = a;, (i32, i32) and [i32; 2] copy, so both bindings stay valid. struct Point moves by default: a is moved-from, and reading it is E0382. A small all-Copy struct still does not copy until you write #[derive(Copy)]. A String field makes that attribute E0204.',
+		title: 'Same 8 bytes, different copy contract',
+		desc: 'Three rows each hold two i32 values, 8 bytes, and each assignment is let b = a. Row one, (i32, i32), and row two, [i32; 2], copy automatically, so both a and b still hold 1, 2. Row three, struct Point, moves by default: a is marked moved-from, b holds 1, 2, and reading a is E0382. Copy requires an explicit #[derive(Copy)]; a String field makes that attribute E0204.',
+		code: 'let b = a;',
+		size: 'each value is 8 bytes',
+		a: 'a',
+		b: 'b',
+		tuple: '(i32, i32)',
+		array: '[i32; 2]',
+		point: 'Point',
+		fields: 'x, y: i32',
+		bits: '1, 2',
+		copy: 'Copy',
+		move: 'move',
+		both: 'both valid',
+		moved: 'moved',
+		invalid: 'a invalid',
+		error: 'E0382',
+		foot: 'Copy requires #[derive(Copy)]; a String field is E0204',
+	},
+} as const;
+
+const { lang } = Astro.props;
+const locale = lang ?? (SITE_LOCALE === 'en' ? 'en' : 'zh');
+const t = copy[locale];
+---
+
+<figure class="diagram">
+	<figcaption>{t.caption}</figcaption>
+	<svg viewBox="0 0 680 368" role="img" aria-labelledby="scc-title scc-desc">
+		<title id="scc-title">{t.title}</title>
+		<desc id="scc-desc">{t.desc}</desc>
+
+		<text class="code" x="20" y="24">{t.code}</text>
+		<text class="edge-sub" x="660" y="24" text-anchor="end">{t.size}</text>
+
+		<rect class="panel" x="12" y="44" width="656" height="188" rx="12"></rect>
+		<text class="label" x="261" y="68" text-anchor="middle">{t.a}</text>
+		<text class="label" x="455" y="68" text-anchor="middle">{t.b}</text>
+
+		<text class="code" x="28" y="113">{t.tuple}</text>
+		<rect class="slot" x="196" y="80" width="130" height="56" rx="8"></rect>
+		<text class="code" x="261" y="113" text-anchor="middle">{t.bits}</text>
+		<text class="edge-label" x="358" y="113" text-anchor="middle">{t.copy}</text>
+		<rect class="slot" x="390" y="80" width="130" height="56" rx="8"></rect>
+		<text class="code" x="455" y="113" text-anchor="middle">{t.bits}</text>
+		<text class="edge-sub" x="540" y="113">{t.both}</text>
+
+		<text class="code" x="28" y="185">{t.array}</text>
+		<rect class="slot" x="196" y="152" width="130" height="56" rx="8"></rect>
+		<text class="code" x="261" y="185" text-anchor="middle">{t.bits}</text>
+		<text class="edge-label" x="358" y="185" text-anchor="middle">{t.copy}</text>
+		<rect class="slot" x="390" y="152" width="130" height="56" rx="8"></rect>
+		<text class="code" x="455" y="185" text-anchor="middle">{t.bits}</text>
+		<text class="edge-sub" x="540" y="185">{t.both}</text>
+
+		<rect class="panel" x="12" y="248" width="656" height="80" rx="12"></rect>
+		<text class="code" x="28" y="276">{t.point}</text>
+		<text class="edge-sub" x="28" y="296">{t.fields}</text>
+		<rect class="freed" x="196" y="260" width="130" height="56" rx="8"></rect>
+		<text class="label" x="261" y="293" text-anchor="middle">{t.moved}</text>
+		<text class="edge-label" x="358" y="293" text-anchor="middle">{t.move}</text>
+		<rect class="slot" x="390" y="260" width="130" height="56" rx="8"></rect>
+		<text class="code" x="455" y="293" text-anchor="middle">{t.bits}</text>
+		<text class="edge-sub" x="540" y="284">{t.invalid}</text>
+		<text class="edge-sub" x="540" y="302">{t.error}</text>
+
+		<text class="edge-sub" x="20" y="352">{t.foot}</text>
+	</svg>
+</figure>
